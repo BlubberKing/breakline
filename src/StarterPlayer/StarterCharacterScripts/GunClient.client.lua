@@ -677,7 +677,7 @@ local function onRender(dt)
 	if wantScope ~= scoped then
 		scoped = wantScope
 		scope.Visible = scoped
-		built.Model.Parent = scoped and nil or camera
+		built.Model.Parent = not scoped and camera or nil
 	end
 
 	if not scoped then
