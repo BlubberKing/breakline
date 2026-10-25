@@ -1,5 +1,6 @@
--- Movement v2: crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
--- momentum slide (keeps speed on flat, gains downhill, loses a little uphill), slide-out blend, mantle.
+-- Movement v3: crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
+-- momentum slide (keeps speed on flat, gains downhill, loses a little uphill), slide-out blend, mantle,
+-- momentum jumps (low + snappy, keep your run speed in the air, limited air steering).
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -30,9 +31,19 @@ local CFG = {
 	SLIDE_HIP_FACTOR    = 0.4,  -- lower = lower camera + hitbox
 	SLIDE_BUFFER        = 0.2,  -- press slide just before landing
 	SLIDE_JUMP_KEEP     = 0.95, -- momentum kept on slide-jump
-	SLIDE_JUMP_CARRY    = 0.45,
 	SLIDE_EXIT_BLEND    = 0.28, -- seconds to blend from slide speed back to run/crouch speed
 	CAM_SLIDE_DROP      = -0.35,
+
+	-- jump + air (Roblox default jump height is 7.2 = tall and floaty)
+	JUMP_HEIGHT         = 4.6,  -- studs; ledges higher than this are reached with mantle
+	FALL_GRAVITY_MULT   = 1.4,  -- extra gravity on the way down only = snappy, not springy
+	SPRINT_JUMP_BOOST   = 2.5,  -- extra forward speed when jumping at sprint speed
+	SPRINT_JUMP_FROM    = 24,   -- need at least this speed for the boost
+	AIR_MAX_SPEED       = 62,
+	AIR_ACCEL           = 40,   -- speed gained per second when slower than your run speed
+	AIR_DRAG            = 3,    -- speed lost per second when faster than your run speed (low = keeps momentum)
+	AIR_TURN            = 3.2,  -- how fast you can steer in the air (rad/s)
+	AIR_BRAKE           = 45,   -- pressing backwards in the air slows you down this fast
 
 	-- crouch
 	CROUCH_TOGGLE       = false, -- false = hold C, true = tap C to toggle
@@ -71,6 +82,19 @@ lv.ForceLimitMode = Enum.ForceLimitMode.Magnitude
 lv.MaxForce = 0
 lv.Enabled = false
 lv.Parent = root
+
+-- extra gravity while falling (only affects this character)
+local fallForce = Instance.new("VectorForce")
+fallForce.Name = "FallGravity"
+fallForce.Attachment0 = att
+fallForce.RelativeTo = Enum.ActuatorRelativeTo.World
+fallForce.ApplyAtCenterOfMass = true
+fallForce.Force = Vector3.zero
+fallForce.Enabled = false
+fallForce.Parent = root
+
+hum.UseJumpPower = false
+hum.JumpHeight = CFG.JUMP_HEIGHT
 
 local function drivePlanar(v)
 	lv.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
@@ -167,11 +191,11 @@ local function findLedge()
 end
 
 ------------------------------------------------------------------ state
-local mode = "none" -- none | slide | slideout | carry | mantle
+local mode = "none" -- none | slide | slideout | air | mantle
 local slideDir, slideSpeed, slideTime, slideAir, slideStuck = Vector3.zero, 0, 0, 0, 0
 local slideReadyAt, slideQueuedAt = 0, -1
 local slideFlatTime = 0
-local carryV, carryT = Vector3.zero, 0
+local airV, airT, airStuck = Vector3.zero, 0, 0
 local mantleData, mantleReadyAt = nil, 0
 local lastJumpReq, lastLedgeCheck = -1, 0
 local wasGrounded = true
@@ -179,8 +203,8 @@ local camKick, camOffsetY = 0, 0
 local crouchHeld, crouching = false, false
 local exitV, exitT = Vector3.zero, 0
 
-local function sprintKeyDown()
-	return UIS:IsKeyDown(Enum.KeyCode.LeftShift)
+local function sprintKeyDown() -- Shift, or the mobile / gamepad sprint toggle (set by GunClient)
+	return UIS:IsKeyDown(Enum.KeyCode.LeftShift) or char:GetAttribute("SprintToggle") == true
 end
 -- something above our head would block standing back up from the current (lowered) height
 local function ceilingBlocked()
@@ -189,7 +213,7 @@ local function ceilingBlocked()
 end
 
 local function canSlide()
-	return (mode == "none" or mode == "slideout") and hum.Health > 0 and grounded() and os.clock() >= slideReadyAt
+	return (mode == "none" or mode == "slideout" or mode == "air") and hum.Health > 0 and grounded() and os.clock() >= slideReadyAt
 		and hvel().Magnitude >= CFG.SLIDE_MIN_SPEED
 end
 
@@ -244,6 +268,14 @@ local function startMantle(ledge)
 	playSound("Mantle", 0.6)
 end
 
+-- airborne: keep the takeoff momentum, steer a little
+local function startAir(v)
+	airV, airT, airStuck = flat(v), 0, 0
+	if airV.Magnitude > CFG.AIR_MAX_SPEED then airV = airV.Unit * CFG.AIR_MAX_SPEED end
+	mode = "air"
+	drivePlanar(airV)
+end
+
 ------------------------------------------------------------------ updates
 local function updateSlide(dt)
 	slideTime += dt
@@ -284,9 +316,7 @@ local function updateSlide(dt)
 		-- slid off a ledge: keep the momentum into the air
 		local keep = slideDir * math.max(slideSpeed, 0)
 		endSlide(false)
-		carryV, carryT = keep, 0
-		mode = "carry"
-		drivePlanar(carryV)
+		startAir(keep)
 	elseif slideSpeed <= CFG.SLIDE_END_SPEED or slideFlatTime >= CFG.SLIDE_FLAT_TIME or slideTime >= CFG.SLIDE_MAX_TIME then
 		endSlide(true)
 	end
@@ -304,15 +334,41 @@ local function updateSlideOut(dt)
 	end
 end
 
-local function updateCarry(dt)
-	carryT += dt
-	local f = 1 - clamp(carryT / CFG.SLIDE_JUMP_CARRY, 0, 1)
-	local steer = flat(hum.MoveDirection) * hum.WalkSpeed
-	drivePlanar(carryV * f + steer * (1 - f))
-	if carryT >= CFG.SLIDE_JUMP_CARRY or (grounded() and carryT > 0.15) then
+local function updateAir(dt)
+	airT += dt
+	if grounded() and airT > 0.12 then -- landed: hand control back (momentum carries into a buffered slide)
 		release()
 		mode = "none"
+		return
 	end
+	-- hit a wall: lose the momentum into it instead of sticking to it
+	local actual = hvel()
+	if airT > 0.08 and airV.Magnitude > 4 and actual.Magnitude < airV.Magnitude * 0.5 then airStuck += dt else airStuck = 0 end
+	if airStuck > 0.05 then airV, airStuck = actual, 0 end
+
+	local speed = airV.Magnitude
+	local dir = speed > 0.5 and airV / speed or nil
+	local md = flat(hum.MoveDirection)
+	local runSpeed = hum.WalkSpeed
+	if md.Magnitude > 0.1 then
+		local target = md.Unit
+		if not dir then
+			dir = target
+		else
+			local angle = math.acos(clamp(dir:Dot(target), -1, 1))
+			if angle > math.rad(135) then -- pressing backwards: brake
+				speed = math.max(speed - CFG.AIR_BRAKE * dt, 0)
+			elseif angle > 1e-3 then
+				dir = dir:Lerp(target, math.min(1, CFG.AIR_TURN * dt / angle)).Unit
+			end
+		end
+		if speed < runSpeed then speed = math.min(speed + CFG.AIR_ACCEL * dt, runSpeed)
+		else speed = math.max(speed - CFG.AIR_DRAG * dt, runSpeed) end
+	else
+		speed = math.max(speed - CFG.AIR_DRAG * dt, 0) -- no input: keep drifting with your momentum
+	end
+	airV = dir and dir * speed or Vector3.zero
+	drivePlanar(airV)
 end
 
 local function updateMantle(dt)
@@ -371,15 +427,23 @@ local jumpConn = UIS.JumpRequest:Connect(function()
 		if mode == "slide" then -- slide-jump keeps momentum
 			local keep = slideDir * math.max(slideSpeed, 0) * CFG.SLIDE_JUMP_KEEP
 			endSlide(false)
-			carryV, carryT = keep, 0
-			mode = "carry"
+			startAir(keep)
 			hum:ChangeState(Enum.HumanoidStateType.Jumping)
-			drivePlanar(carryV)
 		elseif fromSlideOut then -- jump right after a slide still keeps the momentum
-			carryV, carryT = hvel(), 0
-			mode = "carry"
-			drivePlanar(carryV)
+			startAir(hvel())
 		end
+	end
+end)
+
+-- normal jumps and walking off ledges: switch to momentum air control
+local stateConn = hum.StateChanged:Connect(function(_, new)
+	if mode ~= "none" or hum.Health <= 0 then return end
+	if new == Enum.HumanoidStateType.Jumping then
+		local v = hvel()
+		if v.Magnitude >= CFG.SPRINT_JUMP_FROM then v += v.Unit * CFG.SPRINT_JUMP_BOOST end
+		startAir(v)
+	elseif new == Enum.HumanoidStateType.Freefall then
+		startAir(hvel())
 	end
 end)
 
@@ -393,11 +457,11 @@ local stepConn = RunService.Stepped:Connect(function(_, dt)
 
 	if mode == "slide" then updateSlide(dt)
 	elseif mode == "slideout" then updateSlideOut(dt)
-	elseif mode == "carry" then updateCarry(dt)
+	elseif mode == "air" then updateAir(dt)
 	elseif mode == "mantle" then updateMantle(dt) end
 
 	-- mantle while airborne: holding jump and moving toward a ledge
-	if (mode == "none" or mode == "carry") and not g and now >= mantleReadyAt and now - lastLedgeCheck > 0.05 then
+	if (mode == "none" or mode == "air") and not g and now >= mantleReadyAt and now - lastLedgeCheck > 0.05 then
 		local jumpHeld = UIS:IsKeyDown(Enum.KeyCode.Space)
 			or UIS:IsGamepadButtonDown(Enum.UserInputType.Gamepad1, Enum.KeyCode.ButtonA)
 			or now - lastJumpReq < CFG.MANTLE_JUMP_HOLD
@@ -412,7 +476,7 @@ local stepConn = RunService.Stepped:Connect(function(_, dt)
 	-- crouch: hold the key (or stay down under a low ceiling). Sprinting stands you back up.
 	local low = hum.HipHeight < baseHip - 0.05
 	local blocked = low and ceilingBlocked()
-	if crouchHeld and sprintKeyDown() and flat(hum.MoveDirection).Magnitude > 0.1 and not blocked then
+	if crouchHeld and UIS:IsKeyDown(Enum.KeyCode.LeftShift) and flat(hum.MoveDirection).Magnitude > 0.1 and not blocked then
 		crouchHeld = false -- pressing sprint cancels crouch (also cancels toggle-crouch)
 	end
 	local wantCrouch = (mode == "none" or mode == "slideout") and g and (crouchHeld or blocked)
@@ -431,6 +495,12 @@ local stepConn = RunService.Stepped:Connect(function(_, dt)
 	end
 	if math.abs(targetHip - hum.HipHeight) > 0.005 then setHip(approach(hum.HipHeight, targetHip, 20, dt)) end
 
+	-- snappier fall: extra gravity only while coming down
+	local vy = root.AssemblyLinearVelocity.Y
+	local wantFall = not g and vy < 0 and mode ~= "mantle"
+	fallForce.Enabled = wantFall
+	if wantFall then fallForce.Force = Vector3.new(0, -root.AssemblyMass * workspace.Gravity * (CFG.FALL_GRAVITY_MULT - 1), 0) end
+
 	-- camera
 	camKick = approach(camKick, 0, 10, dt)
 	local drop = (mode == "slide" and CFG.CAM_SLIDE_DROP) or (crouching and CFG.CAM_CROUCH_DROP) or 0
@@ -440,10 +510,12 @@ end)
 
 hum.Died:Connect(function()
 	release()
+	fallForce.Enabled = false
 	char:SetAttribute("Sliding", false)
 	char:SetAttribute("Mantling", false)
 	char:SetAttribute("Crouching", false)
 	CAS:UnbindAction("CrouchSlide")
 	jumpConn:Disconnect()
+	stateConn:Disconnect()
 	stepConn:Disconnect()
 end)
