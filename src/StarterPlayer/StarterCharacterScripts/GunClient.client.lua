@@ -5,6 +5,7 @@ local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local RS = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
+local CAS = game:GetService("ContextActionService")
 
 local player = Players.LocalPlayer
 local character = script.Parent
@@ -28,9 +29,10 @@ local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
 -- speed feel (all subtle on purpose)
 local SPEEDFX = {
 	FOV_FROM = 30, FOV_TO = 55, FOV_ADD = 6,      -- extra FOV when going faster than a sprint (slides, downhill)
-	LINES_FROM = 25, LINES_TO = 46,               -- speed lines fade in between these speeds
-	LINES_MAX_ALPHA = 0.32,                       -- 0 = invisible, 1 = solid white
-	LINE_COUNT = 26,
+	LINES_FROM = 17, LINES_TO = 38,               -- speed lines fade in between these speeds (sprint = ~60% strength)
+	LINES_MAX_ALPHA = 0.55,                       -- 0 = invisible, 1 = solid white
+	LINE_COUNT = 30,
+	EDGE_MAX_ALPHA = 0.22,                        -- soft dark screen-edge vignette at speed (0 = off)
 	SHAKE_DEG = 0.22,                             -- camera rumble while sliding (degrees at full speed)
 	SLIDE_FOV_PUNCH = 40,                         -- quick FOV kick when a slide starts
 	WIND_FROM = 22, WIND_TO = 50, WIND_VOL = 0.5, -- looping wind (SoundBank "Wind", silent until an ID is pasted)
@@ -92,8 +94,26 @@ for i = 1, SPEEDFX.LINE_COUNT do
 		r = 0.7 + math.random() * 0.45,
 		speed = 0.5 + math.random() * 0.6,
 		len = 60 + math.random() * 90,
-		w = math.random() < 0.3 and 2 or 1,
+		w = math.random() < 0.35 and 3 or 2,
 	}
+end
+-- soft dark edges that close in a little at high speed (makes the speed lines pop)
+local speedEdges = {}
+for _, rot in { 0, 90 } do
+	local f = Instance.new("Frame")
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundColor3 = Color3.new(0, 0, 0)
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	local g = Instance.new("UIGradient")
+	g.Rotation = rot
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.2, 1),
+		NumberSequenceKeypoint.new(0.8, 1), NumberSequenceKeypoint.new(1, 0),
+	})
+	g.Parent = f
+	f.Parent = speedLayer
+	table.insert(speedEdges, f)
 end
 
 -- full-screen sniper scope (black outside a circle, thin crosshair)
@@ -200,6 +220,7 @@ local adsFov, adsSens = 58, 0.7
 
 local ammo, reloading, reloadStart, reloadEvents = 0, false, 0, {}
 local triggerDown, aimHeld, shiftHeld = false, false, false
+local sprintToggle, stillTime = false, 0 -- mobile button / gamepad L3 sprint (tap to toggle)
 local speedFov, speedLineAlpha, wasSliding, shakeRoll = 0, 0, false, 0
 local windSound = Sfx.Loop and Sfx.Loop("Wind") or nil
 local nextFireTime, bloom, sprayIndex, lastShotTime = 0, 0, 0, 0
@@ -283,6 +304,18 @@ local function spreadDirection(dir, deg)
 	local r = rad(deg) * math.sqrt(math.random())
 	local theta = math.random() * math.pi * 2
 	return (CFrame.lookAt(Vector3.zero, dir) * CFrame.Angles(0, 0, theta) * CFrame.Angles(r, 0, 0)).LookVector
+end
+
+-- own body is always invisible in first person (Roblox's own fade check fails at high fall speeds)
+local bodyParts = {}
+local function trackBody(d)
+	if d:IsA("BasePart") or d:IsA("Decal") then bodyParts[d] = true end
+end
+for _, d in character:GetDescendants() do trackBody(d) end
+local function hideBody()
+	for d in bodyParts do
+		if d.Parent and d:IsDescendantOf(character) then d.LocalTransparencyModifier = 1 else bodyParts[d] = nil end
+	end
 end
 
 local function rotateCamera(dPitch, dYaw)
@@ -470,6 +503,29 @@ end
 
 -- ================= EVENTS =================
 local conns = {}
+table.insert(conns, character.DescendantAdded:Connect(trackBody))
+
+-- sprint button: shows on mobile (next to jump), gamepad = click left stick. Tap to toggle, turns off when you stop.
+local SPRINT_ACTION = "SprintToggle"
+local function paintSprintButton()
+	local b = CAS:GetButton(SPRINT_ACTION)
+	if b then b.ImageColor3 = sprintToggle and ACCENT or Color3.new(1, 1, 1) end
+end
+local function setSprintToggle(on)
+	if sprintToggle == on then return end
+	sprintToggle = on
+	character:SetAttribute("SprintToggle", on)
+	paintSprintButton()
+end
+CAS:BindAction(SPRINT_ACTION, function(_, state)
+	if state == Enum.UserInputState.Begin then
+		setSprintToggle(not sprintToggle)
+		return Enum.ContextActionResult.Sink
+	end
+	return Enum.ContextActionResult.Pass
+end, true, Enum.KeyCode.ButtonL3)
+CAS:SetTitle(SPRINT_ACTION, "Sprint")
+CAS:SetPosition(SPRINT_ACTION, UDim2.new(1, -95, 1, -175)) -- above the jump button
 table.insert(conns, HitConfirm.OnClientEvent:Connect(function(model, head, killed, dmg, hitPos)
 	if model and dmg and hitPos then fx:Number(model, hitPos, dmg, head) end
 	if killed and model then
@@ -584,11 +640,16 @@ local function onRender(dt)
 	local sliding = character:GetAttribute("Sliding") == true
 	local mantling = character:GetAttribute("Mantling") == true
 	local crouching = character:GetAttribute("Crouching") == true
-	if menuOpen() then shiftHeld = false end
+	if menuOpen() then shiftHeld = false; setSprintToggle(false) end
+	if sprintToggle then -- auto-off after standing still for a moment
+		stillTime = moving and 0 or stillTime + dt
+		if stillTime > 0.3 or not alive then setSprintToggle(false) end
+	end
+	if alive then hideBody() end
 
 	-- states
 	local aiming = aimHeld and not reloading and alive and not mantling
-	local wantsSprint = shiftHeld and moving and not aiming and not triggerDown and not crouching
+	local wantsSprint = (shiftHeld or sprintToggle) and moving and not aiming and not triggerDown and not crouching
 	local sprinting = wantsSprint and not sliding and not mantling
 	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
 	humanoid.WalkSpeed = baseSpeed * cfg.MoveSpeed
@@ -784,6 +845,7 @@ local function onRender(dt)
 	lineTarget *= (1 - aimAlpha) * (alive and 1 or 0) * (scoped and 0 or 1)
 	speedLineAlpha = approach(speedLineAlpha, lineTarget, dt, lineTarget > speedLineAlpha and 0.25 or 0.15)
 	speedLayer.Visible = speedLineAlpha > 0.01
+	for _, f in speedEdges do f.BackgroundTransparency = 1 - SPEEDFX.EDGE_MAX_ALPHA * speedLineAlpha end
 	if speedLayer.Visible then
 		local vp = camera.ViewportSize
 		local half = vp * 0.5
@@ -830,6 +892,7 @@ local function cleanup()
 	UIS.MouseDeltaSensitivity = 1
 	camera.FieldOfView = BASE_FOV
 	if windSound then windSound:Destroy() end
+	pcall(function() CAS:UnbindAction(SPRINT_ACTION) end)
 end
 humanoid.Died:Connect(cleanup)
 character.AncestryChanged:Connect(function(_, parent) if not parent then cleanup() end end)
