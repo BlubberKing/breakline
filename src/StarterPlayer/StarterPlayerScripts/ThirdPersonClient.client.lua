@@ -1,4 +1,4 @@
--- ThirdPersonClient v2: IK hands on the gun, aim-driven gun joint, poses, recoil, reload, slide/mantle poses
+-- ThirdPersonClient v3: IK hands on the gun, aim-driven gun joint, poses, recoil, reload, slide/crouch/mantle poses
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -35,6 +35,7 @@ local CFG = {
 	BOB = 0.035,
 	TURN_LAG_DEG = 1.2, TURN_LAG_MAX = 7,
 	SLIDE_LEAN = 25,
+	CROUCH_LEAN = 10,
 }
 
 local Weapons = require(RS:WaitForChild("WeaponConfig"))
@@ -98,7 +99,7 @@ local function setup(char)
 		lFore = lFore, lMag = lMag, gun = gun,
 		reloadTime = Weapons.Get(gun:GetAttribute("Weapon")).ReloadTime,
 		shoulder = CFG.SHOULDER * k, poses = {},
-		pitch = 0, ads = 0, sprint = 0, reload = 0, reloadT = 0, slide = 0, mantle = 0,
+		pitch = 0, ads = 0, sprint = 0, reload = 0, reloadT = 0, slide = 0, mantle = 0, crouch = 0,
 		kick = 0, bobT = 0, turnLag = 0, flashToken = 0, wasSlide = false, restored = true,
 	}
 	for name, p in pairs(CFG.POSES) do st.poses[name] = poseCF(p, k) end
@@ -165,6 +166,7 @@ local function update(st, dt, t, isLocal)
 	st.sprint = approach(st.sprint, (t.sprint and not t.ads and not t.slide) and 1 or 0, 9, dt)
 	st.slide  = approach(st.slide, t.slide and 1 or 0, 14, dt)
 	st.mantle = approach(st.mantle, t.mantle and 1 or 0, 18, dt)
+	st.crouch = approach(st.crouch, (t.crouch and not t.slide) and 1 or 0, 12, dt)
 	st.reload = approach(st.reload, t.reloading and 1 or 0, 12, dt)
 	st.reloadT = t.reloading and (st.reloadT + dt) or 0
 	st.kick = st.kick * exp(-dt * 16)
@@ -206,7 +208,7 @@ local function update(st, dt, t, isLocal)
 	local torsoPitch = st.pitch * CFG.TORSO_SHARE * (1 - 0.5 * lowered) + rad(CFG.KICK_TORSO_DEG * st.kick) - rad(12) * st.slide
 	st.waist.C0 = st.waistC0 * CFrame.Angles(torsoPitch, 0, 0)
 	st.neck.C0 = st.neckC0 * CFrame.Angles(st.pitch * CFG.NECK_SHARE - rad(14) * st.slide, 0, 0)
-	st.rootJ.C0 = st.rootC0 * CFrame.Angles(rad(CFG.SLIDE_LEAN) * st.slide, 0, 0)
+	st.rootJ.C0 = st.rootC0 * CFrame.Angles(rad(CFG.SLIDE_LEAN) * st.slide - rad(CFG.CROUCH_LEAN) * st.crouch, 0, 0)
 
 	-- left hand: foregrip, or reload sequence (mag -> pouch -> mag -> foregrip)
 	local target, smooth = st.lFore, 0
@@ -229,7 +231,7 @@ local function update(st, dt, t, isLocal)
 end
 
 ------------------------------------------------------------------ local player state + sending
-local localT = { pitch = 0, ads = false, sprint = false, slide = false, mantle = false, reloading = false }
+local localT = { pitch = 0, ads = false, sprint = false, slide = false, mantle = false, crouch = false, reloading = false }
 local lastSend, sent = 0, {}
 
 local function isFirstPerson(char)
@@ -245,6 +247,7 @@ RunService.Heartbeat:Connect(function()
 	localT.pitch = math.asin(clamp(cam.CFrame.LookVector.Y, -1, 1))
 	localT.slide = char:GetAttribute("Sliding") == true
 	localT.mantle = char:GetAttribute("Mantling") == true
+	localT.crouch = char:GetAttribute("Crouching") == true
 	localT.ads = cam.FieldOfView < CFG.ADS_FOV_BELOW and not localT.mantle
 	localT.sprint = not localT.ads and hum.MoveDirection.Magnitude > 0.1 and hum.WalkSpeed >= CFG.SPRINT_SPEED_ABOVE
 	localT.reloading = char:GetAttribute("Reloading") == true
@@ -252,10 +255,10 @@ RunService.Heartbeat:Connect(function()
 	local now = os.clock()
 	if now - lastSend < 1 / CFG.SEND_RATE then return end
 	local changed = abs(localT.pitch - (sent.pitch or 0)) > 0.012 or localT.ads ~= sent.ads or localT.sprint ~= sent.sprint
-		or localT.slide ~= sent.slide or localT.mantle ~= sent.mantle
+		or localT.slide ~= sent.slide or localT.mantle ~= sent.mantle or localT.crouch ~= sent.crouch
 	if changed or now - lastSend > 0.5 then
-		Look:FireServer(localT.pitch, localT.ads, localT.sprint, localT.slide, localT.mantle)
-		sent = { pitch = localT.pitch, ads = localT.ads, sprint = localT.sprint, slide = localT.slide, mantle = localT.mantle }
+		Look:FireServer(localT.pitch, localT.ads, localT.sprint, localT.slide, localT.mantle, localT.crouch)
+		sent = { pitch = localT.pitch, ads = localT.ads, sprint = localT.sprint, slide = localT.slide, mantle = localT.mantle, crouch = localT.crouch }
 		lastSend = now
 	end
 end)
@@ -267,6 +270,7 @@ local function remoteTarget(char)
 		sprint = char:GetAttribute("Sprint") == true,
 		slide = char:GetAttribute("Sliding") == true,
 		mantle = char:GetAttribute("Mantling") == true,
+		crouch = char:GetAttribute("Crouching") == true,
 		reloading = char:GetAttribute("Reloading") == true,
 	}
 end
@@ -293,9 +297,17 @@ poseSignal:Connect(function(a, b)
 	end
 end)
 
--- Leg pose for sliding (after the Animator so it overrides walk/run)
+-- Leg pose for sliding / crouching (after the Animator so it overrides walk/run)
 RunService.Stepped:Connect(function()
 	for _, st in pairs(states) do
+		if st.crouch > 0.01 and not st.restored and st.rHip and st.lHip and st.rKnee and st.lKnee then
+			-- mostly crouch pose, a bit of the walk cycle still shows through so crouch-walking reads
+			local c = st.crouch * 0.8
+			st.rHip.Transform = st.rHip.Transform:Lerp(CFrame.Angles(rad(40), 0, 0), c)
+			st.lHip.Transform = st.lHip.Transform:Lerp(CFrame.Angles(rad(40), 0, 0), c)
+			st.rKnee.Transform = st.rKnee.Transform:Lerp(CFrame.Angles(rad(-65), 0, 0), c)
+			st.lKnee.Transform = st.lKnee.Transform:Lerp(CFrame.Angles(rad(-65), 0, 0), c)
+		end
 		if st.slide > 0.01 and not st.restored and st.rHip and st.lHip and st.rKnee and st.lKnee then
 			local a = st.slide
 			st.rHip.Transform = st.rHip.Transform:Lerp(CFrame.Angles(rad(60), 0, 0), a)
