@@ -1,7 +1,9 @@
--- MatchClient v1: Wall Push HUD + box controls.
+-- MatchClient v2: Wall Push HUD + box controls + box visuals.
 --  * top bar: phase / countdown, box counts per team, wall progress bar (finish line to finish line)
 --  * carrying a box: LEFT CLICK (or the Throw button on mobile) = throw, Q = drop. Guns are locked by GunClient/GunServer.
 --  * hides pick-up prompts you can't use (your own plugged boxes, anything while you carry)
+--  * animates the faces of every box (BoxModel) and shows YOUR carried box as a small two-handed first-person model
+--  * cleans up any leftover first-person gun model when you respawn / get teleported
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local UIS = game:GetService("UserInputService")
@@ -9,6 +11,7 @@ local CAS = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local CollectionService = game:GetService("CollectionService")
+local BoxModel = require(RS:WaitForChild("BoxModel"))
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -19,6 +22,7 @@ local ThrowRemote, DropRemote, NotifyRemote = Remotes:WaitForChild("Throw"), Rem
 
 local ACCENT = Color3.fromRGB(255, 140, 30)
 local COL_A, COL_B = C.Teams[1].Color.Color, C.Teams[2].Color.Color
+local TEAM_COLORS = { [C.Teams[1].Name] = COL_A, [C.Teams[2].Name] = COL_B }
 local NAME_A, NAME_B = C.Teams[1].Name, C.Teams[2].Name
 
 -- ================= GUI =================
@@ -145,8 +149,10 @@ end
 
 -- ================= box controls =================
 local carrying = false
+local throwKick = 0 -- first-person carry model thrusts forward when you throw
 local function throw()
 	if not carrying then return end
+	throwKick = 1
 	ThrowRemote:FireServer(camera.CFrame.LookVector)
 end
 local function drop()
@@ -205,5 +211,141 @@ RunService.Heartbeat:Connect(function(dt)
 			end
 			if pr.Enabled ~= usable then pr.Enabled = usable end
 		end
+	end
+end)
+
+-- ================= box visuals =================
+-- 1) every box: animated face (blink, scared when hurt/drained, happy when plugging, ...)
+-- 2) YOUR carried box: the real one is hidden for you and replaced by a small two-handed first-person model
+local CV = C.CARRY_VM
+local SLEEVE, GLOVE = Color3.fromRGB(58, 70, 98), Color3.fromRGB(30, 33, 40)
+
+local function setBoxHidden(box, hidden)
+	local m = hidden and 1 or 0
+	box.LocalTransparencyModifier = m
+	for _, d in box:GetDescendants() do
+		if d:IsA("BasePart") then d.LocalTransparencyModifier = m
+		elseif d:IsA("SurfaceGui") or d:IsA("PointLight") then d.Enabled = not hidden end
+	end
+end
+
+local function findMyBox()
+	for _, b in CollectionService:GetTagged("WPBox") do
+		if b:GetAttribute("Carrier") == player.UserId then return b end
+	end
+end
+
+local vm -- { body, list, armParts, gloves, box, t0 }
+local function destroyVM()
+	if not vm then return end
+	if vm.box and vm.box.Parent then setBoxHidden(vm.box, false) end
+	vm.folder:Destroy()
+	vm = nil
+end
+
+local function buildVM(box)
+	local folder = Instance.new("Model")
+	folder.Name = "CarryVM"
+	local body, _, list = BoxModel.Build(CV.BoxSize, { Accent = BoxModel.Amber, Viewmodel = true })
+	local team = box:GetAttribute("PlugTeam") -- (a carried box has no team colour: amber)
+	body.Parent = folder
+	local arms = {}
+	for _, side in { -1, 1 } do
+		local sleeve = Instance.new("Part")
+		sleeve.Name = "Sleeve"
+		sleeve.Color, sleeve.Material = SLEEVE, Enum.Material.SmoothPlastic
+		local glove = Instance.new("Part")
+		glove.Name = "Glove"
+		glove.Size = Vector3.new(0.3, 0.3, 0.34)
+		glove.Color, glove.Material = GLOVE, Enum.Material.SmoothPlastic
+		for _, pt in { sleeve, glove } do
+			pt.Anchored = true
+			pt.CanCollide, pt.CanQuery, pt.CanTouch, pt.CastShadow = false, false, false, false
+			pt.TopSurface, pt.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
+			pt.Parent = folder
+		end
+		table.insert(arms, { side = side, sleeve = sleeve, glove = glove })
+	end
+	folder.Parent = camera
+	vm = { folder = folder, body = body, list = list, arms = arms, box = box, t0 = os.clock(), bob = 0 }
+	setBoxHidden(box, true)
+end
+
+local function updateVM(dt, now)
+	local box = findMyBox()
+	if not box then destroyVM() return end
+	if not vm or vm.box ~= box then
+		destroyVM()
+		buildVM(box)
+	end
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local speed = root and Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude or 0
+	vm.bob += dt * math.clamp(speed, 0, 20) * 0.45
+	local amp = math.clamp(speed / 16, 0, 1.4)
+	throwKick = math.max(0, throwKick - dt * 7)
+
+	local a = math.clamp((now - vm.t0) / CV.RaiseTime, 0, 1)
+	local raise = 1 - (1 - a) ^ 3
+	local pos = CV.Pos
+		+ Vector3.new(math.sin(vm.bob) * 0.04 * amp, -math.abs(math.cos(vm.bob)) * 0.05 * amp + math.sin(now * 1.7) * 0.006, 0)
+		+ Vector3.new(0, -1.2 * (1 - raise), 0.6 * (1 - raise))
+		+ Vector3.new(0, 0.15 * throwKick, -0.9 * throwKick)
+	local boxCF = camera.CFrame * CFrame.new(pos) * CFrame.Angles(math.rad(-6) * raise + math.rad(10) * throwKick, math.rad(math.sin(vm.bob) * 1.2 * amp), 0)
+
+	vm.body.CFrame = boxCF
+	for _, e in vm.list do e.Part.CFrame = boxCF * e.Offset end
+
+	local half = CV.BoxSize / 2
+	for _, arm in vm.arms do
+		local shoulder = (camera.CFrame * CFrame.new(arm.side * 1.0, -1.7, 0.4)).Position
+		local hand = (boxCF * CFrame.new(arm.side * (half + 0.12), -CV.BoxSize * 0.05, CV.BoxSize * 0.12)).Position
+		local len = (hand - shoulder).Magnitude
+		arm.sleeve.Size = Vector3.new(0.34, 0.34, len)
+		arm.sleeve.CFrame = CFrame.lookAt(shoulder, hand) * CFrame.new(0, 0, -len / 2)
+		arm.glove.CFrame = CFrame.lookAt(hand, hand + boxCF.LookVector, boxCF.UpVector)
+	end
+	BoxModel.Animate(vm.body, box, now, TEAM_COLORS)
+end
+
+local faceAcc = 0
+RunService.RenderStepped:Connect(function(dt)
+	local now = os.clock()
+	local ok = pcall(updateVM, dt, now)
+	if not ok then destroyVM() end
+	faceAcc += dt
+	if faceAcc >= 1 / 30 then
+		faceAcc = 0
+		for _, b in CollectionService:GetTagged("WPBox") do
+			if b:IsDescendantOf(workspace) and not (vm and vm.box == b) then
+				BoxModel.Animate(b, b, now, TEAM_COLORS)
+			end
+		end
+	end
+end)
+player.CharacterRemoving:Connect(destroyVM)
+
+-- ================= leftover first-person gun cleanup =================
+-- Respawning (the round-start teleport) destroys the character while GunClient is still running, so GunClient never gets to
+-- clean up and its first-person arms + gun stay in the camera. Anything named "Viewmodel" that does not belong to the CURRENT
+-- character's GunClient gets removed here.
+local function sweepViewmodels()
+	local char = player.Character
+	for _, m in camera:GetChildren() do
+		if m.Name == "Viewmodel" and m:IsA("Model") then
+			local owner = m:FindFirstChild("Owner")
+			local who = owner and owner.Value
+			if not who or who ~= char or not who:IsDescendantOf(workspace) then m:Destroy() end
+		end
+	end
+end
+camera.ChildAdded:Connect(function(m)
+	if m.Name == "Viewmodel" then task.defer(sweepViewmodels) end
+end)
+player.CharacterAdded:Connect(function() task.delay(0.1, sweepViewmodels) end)
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		sweepViewmodels()
 	end
 end)
