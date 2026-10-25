@@ -392,7 +392,7 @@ local function equip(id, sightId)
 	climbTarget = Vector2.zero
 	equipStart = os.clock()
 	flashVisible = true -- forces the flash refresh next frame
-	Sfx.Play("Equip")
+	Sfx.Play("Equip", nil, nil, nil, WEAPON)
 	updateHUD()
 end
 
@@ -411,7 +411,7 @@ local function startReload()
 	reloadEvents = {}
 	for _, e in reloadAnim.Events do
 		table.insert(reloadEvents, { at = e.at, fn = function()
-			Sfx.Play(e.snd, nil, e.pitch, e.vol)
+			Sfx.Play(e.snd, nil, e.pitch, e.vol, WEAPON)
 			if e.kick then recoilPos:Impulse(e.kick[1]); recoilRot:Impulse(e.kick[2]) end
 		end })
 	end
@@ -460,13 +460,13 @@ local function fire()
 	if sprayIndex % 2 == 0 or cfg.FireMode ~= "Auto" then built.Smoke:Emit(1) end
 	if cfg.Cycle then
 		cycleStart = now
-		if cfg.Cycle ~= "Slide" then task.delay(cfg.CycleDelay, function() Sfx.Play("Bolt") end) end
+		if cfg.Cycle ~= "Slide" then task.delay(cfg.CycleDelay, function() Sfx.Play("Cycle", nil, nil, nil, WEAPON) end) end
 	end
 	if cfg.Cycle ~= "Bolt" and cfg.Cycle ~= "Pump" then ejectShell()
 	else task.delay(cfg.CycleDelay + cfg.CycleTime * 0.4, function() if built then ejectShell() end end) end
-	Sfx.Play("Fire", nil, cfg.FirePitch, cfg.FireVolume)
-	Sfx.Play("FireTail", nil, cfg.FirePitch, cfg.FireVolume)
-	if ammo <= cfg.MagSize * 0.25 then Sfx.Play("LowAmmo") end
+	Sfx.Play("Fire", nil, cfg.FirePitch, cfg.FireVolume, WEAPON)
+	Sfx.Play("FireTail", nil, cfg.FirePitch, cfg.FireVolume, WEAPON)
+	if ammo <= cfg.MagSize * 0.25 then Sfx.Play("LowAmmo", nil, nil, nil, WEAPON) end
 
 	FireRemote:FireServer(WEAPON, origin, shots)
 
@@ -530,7 +530,11 @@ table.insert(conns, ShotFX.OnClientEvent:Connect(function(shooter, origin, ends)
 		if typeof(e) == "Vector3" and i <= 6 then fx:Tracer(start, e) end
 	end
 	local wcfg = Weapons.Get(shooter:GetAttribute("Weapon"))
-	if head then Sfx.Play("Fire", head, wcfg.FirePitch, wcfg.FireVolume) end
+	if head then
+		local wid = shooter:GetAttribute("Weapon")
+		Sfx.Play("Fire", head, wcfg.FirePitch, wcfg.FireVolume, wid)
+		Sfx.Play("FireTail", head, wcfg.FirePitch, wcfg.FireVolume, wid)
+	end
 end))
 
 table.insert(conns, DamagedRemote.OnClientEvent:Connect(function(dmg)
