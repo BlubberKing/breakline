@@ -4,6 +4,9 @@ local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local Weapons = require(RS:WaitForChild("WeaponConfig"))
 local GunMath = require(RS:WaitForChild("GunMath"))
+local ServerStorage = game:GetService("ServerStorage")
+local MatchCfg = require(RS:WaitForChild("MatchConfig"))
+local BoxDamage = ServerStorage:WaitForChild("BoxDamage", 30) -- BindableEvent made by MatchServer
 
 local remotes = Instance.new("Folder")
 remotes.Name = "GunRemotes"
@@ -49,7 +52,7 @@ SetLoadout.OnServerEvent:Connect(function(player, weapon, sight)
 end)
 
 ReloadRemote.OnServerEvent:Connect(function(player, weapon)
-	if weapon ~= player:GetAttribute("Weapon") then return end
+	if weapon ~= player:GetAttribute("Weapon") or player:GetAttribute("Carrying") then return end
 	local cfg = Weapons.Get(weapon)
 	local w = getState(player, weapon)
 	local now = os.clock()
@@ -92,8 +95,27 @@ local function checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
 end
 
 -- shots = { { dir, hitPart, hitPos }, ... } one entry per pellet
+-- validates a shot at a plugged wall box (enemy team's boxes only); returns box part, damage, hitPos or nil
+local function checkBoxHit(player, cfg, origin, dir, hitPart, hitPos)
+	if not hitPart:GetAttribute("WPBox") or hitPart:GetAttribute("State") ~= "Plugged" then return end
+	local plugTeam = hitPart:GetAttribute("PlugTeam")
+	if not plugTeam or not player.Team or player.Team.Name == plugTeam then return end
+	local toHit = hitPos - origin
+	local dist = toHit.Magnitude
+	if dist > cfg.Range or dist < 0.01 or toHit.Unit:Dot(dir) < 0.95 then return end
+	if (hitPart.Position - hitPos).Magnitude > hitPart.Size.Magnitude / 2 + 4 then return end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore = {}
+	for _, p in Players:GetPlayers() do if p.Character then table.insert(ignore, p.Character) end end
+	params.FilterDescendantsInstances = ignore
+	local r = workspace:Raycast(origin, toHit.Unit * (dist + 1), params)
+	if r and r.Instance ~= hitPart then return end -- something solid is in the way
+	return hitPart, GunMath.Damage(cfg, dist, false) * MatchCfg.BOX.DamageMult, hitPos
+end
+
 FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
-	if weapon ~= player:GetAttribute("Weapon") then return end
+	if weapon ~= player:GetAttribute("Weapon") or player:GetAttribute("Carrying") then return end
 	local cfg = Weapons.Get(weapon)
 	if typeof(origin) ~= "Vector3" or type(shots) ~= "table" then return end
 	if #shots < 1 or #shots > cfg.Pellets then return end
@@ -116,7 +138,7 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 	w.lastFire = now
 
 	local first, maxCone = nil, math.cos(math.rad(cfg.PelletSpread * 2.2 + 1))
-	local ends, hits = {}, {}
+	local ends, hits, boxHits = {}, {}, {}
 	for i, shot in shots do
 		if type(shot) ~= "table" then return end
 		local dir, hitPart, hitPos = shot[1], shot[2], shot[3]
@@ -131,6 +153,15 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 		if typeof(hitPos) == "Vector3" and (hitPos - origin).Magnitude <= cfg.Range + 5 then endPos = hitPos end
 		ends[i] = endPos
 
+		local boxPart, boxDmg, boxPos
+		if typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") and typeof(hitPos) == "Vector3" and BoxDamage then
+			boxPart, boxDmg, boxPos = checkBoxHit(player, cfg, origin, dir, hitPart, hitPos)
+		end
+		if boxPart then
+			local b = boxHits[boxPart] or { dmg = 0, pos = boxPos }
+			b.dmg += boxDmg
+			boxHits[boxPart] = b
+		end
 		local model, hum, dmg, head, pos, targetPlayer = checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
 		if model then
 			local h = hits[model] or { hum = hum, dmg = 0, head = false, pos = pos, player = targetPlayer }
@@ -143,6 +174,12 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 	-- show this shot to everyone else
 	for _, p in Players:GetPlayers() do
 		if p ~= player then ShotFX:FireClient(p, player, origin, ends) end
+	end
+
+	-- plugged boxes: damage goes to MatchServer, the shooter gets a body hitmarker + number
+	for part, b in boxHits do
+		BoxDamage:Fire(part, b.dmg, player)
+		HitConfirm:FireClient(player, part, false, false, math.floor(b.dmg + 0.5), b.pos)
 	end
 
 	-- one damage number per target per shot (shotgun pellets are added together)
