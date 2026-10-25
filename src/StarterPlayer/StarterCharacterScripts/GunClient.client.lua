@@ -237,6 +237,7 @@ local dmgAlpha = 0
 local gunCF = camera.CFrame
 local scoped = false
 local cleaned = false
+local cleanup -- defined at the bottom
 
 local recoilPos = Spring.new(400, 28)
 local recoilRot = Spring.new(380, 24)
@@ -345,6 +346,7 @@ end
 
 -- ================= EQUIP (build viewmodel for the current weapon + sight) =================
 local function equip(id, sightId)
+	if cleaned then return end -- this character is gone: never build a new viewmodel
 	if built then built.Model:Destroy() end
 	WEAPON = Weapons.Weapons[id] and id or Weapons.Default
 	cfg = Weapons.Get(WEAPON)
@@ -353,6 +355,10 @@ local function equip(id, sightId)
 
 	built = GunModels.BuildViewmodel(cfg.Model, sightId, VM_SCALE)
 	sight = built.Sight
+	local ownerTag = Instance.new("ObjectValue") -- lets MatchClient tell whose viewmodel this is (and remove leftovers after a respawn)
+	ownerTag.Name = "Owner"
+	ownerTag.Value = character
+	ownerTag.Parent = built.Model
 	built.Model.Parent = camera
 	partsList, cfList = {}, {}
 	for _, g in { "gun", "cycle", "mag", "left", "flash" } do
@@ -632,6 +638,8 @@ end
 
 -- ================= FRAME =================
 local function onRender(dt)
+	if cleaned then return end
+	if not character:IsDescendantOf(workspace) then cleanup() return end -- respawned/teleported: this character is gone
 	dt = math.min(dt, 0.1)
 	local now = os.clock()
 	local alive = humanoid.Health > 0
@@ -887,7 +895,7 @@ end
 pcall(function() RunService:UnbindFromRenderStep(BIND) end)
 RunService:BindToRenderStep(BIND, Enum.RenderPriority.Camera.Value + 1, onRender)
 
-local function cleanup()
+cleanup = function()
 	if cleaned then return end
 	cleaned = true
 	pcall(function() RunService:UnbindFromRenderStep(BIND) end)
@@ -901,3 +909,4 @@ local function cleanup()
 end
 humanoid.Died:Connect(cleanup)
 character.AncestryChanged:Connect(function(_, parent) if not parent then cleanup() end end)
+script.Destroying:Connect(function() cleanup() end)
