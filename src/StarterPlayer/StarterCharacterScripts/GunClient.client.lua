@@ -23,8 +23,18 @@ local FireRemote, ReloadRemote = Remotes:WaitForChild("Fire"), Remotes:WaitForCh
 local HitConfirm, ShotFX, DamagedRemote = Remotes:WaitForChild("HitConfirm"), Remotes:WaitForChild("ShotFX"), Remotes:WaitForChild("Damaged")
 
 local VM_SCALE = 0.85 -- viewmodel gun size
-local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 80, 6
-local WALK_SPEED, SPRINT_SPEED = 16, 24
+local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 82, 7
+local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
+-- speed feel (all subtle on purpose)
+local SPEEDFX = {
+	FOV_FROM = 30, FOV_TO = 55, FOV_ADD = 6,      -- extra FOV when going faster than a sprint (slides, downhill)
+	LINES_FROM = 25, LINES_TO = 46,               -- speed lines fade in between these speeds
+	LINES_MAX_ALPHA = 0.32,                       -- 0 = invisible, 1 = solid white
+	LINE_COUNT = 26,
+	SHAKE_DEG = 0.22,                             -- camera rumble while sliding (degrees at full speed)
+	SLIDE_FOV_PUNCH = 40,                         -- quick FOV kick when a slide starts
+	WIND_FROM = 22, WIND_TO = 50, WIND_VOL = 0.5, -- looping wind (SoundBank "Wind", silent until an ID is pasted)
+}
 local BIND = "GunUpdate"
 local ACCENT = GunModels.Colors.Accent
 local rad = math.rad
@@ -55,6 +65,35 @@ for _, rot in { 0, 90 } do
 	g.Parent = f
 	f.Parent = gui
 	table.insert(vignettes, f)
+end
+
+-- speed lines: thin soft streaks around the screen edge that drift outward when moving fast
+local speedLayer = Instance.new("Frame")
+speedLayer.Name = "SpeedLines"
+speedLayer.Size = UDim2.fromScale(1, 1)
+speedLayer.BackgroundTransparency = 1
+speedLayer.Visible = false
+speedLayer.Parent = gui
+local speedLines = {}
+for i = 1, SPEEDFX.LINE_COUNT do
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.BackgroundColor3 = Color3.new(1, 1, 1)
+	f.BorderSizePixel = 0
+	local g = Instance.new("UIGradient")
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1),
+	})
+	g.Parent = f
+	f.Parent = speedLayer
+	speedLines[i] = {
+		f = f,
+		angle = (i / SPEEDFX.LINE_COUNT) * math.pi * 2 + (math.random() - 0.5) * 0.25,
+		r = 0.7 + math.random() * 0.45,
+		speed = 0.5 + math.random() * 0.6,
+		len = 60 + math.random() * 90,
+		w = math.random() < 0.3 and 2 or 1,
+	}
 end
 
 -- full-screen sniper scope (black outside a circle, thin crosshair)
@@ -161,11 +200,13 @@ local adsFov, adsSens = 58, 0.7
 
 local ammo, reloading, reloadStart, reloadEvents = 0, false, 0, {}
 local triggerDown, aimHeld, shiftHeld = false, false, false
+local speedFov, speedLineAlpha, wasSliding, shakeRoll = 0, 0, false, 0
+local windSound = Sfx.Loop and Sfx.Loop("Wind") or nil
 local nextFireTime, bloom, sprayIndex, lastShotTime = 0, 0, 0, 0
 local burstQueue, semiPending = 0, nil
 local cycleStart = -10
 local aimAlpha, sprintAlpha, equipStart = 0, 0, os.clock()
-local slideAlpha, mantleAlpha = 0, 0
+local slideAlpha, mantleAlpha, crouchAlpha = 0, 0, 0
 local bobT, bobAmt, strafeRoll = 0, 0, 0
 local wasGrounded, airVelY = true, 0
 local flashUntil, flashRoll, flashVisible = 0, 0, false
@@ -542,13 +583,15 @@ local function onRender(dt)
 	local moving = humanoid.MoveDirection.Magnitude > 0.1
 	local sliding = character:GetAttribute("Sliding") == true
 	local mantling = character:GetAttribute("Mantling") == true
+	local crouching = character:GetAttribute("Crouching") == true
 	if menuOpen() then shiftHeld = false end
 
 	-- states
 	local aiming = aimHeld and not reloading and alive and not mantling
-	local wantsSprint = shiftHeld and moving and not aiming and not triggerDown
+	local wantsSprint = shiftHeld and moving and not aiming and not triggerDown and not crouching
 	local sprinting = wantsSprint and not sliding and not mantling
-	humanoid.WalkSpeed = (wantsSprint and SPRINT_SPEED or WALK_SPEED) * cfg.MoveSpeed
+	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
+	humanoid.WalkSpeed = baseSpeed * cfg.MoveSpeed
 	aimAlpha = approach(aimAlpha, aiming and 1 or 0, dt, cfg.ADSTime)
 	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
@@ -595,16 +638,30 @@ local function onRender(dt)
 	end
 	climbOffset = climbOffset:Lerp(climbTarget, 1 - math.exp(-cfg.ClimbSnap * dt))
 	local cp = camPunch:Update(dt)
-	local desired = climbOffset + Vector2.new(cp.X, cp.Y)
+	-- slide rumble: tiny low-frequency noise, scales with speed, mostly gone while aiming
+	local shakeAmt = SPEEDFX.SHAKE_DEG * slideAlpha * math.clamp(flatSpeed / 40, 0, 1.3) * (1 - aimAlpha * 0.85)
+	local shakeP = math.noise(now * 9, 0.3) * shakeAmt
+	local shakeY = math.noise(0.7, now * 9) * shakeAmt * 0.6
+	shakeRoll = math.noise(now * 7, 5.1) * shakeAmt * 1.5
+	local desired = climbOffset + Vector2.new(cp.X + shakeP, cp.Y + shakeY)
 	local d = desired - applied
 	applied = desired
 	rotateCamera(d.X, d.Y)
 	lastPitch = math.deg(math.asin(math.clamp(camera.CFrame.LookVector.Y, -1, 1)))
 	local slideRoll = -3 * slideAlpha * (1 - aimAlpha * 0.6)
-	camera.CFrame *= CFrame.Angles(0, 0, rad(cp.Z + slideRoll))
+	camera.CFrame *= CFrame.Angles(0, 0, rad(cp.Z + slideRoll + shakeRoll))
+
+	-- slide start: short FOV kick + small dip
+	if sliding and not wasSliding then
+		fovPunch:Impulse(Vector3.new(SPEEDFX.SLIDE_FOV_PUNCH * (1 - aimAlpha * 0.8), 0, 0))
+		landSpring:Impulse(Vector3.new(0, -1.6, 0))
+	end
+	wasSliding = sliding
 
 	local fp = fovPunch:Update(dt)
-	local fov = BASE_FOV + (SPRINT_FOV - BASE_FOV) * sprintAlpha + SLIDE_FOV_ADD * slideAlpha
+	local fast = math.clamp((flatSpeed - SPEEDFX.FOV_FROM) / (SPEEDFX.FOV_TO - SPEEDFX.FOV_FROM), 0, 1)
+	speedFov = approach(speedFov, fast * SPEEDFX.FOV_ADD, dt, 0.35)
+	local fov = BASE_FOV + (SPRINT_FOV - BASE_FOV) * sprintAlpha + SLIDE_FOV_ADD * slideAlpha + speedFov
 	local zoomFp = sight.Mag and fp.X / sight.Mag or fp.X
 	camera.FieldOfView = fov + (adsFov - fov) * aimAlpha + zoomFp
 
@@ -648,6 +705,10 @@ local function onRender(dt)
 	local slideCF = CFrame.new(-0.1 * skPos, -0.05 * skPos, 0.12 * skPos)
 		* CFrame.Angles(rad(3 * skPos), rad(4 * skPos), rad(-16 * skRoll))
 
+	crouchAlpha = approach(crouchAlpha, crouching and 1 or 0, dt, 0.15)
+	local ck = smooth(crouchAlpha) * (1 - aimAlpha)
+	local crouchCF = CFrame.new(-0.04 * ck, -0.04 * ck, 0.03 * ck) * CFrame.Angles(0, 0, rad(-4 * ck))
+
 	local mk = smooth(mantleAlpha)
 	local mantleCF = CFrame.new(0.15 * mk, -0.75 * mk, 0.3 * mk)
 		* CFrame.Angles(rad(-38 * mk), rad(22 * mk), rad(32 * mk))
@@ -661,7 +722,7 @@ local function onRender(dt)
 	local ea = smooth(aimAlpha)
 	local base = HIP:Lerp(AIM, ea):Lerp(SPRINT, sprintAlpha * (1 - aimAlpha))
 
-	gunCF = camCF * base * mantleCF * slideCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(rad(-lp.Y * 20), 0, 0)
+	gunCF = camCF * base * mantleCF * slideCF * crouchCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(rad(-lp.Y * 20), 0, 0)
 		* breathe * bob * CFrame.Angles(rad(sw.X), rad(sw.Y), rad(sw.Z + strafeRoll))
 		* tiltCF * recoilCF
 
@@ -717,6 +778,38 @@ local function onRender(dt)
 	end
 	if not menuOpen() and UIS.MouseIconEnabled then UIS.MouseIconEnabled = false end
 
+	-- speed lines + wind
+	local fwdSpeed = math.max(-localVel.Z, 0) * 0.6 + flatSpeed * 0.4 -- mostly forward motion
+	local lineTarget = math.clamp((fwdSpeed - SPEEDFX.LINES_FROM) / (SPEEDFX.LINES_TO - SPEEDFX.LINES_FROM), 0, 1)
+	lineTarget *= (1 - aimAlpha) * (alive and 1 or 0) * (scoped and 0 or 1)
+	speedLineAlpha = approach(speedLineAlpha, lineTarget, dt, lineTarget > speedLineAlpha and 0.25 or 0.15)
+	speedLayer.Visible = speedLineAlpha > 0.01
+	if speedLayer.Visible then
+		local vp = camera.ViewportSize
+		local half = vp * 0.5
+		local reach = math.sqrt(half.X * half.X + half.Y * half.Y)
+		for _, L in speedLines do
+			L.r += dt * L.speed * (0.6 + speedLineAlpha * 0.9)
+			if L.r > 1.15 then
+				L.r = 0.68 + math.random() * 0.1
+				L.angle += (math.random() - 0.5) * 0.4
+				L.len = 60 + math.random() * 90
+			end
+			local dx, dy = math.cos(L.angle), math.sin(L.angle)
+			local px, py = half.X + dx * reach * L.r, half.Y + dy * reach * L.r
+			L.f.Position = UDim2.fromOffset(px, py)
+			L.f.Size = UDim2.fromOffset(L.len * (0.6 + 0.4 * speedLineAlpha), L.w)
+			L.f.Rotation = math.deg(math.atan2(dy, dx))
+			local edgeFade = math.clamp((L.r - 0.68) / 0.12, 0, 1) * math.clamp((1.15 - L.r) / 0.15, 0, 1)
+			L.f.BackgroundTransparency = 1 - SPEEDFX.LINES_MAX_ALPHA * speedLineAlpha * edgeFade
+		end
+	end
+	if windSound then
+		local w = math.clamp((flatSpeed - SPEEDFX.WIND_FROM) / (SPEEDFX.WIND_TO - SPEEDFX.WIND_FROM), 0, 1)
+		windSound.Volume = approach(windSound.Volume, w * SPEEDFX.WIND_VOL * (alive and 1 or 0), dt, 0.3)
+		windSound.PlaybackSpeed = 0.85 + w * 0.35
+	end
+
 	-- damage vignette
 	dmgAlpha = math.max(0, dmgAlpha - dt * 2.2)
 	local low = humanoid.Health < 50 and (1 - humanoid.Health / 50) * 0.5 or 0
@@ -736,6 +829,7 @@ local function cleanup()
 	if built then built.Model:Destroy() end
 	UIS.MouseDeltaSensitivity = 1
 	camera.FieldOfView = BASE_FOV
+	if windSound then windSound:Destroy() end
 end
 humanoid.Died:Connect(cleanup)
 character.AncestryChanged:Connect(function(_, parent) if not parent then cleanup() end end)
