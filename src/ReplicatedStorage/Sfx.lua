@@ -42,4 +42,16 @@ function Sfx.Play(name, parent, pitch, volume)
 	return s
 end
 
+-- Looping 2D sound that starts at volume 0 (caller fades it). Returns nil if the SoundBank entry has no ID.
+function Sfx.Loop(name, parent)
+	local t = templates[name]
+	if not t then return nil end
+	local s = t:Clone()
+	s.Looped = true
+	s.Volume = 0
+	s.Parent = parent or SoundService
+	s:Play()
+	return s
+end
+
 return Sfx
