@@ -59,6 +59,7 @@ local function attachGun(player, char)
 	char:SetAttribute("ADS", false)
 	char:SetAttribute("Sprint", false)
 	char:SetAttribute("Sliding", false)
+	char:SetAttribute("Crouching", false)
 	char:SetAttribute("Mantling", false)
 	char:SetAttribute("Reloading", false)
 end
@@ -98,7 +99,7 @@ local function alive(player)
 end
 
 local lastLook = {}
-Look.OnServerEvent:Connect(function(player, pitch, ads, sprint, slide, mantle)
+Look.OnServerEvent:Connect(function(player, pitch, ads, sprint, slide, mantle, crouch)
 	if type(pitch) ~= "number" or pitch ~= pitch then return end
 	local now = os.clock()
 	if now - (lastLook[player] or 0) < 1 / 40 then return end
@@ -106,12 +107,13 @@ Look.OnServerEvent:Connect(function(player, pitch, ads, sprint, slide, mantle)
 	local char = alive(player)
 	if not char then return end
 	pitch = math.clamp(pitch, -math.rad(80), math.rad(80))
-	ads, slide, mantle = ads == true, slide == true, mantle == true
+	ads, slide, mantle, crouch = ads == true, slide == true, mantle == true, crouch == true
 	char:SetAttribute("AimPitch", math.floor(pitch * 100 + 0.5) / 100)
 	char:SetAttribute("ADS", ads and not mantle)
 	char:SetAttribute("Sprint", sprint == true and not ads and not slide)
 	char:SetAttribute("Sliding", slide)
 	char:SetAttribute("Mantling", mantle)
+	char:SetAttribute("Crouching", crouch and not slide and not mantle)
 end)
 
 local function findRemote(name)
