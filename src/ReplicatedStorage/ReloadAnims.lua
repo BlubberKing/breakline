@@ -161,12 +161,12 @@ function Defs.ANVIL(a)
 	local tray = function(i) return V(0, 0.56, -0.45 + i * 0.12) end
 	return {
 		tilt = { roll = -10, pitch = 12, yaw = 20, lift = V(-0.35, 0.45, 0.0), rise = 0.12, fall = 0.9 },
-		hinge = V(0, 0.6, -0.6),
+		hinge = V(0.13, 0.6, -0.25), hingeRoll = true,
 		keys = {
 			{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
 			{ t = 0.07 },
-			{ t = 0.15, hand = V(0, 0.64, 0.1), grab = 1 },
-			{ t = 0.24, hand = V(0, 0.78, -0.45), cov = -75 },
+			{ t = 0.15, hand = V(0.2, 0.7, -0.1), grab = 1 },
+			{ t = 0.24, hand = V(0.3, 0.85, -0.25), cov = -125 },
 			{ t = 0.30 },
 			{ t = 0.36, hand = m(-0.03, -0.25, 0), grab = 1 },
 			{ t = 0.40 },
@@ -177,10 +177,10 @@ function Defs.ANVIL(a)
 			{ t = 0.70, hand = m(-0.3, -0.5, 0.05), mag = V(-0.3, -0.4, 0.05) },
 			{ t = 0.75, hand = m(-0.03, -0.25, 0), mag = V(0, 0, 0) },
 			{ t = 0.78, hand = m(-0.03, 0.05, 0), grab = 0.6 },
-			{ t = 0.86, hand = V(0, 0.7, -0.2) },
-			{ t = 0.88, hand = V(0, 0.78, -0.45), grab = 1 },
-			{ t = 0.93, hand = V(0, 0.72, 0.08), cov = 0 },
-			{ t = 0.96, hand = V(0, 0.66, 0.08) },
+			{ t = 0.86, hand = V(0.3, 0.8, -0.25) },
+			{ t = 0.88, hand = V(0.3, 0.85, -0.25), grab = 1 },
+			{ t = 0.93, hand = V(0.15, 0.72, -0.2), cov = 0 },
+			{ t = 0.96, hand = V(0.05, 0.66, -0.2) },
 			{ t = 1, hand = FO, grab = 0 },
 		},
 		aux = function(u, c)
@@ -463,7 +463,9 @@ function ReloadAnims.Make(modelId, P, s)
 		if d < 0 and d > -1.2 then d *= DIP; return V(v.X, (rel and 0 or y0) + d, v.Z) end
 		return v
 	end
-	tl.lift = tl.lift + V(0, 0.2, 0)
+	-- the gun barely moves on screen during a reload (it used to swing toward the center and took up too much space)
+	local TILT = 0.15
+	tl.roll, tl.pitch, tl.yaw, tl.lift = tl.roll * TILT, tl.pitch * TILT, tl.yaw * TILT, tl.lift * TILT
 	local neutral = { tilt = IDENT, mag = IDENT, hand = P.Fore.Position, grab = 0, fall = false }
 
 	local function handAt(u)
@@ -493,7 +495,7 @@ function ReloadAnims.Make(modelId, P, s)
 		if cyc ~= 0 or k0.cyc ~= 0 or k1.cyc ~= 0 then pose.cycleZ = cyc * s end
 		if hinge then
 			local cov = num(k0.cov, k1.cov, x)
-			pose.cover = CF(hinge * s) * ang(cov, 0, 0) * CF(-hinge * s)
+			pose.cover = CF(hinge * s) * (spec.hingeRoll and ang(0, 0, cov) or ang(cov, 0, 0)) * CF(-hinge * s)
 		end
 		if spec.aux then
 			local raw, out = spec.aux(u, ctx), {}
