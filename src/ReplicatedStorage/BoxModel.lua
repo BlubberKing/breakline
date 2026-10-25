@@ -160,6 +160,7 @@ local function getFaces(body)
 		local panel = sg and sg:FindFirstChild("Panel")
 		if panel then
 			table.insert(faces, {
+				panel = panel,
 				stroke = panel:FindFirstChild("Stroke"),
 				eyeL = panel:FindFirstChild("EyeL"),
 				eyeR = panel:FindFirstChild("EyeR"),
@@ -208,26 +209,42 @@ function BoxModel.Animate(body, src, now, teamColors)
 			col = col:Lerp(Color3.fromRGB(255, 120, 80), 0.5)
 		end
 	end
-	if state ~= "Thrown" and ((now + seed * 13) % (3.4 + (seed * 7) % 2)) < 0.12 then eh = 0.04 end -- blink
-	local sway = math.sin(now * 1.3 + seed * 6) * 0.012 + (shake > 0 and math.sin(now * 40) * shake or 0)
+	-- ANGRY: any damage (server stamps LastHit) makes the face scowl for ~0.9s; steady fire = steady scowl
+	local lastHit = src:GetAttribute("LastHit")
+	local anger = (state == "Plugged" and lastHit) and math.clamp(1 - (workspace:GetServerTimeNow() - lastHit) / 0.9, 0, 1) or 0
+	local tilt, bg = 0, Color3.fromRGB(10, 12, 18)
+	if anger > 0 then
+		local a = anger
+		ew, eh = ew + (0.2 - ew) * a, eh + (0.17 - eh) * a
+		mw, mh, my = mw + (0.4 - mw) * a, mh + (0.13 - mh) * a, my + (0.82 - my) * a
+		col = col:Lerp(Color3.fromRGB(255, 55, 40), 0.85 * a)
+		bg = bg:Lerp(Color3.fromRGB(60, 6, 6), a)
+		tilt = 24 * a
+		shake = shake + 0.012 * a
+	end
+	if anger < 0.3 and state ~= "Thrown" and ((now + seed * 13) % (3.4 + (seed * 7) % 2)) < 0.12 then eh = 0.04 end -- blink
+	local sway = math.sin(now * 1.3 + seed * 6) * 0.012 + (shake > 0 and math.sin(now * 50) * shake or 0)
 
 	for _, f in faces do
 		if f.eyeL then
 			f.eyeL.Position = UDim2.fromScale(0.3 + sway, 0.4)
 			f.eyeL.Size = UDim2.fromScale(ew, eh)
 			f.eyeL.BackgroundColor3 = col
+			f.eyeL.Rotation = tilt -- inner ends dip = scowl
 		end
 		if f.eyeR then
 			f.eyeR.Position = UDim2.fromScale(0.7 + sway, 0.4)
 			f.eyeR.Size = UDim2.fromScale(ew, eh)
 			f.eyeR.BackgroundColor3 = col
+			f.eyeR.Rotation = -tilt
 		end
 		if f.mouth then
 			f.mouth.Position = UDim2.fromScale(0.5 + sway, my)
 			f.mouth.Size = UDim2.fromScale(mw, mh)
 			f.mouth.BackgroundColor3 = col
 		end
-		if f.stroke then f.stroke.Color = col end
+		if f.stroke then f.stroke.Color = col; f.stroke.Thickness = 5 + 4 * anger end
+		if f.panel then f.panel.BackgroundColor3 = bg end
 	end
 end
 
