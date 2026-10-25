@@ -52,7 +52,7 @@ W.Defaults = {
 
 W.Weapons = {
 	VX9 = {
-		Name = "VX-9 RIFLE", Class = "Assault Rifle",
+		Name = "M4A1", Class = "Assault Rifle",
 		Inspiration = "Real: M4 / AR-15 · Finals: FCAR / ARN-220 · Rivals: Assault Rifle",
 		Sights = { "Iron", "RedDot", "Holo", "Ranger3x" }, DefaultSight = "RedDot",
 		Damage = 18, HeadMultiplier = 1.6, RPM = 650, MagSize = 30, ReloadTime = 1.9, Range = 700,
@@ -67,7 +67,7 @@ W.Weapons = {
 	},
 
 	KR47 = {
-		Name = "KR-47 BRUISER", Class = "Assault Rifle",
+		Name = "AK-47", Class = "Assault Rifle",
 		Inspiration = "Real: AKM · Finals: AKM · Rivals: Assault Rifle (heavier)",
 		Sights = { "Iron", "RedDot", "Holo" }, DefaultSight = "Iron",
 		Damage = 22, HeadMultiplier = 1.5, RPM = 540, MagSize = 30, ReloadTime = 2.3, Range = 650,
@@ -80,7 +80,7 @@ W.Weapons = {
 	},
 
 	HX3 = {
-		Name = "HX-3 BURST", Class = "Burst Rifle",
+		Name = "FAMAS", Class = "Burst Rifle",
 		Inspiration = "Real: FAMAS (bullpup) · Finals: FAMAS · Rivals: Burst Rifle",
 		Sights = { "Iron", "RedDot", "Holo", "Ranger3x" }, DefaultSight = "RedDot",
 		FireMode = "Burst", BurstCount = 3, BurstRPM = 900, BurstDelay = 0.3,
@@ -92,7 +92,7 @@ W.Weapons = {
 	},
 
 	WASP = {
-		Name = "WASP SMG", Class = "SMG",
+		Name = "MP7", Class = "SMG",
 		Inspiration = "Real: MP7 / Vector · Finals: XP-54 / M11 · Rivals: Uzi",
 		Sights = { "Iron", "RedDot", "Holo" }, DefaultSight = "RedDot",
 		Damage = 14, HeadMultiplier = 1.4, RPM = 900, MagSize = 40, ReloadTime = 1.8, Range = 400,
@@ -105,7 +105,7 @@ W.Weapons = {
 	},
 
 	ANVIL = {
-		Name = "ANVIL LMG", Class = "LMG",
+		Name = "M249 SAW", Class = "LMG",
 		Inspiration = "Real: M249 / M60 · Finals: M60 / Lewis Gun · Rivals: Minigun (role)",
 		Sights = { "Iron", "RedDot", "Holo", "Ranger3x" }, DefaultSight = "Holo",
 		Damage = 17, HeadMultiplier = 1.4, RPM = 620, MagSize = 80, ReloadTime = 3.8, Range = 700,
@@ -118,7 +118,7 @@ W.Weapons = {
 	},
 
 	LONGSHOT = {
-		Name = "LONGSHOT DMR", Class = "Marksman",
+		Name = "M14 EBR", Class = "Marksman",
 		Inspiration = "Real: M14 EBR · Finals: LH1 · Rivals: (none — fills the gap)",
 		Sights = { "Iron", "RedDot", "Ranger3x" }, DefaultSight = "Ranger3x",
 		FireMode = "Semi", RPM = 260,
@@ -132,7 +132,7 @@ W.Weapons = {
 	},
 
 	HALO50 = {
-		Name = "HALO-50 SNIPER", Class = "Sniper",
+		Name = "AWP", Class = "Sniper",
 		Inspiration = "Real: AWM · Finals: SR-84 · Rivals: Sniper",
 		Sights = { "Sniper8x", "Ranger3x", "Iron" }, DefaultSight = "Sniper8x",
 		FireMode = "Semi", RPM = 48,
@@ -150,7 +150,7 @@ W.Weapons = {
 	},
 
 	BREACHER = {
-		Name = "BREACHER PUMP", Class = "Shotgun",
+		Name = "REMINGTON 870", Class = "Shotgun",
 		Inspiration = "Real: Remington 870 · Finals: M26 Matter / SA1216 · Rivals: Shotgun",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
 		FireMode = "Semi", RPM = 80, Pellets = 10, PelletSpread = 4.5, ADSPelletMult = 0.85,
@@ -166,7 +166,7 @@ W.Weapons = {
 	},
 
 	V9 = {
-		Name = "V9 SIDEARM", Class = "Pistol",
+		Name = "GLOCK 17", Class = "Pistol",
 		Inspiration = "Real: Glock 17 · Finals: V9S · Rivals: Handgun",
 		Model = "V9",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
@@ -184,7 +184,7 @@ W.Weapons = {
 	},
 
 	MAGNUM = {
-		Name = "MAGNUM .44", Class = "Revolver",
+		Name = ".44 MAGNUM", Class = "Revolver",
 		Inspiration = "Real: S&W Model 29 · Finals: R.357 · Rivals: Revolver",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
 		FireMode = "Semi", RPM = 140,
