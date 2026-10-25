@@ -25,6 +25,8 @@ local function buildFace(body, normal)
 	sg.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
 	sg.CanvasSize = Vector2.new(300, 300)
 	sg.LightInfluence = 0
+	sg.MaxDistance = 5000 -- keep faces visible through scopes / from far away
+	sg.ClipsDescendants = false
 	sg.Brightness = 1.6
 	sg.Parent = body
 
