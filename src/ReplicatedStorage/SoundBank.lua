@@ -15,4 +15,5 @@ return {
 	Damaged     = { Id = "5718786992", Volume = 0.60 },
 	Slide       = { Id = "138269837525273", Volume = 0.50 },
 	Mantle      = { Id = "120034381418358", Volume = 0.50 },
+	Wind        = { Id = "93035214379043", Volume = 0.50 }, -- looping wind rush at high speed (paste a loopable wind sound ID)
 }
