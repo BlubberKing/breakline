@@ -1,5 +1,5 @@
 # BREAKLINE — Game Design Document
-*Working title. Roblox competitive arcade FPS. Last updated: Oct 24, 2026 (Wall Push main mode v1 update).*
+*Working title. Roblox competitive arcade FPS. Last updated: Oct 25, 2026 (Wall Push v2: MapBounds fitting, living boxes, two-handed carry).*
 
 > **Note to any AI reading this:** This file plus the `src/` folder is the source of truth.
 > Items marked **PROPOSAL** are ideas, not approved — ask the owner before building on them.
@@ -32,20 +32,22 @@
 - Enemies can **shoot plugged boxes to break them**.
 - A team **loses when the wall reaches its finish line**.
 
-**Built in v1 (owner-specified, Oct 24 d2):**
-- **Layout:** 3v3 (Red vs Blue). Each team spawns on its own **finish line** at its end of the map (3 spawn pads on the line). The wall starts in the middle.
-- **Wall:** transparent glass; players **and bullets pass through** it (parts are `CanCollide = false`, `CanQuery = false`). **3 indents (holes) per side, 6 total.**
-- **Boxes:** **1 new box spawns on EACH side of the wall every 60s** (2 per side at round start - assumption). Loose boxes glow yellow.
-- **Pick up:** hold **E** (0.25s) on a loose box. **Plugging:** carry a box into one of **your own side's** empty holes (within 7 studs) and it goes in automatically.
-- **Stealing:** you may plug **any** box in **any** hole on your side - they don't belong to a specific hole. You can also **extract an enemy's plugged box**: stand on their side and **hold E (1.5s)** on it,
-  then carry it to your side and plug it into one of your holes.
-- **Plugged box health:** 400 HP (about 2s of sustained VX-9 fire). Enemies **shoot** plugged boxes to break them (your own team can't). Health + a 2-minute timer bar float over each plugged box.
-- **Expiry:** a plugged box is **destroyed automatically after 2 minutes** in the wall.
-- **Carrying:** holding a box = **no guns, no gadgets** (can't shoot/aim/reload, gun hidden), slightly slower. **Left click = throw** (decent distance), **Q = drop**.
-- **Catching + throwing in:** a thrown box that gets within 6 studs of a **teammate** is caught mid-air. A thrown box that gets within 7 studs of an empty hole on its team's side goes in. Boxes pass through players so they never block anyone.
+**Built (v2, owner-specified, Oct 25):**
+- **Layout:** 3v3 (Red vs Blue). Each team spawns on its own **finish line** at its end of the map (3 **invisible** spawn pads on the line). The wall starts in the middle.
+- **The code only builds the gameplay pieces. You build and decorate the map.** `MatchServer` creates: invisible boundary walls + ceiling, the 2 finish lines, the 6 invisible team spawns, the middle wall with its holes, and the boxes. Nothing else (no floor, no cover, no lobby floor).
+- **MapBounds (how the code fits your map):** put an **anchored, fully transparent Part named `MapBounds`** in Workspace, sized to cover the playable area. Width = X size, Length = Z size, Height = Y size; the **bottom** of the part is the ground level. Red's end is the Front (-Z) end, Blue's the Back (+Z) end (`MAP.SwapEnds` flips this). Rotating MapBounds rotates everything. Finish lines/spawns sit `MAP.FinishInset` studs in from each end; the wall is as tall as MapBounds (max `WallHeightMax`); hole + spawn positions are fractions of the width. Resize MapBounds and everything re-fits on the next server start. If it is missing, a 140x60x260 default is created at the origin and a warning is printed.
+- **Lobby:** put a `SpawnLocation` named `LobbySpawn` in Workspace (anywhere); if none exists an invisible one is created inside MapBounds.
+- **Wall:** transparent glass; players **and bullets pass through** it. **3 indents (holes) per side, 6 total.**
+- **Boxes:** look like little robots: dark steel crate, glowing edges in amber (turns **team-colored when plugged**), antenna bulb, soft light, and an **animated face on all 4 sides** (blinks; wide-eyed when carried; squeezed eyes + "O" mouth when thrown; happy when it goes in; worried when worn down or drained; panicking under 30% health). **1 box spawns on each side at round start, then 1 new box per side every 60s.** Loose boxes glow yellow. **No expiry timer.**
+- **Pick up:** hold **E** (0.25s) on a loose box. **Plugging:** carry a box up to one of **your own side's** empty holes (within 7 studs) and it **floats into the hole** with a short animation + burst of sparks.
+- **Stealing:** you may plug **any** box in **any** hole on your side - boxes don't belong to a specific hole. You can also **extract an enemy's plugged box**: stand on their side and **hold E (1.5s)** on it, then carry it to your side and plug it into one of your holes.
+- **Plugged box health:** **5000 HP.** Enemies **shoot** plugged boxes to break them (your own team can't). A **health bar + number floats over each plugged box and is visible from either side of the wall (through the wall too).**
+- **Push drain:** the team that is **currently pushing the wall** (more plugged boxes) has **all its plugged boxes lose 10 HP every second** (`BOX.PushDrainPerSec`). The bar outline turns orange while a box is draining. Tie = nobody drains.
+- **Carrying:** holding a box = **no guns, no gadgets** (can't shoot/aim/reload), slightly slower. **Two-handed pose:** in **first person** a small box (smaller + lower than before so it doesn't block the screen, `CARRY_VM` in MatchConfig) is held in both hands with a bob and a throw thrust; in **third person** (what others see) the gun disappears and **both hands (IK) hold the box**, torso leans less. **Left click = throw** (decent distance), **Q = drop**.
+- **Catching + throwing in:** a thrown box that gets within 6 studs of a **teammate** is caught mid-air. A thrown box that gets within 7 studs of an empty hole on its team's side floats in. Boxes pass through players so they never block anyone.
 - **Pushing:** the team with **more plugged boxes pushes the wall toward the enemy** (1.5 studs/s per box of difference). **Tie = wall stays still.** The wall reaching a finish line wins the round for the other team.
-- **Rounds:** Waiting -> 8s intermission -> playing -> 7s result -> repeat. Teams are shuffled each round, extra players (7+) wait in a lobby. 5s respawn at your team's finish line.
-- **Map:** gray-box generated by code (`MatchServer`) - floor, finish lines, cover, lobby. Replace it with your real map later (see section 9).
+- **Rounds:** Waiting -> 8s intermission -> playing -> 7s result -> repeat. Teams are shuffled each round, extra players (7+) wait in the lobby. 5s respawn at your team's finish line.
+- **Fixed:** respawning/teleporting at round start left a copy of your first-person arms + gun in the camera. Now the old viewmodel is destroyed when its character is gone and `MatchClient` sweeps any leftover every 0.5s.
 - All numbers are in `MatchConfig` (ReplicatedStorage).
 
 **Still PROPOSALS (not approved):**
@@ -211,13 +213,13 @@ Goal: fast-paced and fluid. All speeds are multiplied by the gun's move-speed (7
 - **Server-authoritative** for damage, ammo, fire rate; client does visuals and instant feedback.
 - Damage numbers are shown from the **server-confirmed** value (HitConfirm).
 - Parts players and bullets should pass through (e.g. the middle wall) need **CanCollide = false AND CanQuery = false**.
-- **Wall Push map:** `MatchServer` builds a temporary gray-box map in `workspace.WallPush` when the server starts. To use your own map: build it
-  with the wall at Z = 0, then change/remove the map-building section at the top of `MatchServer` (the wall, holes, `SpawnLocation`s named `RedSpawn` / `BlueSpawn` with matching TeamColor).
+- **Wall Push map:** you build the map; `MatchServer` builds the gameplay pieces into `workspace.WallPush` at server start, fitted to your **`MapBounds`** part (anchored, transparent, bottom = ground; see 2.1). Tuning for fitting is in `MatchConfig.MAP`.
+- **Box look:** `BoxModel` (ReplicatedStorage) builds the box and animates the faces from box attributes (`State`, `Health`, `MaxHealth`, `PlugTeam`, `Draining`); `MatchClient` runs it.
 - **Carrying:** Player attribute `Carrying` (bool). Any new gun, gadget or ability script **must refuse to work while it is true** (GunClient + GunServer already do).
 - **Box damage:** `GunServer` validates a shot on a plugged box and fires the `ServerStorage.BoxDamage` BindableEvent (part, damage, shooter); `MatchServer` applies it.
 
 ### Code layout (Rojo-style)
-- `src/ReplicatedStorage/` — shared modules: WeaponConfig, GunModels, GunMath, Spring, Sfx, SoundBank, HitFX, **MatchConfig**
+- `src/ReplicatedStorage/` — shared modules: WeaponConfig, GunModels, GunMath, Spring, Sfx, SoundBank, HitFX, **MatchConfig, BoxModel**
 - `src/ServerScriptService/` — GunServer, ThirdPersonServer, AvatarService, **MatchServer**
 - `src/StarterPlayer/StarterPlayerScripts/` — ThirdPersonClient, GunPicker (temp), **MatchClient**
 - `src/StarterPlayer/StarterCharacterScripts/` — GunClient, Movement
@@ -233,11 +235,12 @@ Goal: fast-paced and fluid. All speeds are multiplied by the gun's move-speed (7
    *(order within this phase TBD; 1v1/2v2 modes can come with phase 4)*
 
 ## 11. Current Status
-**Built (not playtested):** **Wall Push main mode v1 (section 2.1)**; 10-gun roster with models, fire modes, sights (7.4); Armory test picker; HitFX (hitmarkers,
+**Built (not playtested):** **Wall Push main mode v2 (section 2.1)**; 10-gun roster with models, fire modes, sights (7.4); Armory test picker; HitFX (hitmarkers,
 damage numbers, combo counter, kill banner, impacts); crouch / momentum slide / slide-jump / momentum jump / mantle + speed effects + mobile sprint button (section 8); third-person world gun with IK hands;
 custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
 
 **Changelog**
+- **Oct 25 (f):** **Wall Push v2.** Map is now yours: code only builds boundary walls, finish lines, invisible spawns, the wall and boxes, fitted to a `MapBounds` part. New `BoxModel` (robot boxes with animated faces, team-colored edges). Box health 5000, no expiry timer, 1 box per side at start, push drain 10 HP/s on the pushing team's boxes, health bars visible from both sides, box floats into the hole. New two-handed carry pose in first + third person (`MatchClient`, `ThirdPersonClient` v4), smaller box on screen. **Fix:** leftover first-person arms/gun after teleport (`GunClient`, `MatchClient`). Files: MatchConfig, BoxModel (new), MatchServer, MatchClient, ThirdPersonClient, GunClient.
 - **Oct 24 (e):** **Wall Push main mode v1.** New `MatchConfig`, `MatchServer`, `MatchClient`. Teams (Red/Blue 3v3), rounds, gray-box map with transparent wall,
   6 holes, boxes (pick up, carry, throw, catch, plug, extract from enemy side, health, 2-min expiry, 1 spawn per side per minute), wall push + win at finish line, HUD.
   `GunServer` + `GunClient` patched: no shooting/aiming/reloading while carrying, shots can damage enemy plugged boxes.
@@ -256,8 +259,8 @@ custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
 
 **To do / known:**
 - **Playtest Wall Push** (you can test alone in Studio: `MIN_PLAYERS = 1`): does throwing feel right (`THROW_SPEED`, `THROW_UP`), is pick-up/extract timing ok,
-  is the wall speed (`WALL_SPEED_PER_BOX`) too slow/fast, box health 400, catch/plug radius. Set `MIN_PLAYERS` to 6 for live games.
-- Not built yet for Wall Push: match timer/overtime, team select/balancing UI, scoreboard, box/wall sounds, carried-box pose in third person
+  is the wall speed (`WALL_SPEED_PER_BOX`) too slow/fast, box health 5000 + drain 10/s, catch/plug radius, carry pose. Set `MIN_PLAYERS` to 6 for live games.
+- Not built yet for Wall Push: match timer/overtime, team select/balancing UI, scoreboard, box/wall sounds
   (the box just floats in front of you), the wall smashing cover, real map.
 - Third-person world gun is hidden while carrying by making its parts transparent - check it stays hidden (ThirdPersonClient was not changed).
 - Playtest the new movement numbers: sprint 30, jump height 4.6 + air momentum, slide flat time 0.95s, downhill gain, speed lines
