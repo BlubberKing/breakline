@@ -92,7 +92,7 @@ W.Weapons = {
 	},
 
 	WASP = {
-		Name = "MP7", Class = "SMG",
+		Name = "WASP", Class = "SMG",
 		Inspiration = "Real: MP7 / Vector · Finals: XP-54 / M11 · Rivals: Uzi",
 		Sights = { "Iron", "RedDot", "Holo" }, DefaultSight = "RedDot",
 		Damage = 14, HeadMultiplier = 1.4, RPM = 900, MagSize = 40, ReloadTime = 1.8, Range = 400,
@@ -105,7 +105,7 @@ W.Weapons = {
 	},
 
 	ANVIL = {
-		Name = "M249 SAW", Class = "LMG",
+		Name = "ANVIL", Class = "LMG",
 		Inspiration = "Real: M249 / M60 · Finals: M60 / Lewis Gun · Rivals: Minigun (role)",
 		Sights = { "Iron", "RedDot", "Holo", "Ranger3x" }, DefaultSight = "Holo",
 		Damage = 17, HeadMultiplier = 1.4, RPM = 620, MagSize = 80, ReloadTime = 3.8, Range = 700,
@@ -118,7 +118,7 @@ W.Weapons = {
 	},
 
 	LONGSHOT = {
-		Name = "M14 EBR", Class = "Marksman",
+		Name = "LONGSHOT", Class = "Marksman",
 		Inspiration = "Real: M14 EBR · Finals: LH1 · Rivals: (none — fills the gap)",
 		Sights = { "Iron", "RedDot", "Ranger3x" }, DefaultSight = "Ranger3x",
 		FireMode = "Semi", RPM = 260,
@@ -132,7 +132,7 @@ W.Weapons = {
 	},
 
 	HALO50 = {
-		Name = "AWP", Class = "Sniper",
+		Name = "HALO-50", Class = "Sniper",
 		Inspiration = "Real: AWM · Finals: SR-84 · Rivals: Sniper",
 		Sights = { "Sniper8x", "Ranger3x", "Iron" }, DefaultSight = "Sniper8x",
 		FireMode = "Semi", RPM = 48,
@@ -150,7 +150,7 @@ W.Weapons = {
 	},
 
 	BREACHER = {
-		Name = "REMINGTON 870", Class = "Shotgun",
+		Name = "BREACHER", Class = "Shotgun",
 		Inspiration = "Real: Remington 870 · Finals: M26 Matter / SA1216 · Rivals: Shotgun",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
 		FireMode = "Semi", RPM = 80, Pellets = 10, PelletSpread = 4.5, ADSPelletMult = 0.85,
@@ -166,7 +166,7 @@ W.Weapons = {
 	},
 
 	V9 = {
-		Name = "GLOCK 17", Class = "Pistol",
+		Name = "V9", Class = "Pistol",
 		Inspiration = "Real: Glock 17 · Finals: V9S · Rivals: Handgun",
 		Model = "V9",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
@@ -184,7 +184,7 @@ W.Weapons = {
 	},
 
 	MAGNUM = {
-		Name = ".44 MAGNUM", Class = "Revolver",
+		Name = ".44 Magnum", Class = "Revolver",
 		Inspiration = "Real: S&W Model 29 · Finals: R.357 · Rivals: Revolver",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
 		FireMode = "Semi", RPM = 140,
