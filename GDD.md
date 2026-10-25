@@ -1,5 +1,5 @@
 # BREAKLINE — Game Design Document
-*Working title. Roblox competitive arcade FPS. Last updated: Oct 25, 2026 (v2.2: scope faces fix + smaller optics, angry/destroyed box FX, slower wall, soul death effect).*
+*Working title. Roblox competitive arcade FPS. Last updated: Oct 25, 2026 (v2.3: bigger soul death effect with soul-shaped wisps, souls that enter you, slimmer redesigned guns, real-world gun names).*
 
 > **Note to any AI reading this:** This file plus the `src/` folder is the source of truth.
 > Items marked **PROPOSAL** are ideas, not approved — ask the owner before building on them.
@@ -166,16 +166,16 @@ M26 Matter 11 pellets, V9S 38 dmg; Rivals AR, Burst Rifle (3-round), Uzi, Shotgu
 
 | ID | Name | Class | Real / Finals / Rivals | Dmg | Rate | Mag | Reload | TTK body / head | Sights |
 |---|---|---|---|---|---|---|---|---|---|
-| VX9 | VX-9 Rifle | AR (auto) | M4 / FCAR, ARN-220 / Assault Rifle | 18 (1.6x) | 650 | 30 | 1.9s | 0.46s / 0.28s | Iron, Red Dot, Holo, 3x |
-| KR47 | KR-47 Bruiser | AR (auto) | AKM / AKM / AR (heavier) | 22 (1.5x) | 540 | 30 | 2.3s | 0.44s / 0.33s | Iron, Red Dot, Holo |
-| HX3 | HX-3 Burst | Burst rifle | FAMAS / FAMAS / Burst Rifle | 22 (1.55x) | 3-burst | 24 | 2.0s | 0.50s / 0.13s | Iron, Red Dot, Holo, 3x |
-| WASP | Wasp SMG | SMG (auto) | MP7, Vector / XP-54, M11 / Uzi | 14 (1.4x) | 900 | 40 | 1.8s | 0.47s / 0.33s | Iron, Red Dot, Holo |
-| ANVIL | Anvil LMG | LMG (auto) | M249, M60 / M60, Lewis / Minigun role | 17 (1.4x) | 620 | 80 | 3.8s | 0.48s / 0.39s | Iron, Red Dot, Holo, 3x |
-| LONGSHOT | Longshot DMR | Marksman (semi) | M14 EBR / LH1 / — | 38 (1.75x) | 260 | 15 | 2.4s | 0.46s / 0.23s | Iron, Red Dot, 3x |
-| HALO50 | Halo-50 Sniper | Sniper (bolt) | AWM / SR-84 / Sniper | 85 (2x) | 48 | 5 | 3.0s | 1.25s / one-shot head | 8x, 3x, Iron |
-| BREACHER | Breacher Pump | Shotgun (pump) | Remington 870 / M26 Matter / Shotgun | 9x10 | 80 | 6 | 2.6s | one-shot point blank | Iron, Red Dot |
-| V9 | V9 Sidearm | Pistol (semi) | Glock 17 / V9S / Handgun | 24 (1.6x) | 420 | 15 | 1.3s | 0.57s / 0.29s | Iron, Red Dot |
-| MAGNUM | Magnum .44 | Revolver (semi) | S&W M29 / R.357 / Revolver | 45 (1.6x) | 140 | 6 | 2.4s | 0.86s / 0.43s | Iron, Red Dot |
+| VX9 | M4A1 | AR (auto) | M4 / FCAR, ARN-220 / Assault Rifle | 18 (1.6x) | 650 | 30 | 1.9s | 0.46s / 0.28s | Iron, Red Dot, Holo, 3x |
+| KR47 | AK-47 | AR (auto) | AKM / AKM / AR (heavier) | 22 (1.5x) | 540 | 30 | 2.3s | 0.44s / 0.33s | Iron, Red Dot, Holo |
+| HX3 | FAMAS | Burst rifle | FAMAS / FAMAS / Burst Rifle | 22 (1.55x) | 3-burst | 24 | 2.0s | 0.50s / 0.13s | Iron, Red Dot, Holo, 3x |
+| WASP | MP7 | SMG (auto) | MP7, Vector / XP-54, M11 / Uzi | 14 (1.4x) | 900 | 40 | 1.8s | 0.47s / 0.33s | Iron, Red Dot, Holo |
+| ANVIL | M249 SAW | LMG (auto) | M249, M60 / M60, Lewis / Minigun role | 17 (1.4x) | 620 | 80 | 3.8s | 0.48s / 0.39s | Iron, Red Dot, Holo, 3x |
+| LONGSHOT | M14 EBR | Marksman (semi) | M14 EBR / LH1 / — | 38 (1.75x) | 260 | 15 | 2.4s | 0.46s / 0.23s | Iron, Red Dot, 3x |
+| HALO50 | AWP | Sniper (bolt) | AWM / SR-84 / Sniper | 85 (2x) | 48 | 5 | 3.0s | 1.25s / one-shot head | 8x, 3x, Iron |
+| BREACHER | Remington 870 | Shotgun (pump) | Remington 870 / M26 Matter / Shotgun | 9x10 | 80 | 6 | 2.6s | one-shot point blank | Iron, Red Dot |
+| V9 | Glock 17 | Pistol (semi) | Glock 17 / V9S / Handgun | 24 (1.6x) | 420 | 15 | 1.3s | 0.57s / 0.29s | Iron, Red Dot |
+| MAGNUM | .44 Magnum | Revolver (semi) | S&W M29 / R.357 / Revolver | 45 (1.6x) | 140 | 6 | 2.4s | 0.86s / 0.43s | Iron, Red Dot |
 
 Balance notes: autos cluster around **~0.45s body TTK** (matches the ~0.5s TTK proposal); trade-offs come from range falloff,
 mobility, handling, mag size and recoil. Damage falloff makes SMG/shotgun weak at range; DMR/sniper/burst reward headshots.
@@ -239,11 +239,12 @@ Goal: fast-paced and fluid. All speeds are multiplied by the gun's move-speed (7
    *(order within this phase TBD; 1v1/2v2 modes can come with phase 4)*
 
 ## 11. Current Status
-**Built (not playtested):** **Soul death effect + box destroy FX + angry box faces (v2.2)**; **Wall Push main mode v2 (section 2.1)**; 10-gun roster with models, fire modes, sights (7.4); Armory test picker; HitFX (hitmarkers,
+**Built (not playtested):** **v2.3: slim gun redesign + real names, bigger soul effect**; **Soul death effect + box destroy FX + angry box faces (v2.2)**; **Wall Push main mode v2 (section 2.1)**; 10-gun roster with models, fire modes, sights (7.4); Armory test picker; HitFX (hitmarkers,
 damage numbers, combo counter, kill banner, impacts); crouch / momentum slide / slide-jump / momentum jump / mantle + speed effects + mobile sprint button (section 8); third-person world gun with IK hands;
 custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
 
 **Changelog**
+- **Oct 25 (i):** **v2.3.** (1) **Death effect bigger + longer:** rocket orb larger/brighter with a longer trail and glow shell, rises to 800 studs over 1.9s (was 650 / 1.5s), sky star is ~2x bigger (560px) and lasts 1.8s (was 1.1s) with a second echo flare; meeting flash bigger with sparks. (2) **Souls look like souls:** teardrop wisp with a soft halo, tiny ghost face and a tapered wiggling tail (was a plain ball). (3) **Souls enter you:** 4 of the 10 souls fly to the viewer: on your own death they rush into the camera, when someone dies near you (within 140 studs) they fly into your body with a small pulse (`SoulsToYou` in `T`). (4) **All 10 guns remodeled slimmer** (`GunModels`): narrower low receivers, flat optic rails, no tall carry handle or risers (the HX-3 handle is gone); each has a signature shape (M4 round handguard, AK wood + banana mag + slanted gas tube, FAMAS bullpup, MP7 folding stock + suppressor, M249 box mag + bipod, M14 vented guard, AWP thumbhole stock + bolt, 870 tube mag + pump, Glock slide, .44 fluted cylinder). Hit-points/animation groups unchanged. (5) **Real names:** M4A1, AK-47, FAMAS, MP7, M249 SAW, M14 EBR, AWP, Remington 870, Glock 17, .44 Magnum (display names only; internal IDs VX9/KR47/etc. are unchanged so nothing else breaks). Files: DeathFX, GunModels, WeaponConfig, GDD.
 - **Oct 25 (h):** **v2.2.** (1) **Box faces now visible through scopes:** the optic lenses (red dot / holo / 3x / 8x) used `Glass` material, which hides SurfaceGuis behind it; they are now plain transparent plastic. (2) **Optics are smaller:** new `Scale` per sight in `GunModels.Sights` (RedDot 0.7, Holo 0.75, 3x 0.8, 8x 0.85) shrinks the model and its reticle toward the mount point; tweak the numbers to taste (waiting on the owner's reference image). (3) **Angry box faces:** any hit sets a `LastHit` attribute on the box; for ~0.9s the face scowls (tilted eyes, red tint, darker panel, thicker outline, shake). (4) **Box destroy FX** (new `BoxFX`): white-hot flash + light, team-colored shockwave ring, sparks + embers, smoke puff, tumbling steel shards, and the robot's eyes flicker out. Server fires the `BoxBreak` remote. (5) **Wall slower:** `WALL_SPEED = { 0.8, 1.5, 2.1 }` by box lead (was 1.5 / 3.0 / 4.5). (6) **Soul death effect** (new `DeathFX`, `SoulFX` remote, everyone sees it): ~9 blue souls burst out in random directions, curve in and meet ~7 studs above the body with a small flash, merge into an orb that accelerates straight into the sky with a trail + rocket whoosh, then a big star-like glint appears in the sky for ~1.1s. Small parts, short lights, no screen flash so it does not distract fights; tuning in `T` at the top of `DeathFX`. New optional `SoulRocket` sound slot in `SoundBank` (empty = falls back to the Wind sound pitched up). Files: GunModels, BoxModel, MatchConfig, MatchServer, MatchClient, SoundBank, **BoxFX (new), DeathFX (new)**, GDD.
 - **Oct 25 (g):** **v2.1 fixes.** Box faces now visible through the wall and through scopes (wall no longer uses Glass material, which hid SurfaceGuis behind it; face max distance raised). Bullet marks now stick to the surface they hit (follow the moving wall), fade out after 10s, and are removed if the surface goes away. Files: MatchServer, BoxModel, HitFX.
 - **Oct 25 (f):** **Wall Push v2.** Map is now yours: code only builds boundary walls, finish lines, invisible spawns, the wall and boxes, fitted to a `MapBounds` part. New `BoxModel` (robot boxes with animated faces, team-colored edges). Box health 5000, no expiry timer, 1 box per side at start, push drain 10 HP/s on the pushing team's boxes, health bars visible from both sides, box floats into the hole. New two-handed carry pose in first + third person (`MatchClient`, `ThirdPersonClient` v4), smaller box on screen. **Fix:** leftover first-person arms/gun after teleport (`GunClient`, `MatchClient`). Files: MatchConfig, BoxModel (new), MatchServer, MatchClient, ThirdPersonClient, GunClient.
