@@ -198,6 +198,7 @@ local function viewerTarget(pos)
 end
 
 local function absorbPulse(at)
+	Sfx.Play("SoulAbsorb", at)
 	local f = softPart(Vector3.one * 0.6, ICE, at)
 	TweenService:Create(f, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Size = Vector3.one * 2.6, Transparency = 1 }):Play()
@@ -209,6 +210,9 @@ function DeathFX.Play(pos)
 	local body = pos + Vector3.new(0, 2.5, 0)
 	local rng = Random.new()
 	local getTarget, ownDeath = viewerTarget(pos)
+	local selfAbsorbPlayed = false
+	if ownDeath then Sfx.Play("PlayerDeathSelf") else Sfx.Play("PlayerDeath", pos) end
+	Sfx.Play("SoulBurst", pos + Vector3.new(0, 2.5, 0))
 
 	-- build the souls (the first few are the ones that come for you)
 	local souls = {}
@@ -263,7 +267,8 @@ function DeathFX.Play(pos)
 				end
 				local final = getTarget()
 				s.part:Destroy()
-				if not ownDeath then absorbPulse(final) end
+				if not ownDeath then absorbPulse(final)
+				elseif not selfAbsorbPlayed then selfAbsorbPlayed = true; Sfx.Play("SoulAbsorbSelf") end
 				s.gone = true
 			end)
 		end
@@ -295,6 +300,7 @@ function DeathFX.Play(pos)
 		for _, s in souls do if not s.toYou then s.part:Destroy() end end
 
 		-- meeting flash (quick, a bit bigger than before)
+		Sfx.Play("SoulMeet", meet)
 		local flash = softPart(Vector3.one * 2, Color3.new(1, 1, 1), meet)
 		TweenService:Create(flash, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 			{ Size = Vector3.one * 11, Transparency = 1 }):Play()
@@ -352,6 +358,7 @@ function DeathFX.Play(pos)
 		halo:Destroy()
 
 		-- phase 4: the sky glint (bigger + a second, softer echo flare)
+		Sfx.Play("SoulStar", sky)
 		skyGlint(sky)
 		task.delay(0.18, function() skyGlint(sky + Vector3.new(0, 20, 0)) end)
 	end)
