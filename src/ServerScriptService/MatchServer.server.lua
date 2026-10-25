@@ -1,8 +1,12 @@
--- MatchServer v1: Wall Push main mode (GDD 2.1). Server-authoritative.
---  * builds a gray-box map: floor, transparent middle wall with 3 box holes per side, finish lines + spawn pads, cover, lobby
---  * 3v3 teams, rounds (waiting -> intermission -> playing -> result), respawns
---  * boxes: spawn every minute (one per side), pick up / carry / throw / catch / plug, extract enemy boxes, health, 2 min lifetime
---  * wall moves toward the team with FEWER plugged boxes' finish line (more boxes = push); tie = stands still
+-- MatchServer v2: Wall Push main mode (GDD 2.1). Server-authoritative.
+-- It builds ONLY the gameplay pieces and fits them inside YOUR part named "MapBounds" (Workspace):
+--   * invisible boundary walls + ceiling   * the 2 finish lines   * 6 invisible team spawn pads
+--   * the middle wall with 3 box holes per side   * the boxes
+-- Everything else (floor, decoration, cover) is yours. See MatchConfig.MAP for the fitting options.
+--   * 3v3 teams, rounds (waiting -> intermission -> playing -> result), respawns
+--   * boxes: spawn every minute (one per side), pick up / carry / throw / catch / float into a hole, extract enemy boxes, health
+--   * the wall moves toward the team with FEWER plugged boxes' finish line; tie = stands still
+--   * the team that is currently PUSHING the wall has all its plugged boxes slowly worn down (PushDrainPerSec)
 -- All numbers live in MatchConfig. Carrying sets the Player attribute "Carrying" (guns + gadgets must check it).
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -14,14 +18,47 @@ local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
 
 local C = require(RS:WaitForChild("MatchConfig"))
+local BoxModel = require(RS:WaitForChild("BoxModel"))
 local M, BOX = C.MAP, C.BOX
 local rnd = Random.new()
 
-local TEAM_A, TEAM_B = C.Teams[1].Name, C.Teams[2].Name -- A defends -Z and pushes toward +Z
-local SIGN = { [TEAM_A] = -1, [TEAM_B] = 1 }              -- which side of the wall (Z sign) each team owns
+local TEAM_A, TEAM_B = C.Teams[1].Name, C.Teams[2].Name -- A pushes toward B's end and vice versa
+local SIGN = { [TEAM_A] = M.SwapEnds and 1 or -1 }       -- which end (sign of local Z) each team owns
+SIGN[TEAM_B] = -SIGN[TEAM_A]
 local TEAM_COLOR = { [TEAM_A] = C.Teams[1].Color.Color, [TEAM_B] = C.Teams[2].Color.Color }
-local LINE_Z = M.Length / 2 - M.FinishInset               -- the wall must reach +-LINE_Z to win
-local CARRY_OFFSET = CFrame.new(0, -0.3, -2.4)            -- carried box, relative to HumanoidRootPart
+local CARRY_OFFSET = CFrame.new(0, 0.25, -(0.5 + BOX.Size / 2 + 0.1)) -- carried box, relative to HumanoidRootPart
+
+-- ===================== MapBounds =====================
+local bounds = workspace:FindFirstChild("MapBounds") or workspace:WaitForChild("MapBounds", 8)
+local bCF, bSize
+if bounds and bounds:IsA("BasePart") then
+	bCF, bSize = bounds.CFrame, bounds.Size
+	bounds.Transparency = 1
+	bounds.CanCollide, bounds.CanQuery, bounds.CanTouch = false, false, false -- never blocks players or bullets
+elseif bounds and bounds:IsA("Model") then
+	bCF, bSize = bounds:GetBoundingBox()
+else
+	warn("[MatchServer] No part named MapBounds in Workspace - using a default 140 x 60 x 260 area at the origin. "
+		.. "Add an anchored, transparent Part named MapBounds around your map (see GDD section 9).")
+	local p = Instance.new("Part")
+	p.Name = "MapBounds"
+	p.Anchored = true
+	p.Size = Vector3.new(140, 60, 260)
+	p.Position = Vector3.new(0, 30, 0)
+	p.Transparency = 1
+	p.CanCollide, p.CanQuery, p.CanTouch = false, false, false
+	p.Parent = workspace
+	bCF, bSize = p.CFrame, p.Size
+end
+local MAP_W, MAP_H, MAP_L = bSize.X, bSize.Y, bSize.Z -- width (X), height (Y), length (Z)
+local _, yaw = bCF:ToOrientation()
+-- "origin": ground level at the center of MapBounds. Everything below is built in this local space (X across, Y up, Z = length).
+local origin = CFrame.new(bCF.Position.X, bCF.Position.Y - MAP_H / 2 + M.GroundOffset, bCF.Position.Z) * CFrame.Angles(0, yaw, 0)
+local LINE_Z = math.max(10, MAP_L / 2 - M.FinishInset) -- the wall must reach +-LINE_Z (local) to win
+local function toLocal(pos) return origin:PointToObjectSpace(pos) end
+local holeX, spawnX = {}, {}
+for i, f in M.HoleXFrac do holeX[i] = f * MAP_W end
+for i, f in M.SpawnXFrac do spawnX[i] = f * MAP_W end
 
 -- ===================== shared objects =====================
 local remotes = Instance.new("Folder")
@@ -37,7 +74,7 @@ stateFolder.Name = "MatchState"
 stateFolder:SetAttribute("Phase", "Waiting")
 stateFolder:SetAttribute("PhaseEnds", 0)
 stateFolder:SetAttribute("Winner", "")
-stateFolder:SetAttribute("WallFrac", 0)
+stateFolder:SetAttribute("WallFrac", 0) -- -1 .. 1, positive = toward team B's finish line
 stateFolder:SetAttribute("WallZ", 0)
 stateFolder:SetAttribute("BoxesA", 0)
 stateFolder:SetAttribute("BoxesB", 0)
@@ -51,7 +88,7 @@ if not BoxDamage then
 	BoxDamage.Parent = ServerStorage
 end
 
--- boxes pass through players (so they never push or trap anyone) but still hit the floor + cover
+-- boxes pass through players (so they never push or trap anyone) but still hit the floor + your decoration
 pcall(function() PhysicsService:RegisterCollisionGroup("WPBox") end)
 pcall(function() PhysicsService:RegisterCollisionGroup("WPPlayer") end)
 pcall(function() PhysicsService:CollisionGroupSetCollidable("WPBox", "WPPlayer", false) end)
@@ -75,7 +112,7 @@ lobbyTeam.Parent = Teams
 
 Players.RespawnTime = C.RESPAWN_TIME
 
--- ===================== map =====================
+-- ===================== generated pieces (all fitted to MapBounds) =====================
 local mapFolder = workspace:FindFirstChild("WallPush")
 if mapFolder then mapFolder:Destroy() end
 mapFolder = Instance.new("Folder")
@@ -84,16 +121,14 @@ mapFolder.Parent = workspace
 local boxFolder = Instance.new("Folder")
 boxFolder.Name = "Boxes"
 boxFolder.Parent = mapFolder
-local coverFolder = Instance.new("Folder")
-coverFolder.Name = "Cover"
-coverFolder.Parent = mapFolder
 
-local function mk(name, size, cf, color, material, transparency, parent)
+-- lcf = CFrame in map space (origin = ground at the center of MapBounds)
+local function mk(name, size, lcf, color, material, transparency, parent)
 	local p = Instance.new("Part")
 	p.Name = name
 	p.Anchored = true
 	p.Size = size
-	p.CFrame = cf
+	p.CFrame = origin * lcf
 	p.Color = color
 	p.Material = material or Enum.Material.SmoothPlastic
 	p.Transparency = transparency or 0
@@ -102,87 +137,84 @@ local function mk(name, size, cf, color, material, transparency, parent)
 	return p
 end
 
-local function invisibleBounds(name, cx, cz, w, l, h)
-	local function wall(n, size, pos)
-		local p = mk(name .. n, size, CFrame.new(pos), Color3.new(), nil, 1)
-		p.CanQuery = false
-		p.CanTouch = false
+-- invisible boundary: 4 walls + a ceiling along the edges of MapBounds
+do
+	local hb = MAP_H + 40
+	local function w(n, size, pos)
+		local p = mk(n, size, CFrame.new(pos), Color3.new(), nil, 1)
+		p.CanQuery, p.CanTouch = false, false
 	end
-	wall("N", Vector3.new(w + 4, h, 2), Vector3.new(cx, h / 2, cz - l / 2 - 1))
-	wall("S", Vector3.new(w + 4, h, 2), Vector3.new(cx, h / 2, cz + l / 2 + 1))
-	wall("W", Vector3.new(2, h, l + 4), Vector3.new(cx - w / 2 - 1, h / 2, cz))
-	wall("E", Vector3.new(2, h, l + 4), Vector3.new(cx + w / 2 + 1, h / 2, cz))
+	w("BoundFront", Vector3.new(MAP_W + 8, hb, 4), Vector3.new(0, hb / 2 - 10, -MAP_L / 2 - 2))
+	w("BoundBack", Vector3.new(MAP_W + 8, hb, 4), Vector3.new(0, hb / 2 - 10, MAP_L / 2 + 2))
+	w("BoundLeft", Vector3.new(4, hb, MAP_L + 8), Vector3.new(-MAP_W / 2 - 2, hb / 2 - 10, 0))
+	w("BoundRight", Vector3.new(4, hb, MAP_L + 8), Vector3.new(MAP_W / 2 + 2, hb / 2 - 10, 0))
+	w("BoundCeiling", Vector3.new(MAP_W + 8, 2, MAP_L + 8), Vector3.new(0, MAP_H + 1, 0))
 end
 
--- floor + outer bounds
-mk("Floor", Vector3.new(M.Width, 2, M.Length), CFrame.new(0, -1, 0), Color3.fromRGB(58, 61, 68), Enum.Material.Concrete)
-invisibleBounds("Bounds", 0, 0, M.Width, M.Length, 120)
+local function noPhysics(p)
+	p.CanCollide, p.CanQuery, p.CanTouch, p.CastShadow = false, false, false, false
+end
 
--- finish lines + spawn pads (the pads sit ON the finish line)
-for idx, t in C.Teams do
-	local z = (idx == 1 and -1 or 1) * LINE_Z
-	local line = mk(t.Name .. "FinishLine", Vector3.new(M.Width, 0.2, 3), CFrame.new(0, 0.1, z), t.Color.Color, Enum.Material.Neon)
-	line.CanCollide, line.CanQuery, line.CanTouch = false, false, false
-	for _, x in { -20, 0, 20 } do
+-- finish lines + invisible team spawn pads (the pads sit ON the finish line)
+for _, t in C.Teams do
+	local z = SIGN[t.Name] * LINE_Z
+	local line = mk(t.Name .. "FinishLine", Vector3.new(MAP_W, 0.2, 3), CFrame.new(0, 0.1, z), t.Color.Color, Enum.Material.Neon,
+		M.ShowFinishLines and 0 or 1)
+	noPhysics(line)
+	for _, x in spawnX do
 		local s = Instance.new("SpawnLocation")
 		s.Name = t.Name .. "Spawn"
 		s.Anchored = true
-		s.Size = Vector3.new(8, 1, 8)
-		s.CFrame = CFrame.lookAt(Vector3.new(x, 0.5, z), Vector3.new(x, 0.5, 0))
+		s.Size = Vector3.new(8, 0.2, 8)
+		s.CFrame = origin * CFrame.lookAt(Vector3.new(x, 0.1, z), Vector3.new(x, 0.1, 0))
 		s.Neutral = false
 		s.TeamColor = t.Color
 		s.AllowTeamChangeOnTouch = false
 		s.Duration = 0
-		s.Color = t.Color.Color
-		s.Material = Enum.Material.SmoothPlastic
-		s.Transparency = 0.15
-		s.TopSurface, s.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
+		s.Transparency = 1
+		s.CanCollide, s.CanQuery = false, false
+		for _, d in s:GetChildren() do if d:IsA("Decal") or d:IsA("Texture") then d:Destroy() end end
 		s.Parent = mapFolder
 	end
 end
 
--- cover (mirrored on both halves): { x, z, width, height }
-for _, sign in { -1, 1 } do
-	for _, c in { { -45, 55, 14, 5 }, { 40, 60, 10, 7 }, { 0, 85, 16, 4 }, { -40, 100, 10, 6 }, { 50, 92, 8, 5 } } do
-		mk("Cover", Vector3.new(c[3], c[4], 6), CFrame.new(c[1] * sign, c[4] / 2, c[2] * sign), Color3.fromRGB(96, 101, 112), Enum.Material.Concrete, 0, coverFolder)
-	end
-end
-
--- lobby (between rounds + anyone who is not in the 3v3)
+-- lobby spawn (between rounds + anyone who is not in the 3v3). Use your own: a SpawnLocation named "LobbySpawn" in Workspace.
 do
-	local lx = M.Width / 2 + 90
-	mk("LobbyFloor", Vector3.new(50, 2, 50), CFrame.new(lx, -1, 0), Color3.fromRGB(80, 84, 92), Enum.Material.Concrete)
-	invisibleBounds("LobbyBounds", lx, 0, 50, 50, 60)
-	local s = Instance.new("SpawnLocation")
-	s.Name = "LobbySpawn"
-	s.Anchored = true
-	s.Size = Vector3.new(24, 1, 24)
-	s.CFrame = CFrame.new(lx, 0.5, 0)
+	local s = workspace:FindFirstChild("LobbySpawn")
+	if not (s and s:IsA("SpawnLocation")) then
+		s = Instance.new("SpawnLocation")
+		s.Name = "LobbySpawn"
+		s.Anchored = true
+		s.Size = Vector3.new(12, 0.2, 12)
+		s.CFrame = origin * CFrame.new(MAP_W / 2 - 10, 0.1, 0)
+		s.Transparency = 1
+		s.CanCollide, s.CanQuery = false, false
+		for _, d in s:GetChildren() do if d:IsA("Decal") or d:IsA("Texture") then d:Destroy() end end
+		s.Parent = mapFolder
+	end
 	s.Neutral = false
 	s.TeamColor = lobbyColor
 	s.AllowTeamChangeOnTouch = false
 	s.Duration = 0
-	s.Color = Color3.fromRGB(150, 150, 155)
-	s.Transparency = 0.4
-	s.Parent = mapFolder
 end
 
 -- the wall: one transparent slab, a neon top edge, and 3 "indents" (frame + dark back plate) per side
 local wallParts, wallBase = {}, {}
+local WALL_H = math.min(MAP_H, M.WallHeightMax)
 do
 	local function wp(part)
-		part.CanCollide, part.CanQuery, part.CanTouch, part.CastShadow = false, false, false, false -- players + bullets pass through
+		noPhysics(part) -- players + bullets pass through
 		table.insert(wallParts, part)
-		table.insert(wallBase, part.CFrame)
+		table.insert(wallBase, origin:ToObjectSpace(part.CFrame)) -- local to map space, moved along Z later
 	end
-	local H, T = M.WallHeight, M.WallThickness
-	wp(mk("Wall", Vector3.new(M.Width, H, T), CFrame.new(0, H / 2, 0), Color3.fromRGB(140, 210, 255), Enum.Material.Glass, 0.8))
-	wp(mk("WallTop", Vector3.new(M.Width, 0.8, T + 0.4), CFrame.new(0, H, 0), Color3.fromRGB(255, 255, 255), Enum.Material.Neon))
+	local H, T = WALL_H, M.WallThickness
+	wp(mk("Wall", Vector3.new(MAP_W, H, T), CFrame.new(0, H / 2, 0), Color3.fromRGB(140, 210, 255), Enum.Material.Glass, 0.8))
+	wp(mk("WallTop", Vector3.new(MAP_W, 0.8, T + 0.4), CFrame.new(0, H, 0), Color3.fromRGB(255, 255, 255), Enum.Material.Neon))
 	local o = BOX.Size + 0.6
-	for idx, t in C.Teams do
-		local sign = idx == 1 and -1 or 1
+	for _, t in C.Teams do
+		local sign = SIGN[t.Name]
 		local zf = sign * (T / 2 + 0.05)
-		for _, x in M.HoleX do
+		for _, x in holeX do
 			local y = M.HoleY
 			local col = t.Color.Color
 			wp(mk("HoleFrame", Vector3.new(o + 1, 0.5, 0.3), CFrame.new(x, y + o / 2 + 0.25, zf), col, Enum.Material.Neon))
@@ -197,7 +229,7 @@ end
 
 -- ===================== match state =====================
 local phase = "Waiting"
-local wallZ = 0
+local wallZ = 0 -- local Z of the wall (map space)
 local holes = { [TEAM_A] = {}, [TEAM_B] = {} } -- team -> hole index -> box record
 local boxes = {}    -- set of box records
 local byPart = {}   -- part -> record
@@ -214,13 +246,14 @@ local function notify(text, color)
 	NotifyRemote:FireAllClients(text, color or Color3.new(1, 1, 1))
 end
 
+-- world CFrame of a hole's box position
 local function holeCF(team, i)
-	return CFrame.new(M.HoleX[i], M.HoleY, wallZ + SIGN[team] * (M.WallThickness / 2 - BOX.Size / 2))
+	return origin * CFrame.new(holeX[i], M.HoleY, wallZ + SIGN[team] * (M.WallThickness / 2 - BOX.Size / 2))
 end
 
 local function countPlugged(team)
 	local n = 0
-	for i = 1, #M.HoleX do if holes[team][i] then n += 1 end end
+	for i = 1, #holeX do if holes[team][i] then n += 1 end end
 	return n
 end
 
@@ -228,7 +261,7 @@ end
 local function nearestHoleFor(team, pos)
 	if not team or not holes[team] then return nil end
 	local best, bestD = nil, C.PLUG_RADIUS
-	for i = 1, #M.HoleX do
+	for i = 1, #holeX do
 		if not holes[team][i] then
 			local d = (holeCF(team, i).Position - pos).Magnitude
 			if d <= bestD then best, bestD = i, d end
@@ -240,31 +273,17 @@ end
 local function moveWall()
 	local off = CFrame.new(0, 0, wallZ)
 	local cfs = table.create(#wallParts)
-	for i = 1, #wallParts do cfs[i] = off * wallBase[i] end
+	for i = 1, #wallParts do cfs[i] = origin * off * wallBase[i] end
 	workspace:BulkMoveTo(wallParts, cfs, Enum.BulkMoveMode.FireCFrameChanged)
 	for team, list in holes do
-		for i, rec in list do rec.part.CFrame = holeCF(team, i) end
+		for i, rec in list do
+			if rec.state == "Plugged" then rec.part.CFrame = holeCF(team, i) end
+		end
 	end
 	stateFolder:SetAttribute("WallZ", wallZ)
 end
 
 -- ===================== boxes =====================
-local function setGunHidden(char, hidden) -- hides the third-person world gun while carrying
-	local gun = char and char:FindFirstChild("TPGun")
-	if not gun then return end
-	for _, d in gun:GetDescendants() do
-		if d:IsA("BasePart") then
-			if hidden then
-				if d:GetAttribute("WPT") == nil then d:SetAttribute("WPT", d.Transparency) end
-				d.Transparency = 1
-			else
-				local t = d:GetAttribute("WPT")
-				if t ~= nil then d.Transparency = t; d:SetAttribute("WPT", nil) end
-			end
-		end
-	end
-end
-
 local function setState(rec, st)
 	rec.state = st
 	local p, pr, hl = rec.part, rec.prompt, rec.hl
@@ -273,6 +292,9 @@ local function setState(rec, st)
 		p.Anchored, p.CanCollide, p.CanQuery, p.Massless = true, false, true, false
 		pr.ActionText, pr.HoldDuration, pr.Enabled = "Extract", C.EXTRACT_TIME, true
 		hl.Enabled = false
+	elseif st == "Plugging" then -- floating into the hole (physics-driven so every client sees it smoothly)
+		p.Anchored, p.CanCollide, p.CanQuery, p.Massless = false, false, false, false
+		pr.Enabled, hl.Enabled = false, false
 	elseif st == "Carried" then
 		p.Anchored, p.CanCollide, p.CanQuery, p.Massless = false, false, false, true
 		pr.Enabled, hl.Enabled = false, false
@@ -284,7 +306,7 @@ local function setState(rec, st)
 	p.CollisionGroup = "WPBox"
 end
 
-local function breakFX(pos)
+local function burstFX(pos, color, count, spread)
 	local a = Instance.new("Part")
 	a.Anchored, a.CanCollide, a.CanQuery, a.CanTouch = true, false, false, false
 	a.Transparency = 1
@@ -292,9 +314,9 @@ local function breakFX(pos)
 	a.Position = pos
 	local e = Instance.new("ParticleEmitter")
 	e.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-	e.Color = ColorSequence.new(Color3.fromRGB(255, 190, 80))
+	e.Color = ColorSequence.new(color)
 	e.LightEmission = 0.6
-	e.Speed = NumberRange.new(15, 35)
+	e.Speed = NumberRange.new(spread * 0.4, spread)
 	e.SpreadAngle = Vector2.new(180, 180)
 	e.Lifetime = NumberRange.new(0.4, 0.9)
 	e.Size = NumberSequence.new(0.8, 0)
@@ -302,23 +324,23 @@ local function breakFX(pos)
 	e.Rate = 0
 	e.Parent = a
 	a.Parent = workspace
-	e:Emit(30)
+	e:Emit(count)
 	Debris:AddItem(a, 1.5)
 end
 
 local onPrompt -- defined below (forward declared so boxes can call it)
 
 local function createBox(pos)
-	local p = Instance.new("Part")
+	local p, accents, decor = BoxModel.Build(BOX.Size, { Accent = BoxModel.Amber })
 	p.Name = "Box"
-	p.Size = Vector3.one * BOX.Size
-	p.Color = Color3.fromRGB(214, 150, 70)
-	p.Material = Enum.Material.DiamondPlate
-	p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
 	p.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.6, 0.15)
-	p.CanTouch = false
 	p.CFrame = CFrame.new(pos) * CFrame.Angles(0, rnd:NextNumber(0, math.pi * 2), 0)
+	for _, e in decor do e.Part.CFrame = p.CFrame * e.Offset end
 	p:SetAttribute("WPBox", true)
+	p:SetAttribute("MaxHealth", BOX.Health)
+	p:SetAttribute("Health", BOX.Health)
+	p:SetAttribute("Seed", rnd:NextNumber())
+	p:SetAttribute("Draining", false)
 	CollectionService:AddTag(p, "WPBox")
 
 	local hl = Instance.new("Highlight") -- so loose boxes are easy to find
@@ -337,7 +359,11 @@ local function createBox(pos)
 	pr.Parent = p
 	CollectionService:AddTag(pr, "WPPrompt")
 
-	local rec = { part = p, prompt = pr, hl = hl, state = "Loose" }
+	local att = Instance.new("Attachment")
+	att.Name = "AlignAtt"
+	att.Parent = p
+
+	local rec = { part = p, prompt = pr, hl = hl, accents = accents, att = att, state = "Loose" }
 	byPart[p] = rec
 	boxes[rec] = true
 	p.Parent = boxFolder
@@ -353,42 +379,70 @@ local function makeBars(rec)
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "Bars"
 	gui.Adornee = rec.part
-	gui.Size = UDim2.new(4, 0, 0.8, 0) -- scale = studs
-	gui.StudsOffset = Vector3.new(0, 2.6, 0)
-	gui.MaxDistance = 250
+	gui.Size = UDim2.new(6, 0, 1.5, 0) -- scale = studs
+	gui.StudsOffset = Vector3.new(0, BOX.Size / 2 + 2.4, 0)
+	gui.MaxDistance = 600
+	gui.AlwaysOnTop = true -- readable from BOTH sides of the wall (and through it)
 	gui.LightInfluence = 0
 	local bg = Instance.new("Frame")
+	bg.Name = "Bg"
 	bg.Size = UDim2.fromScale(1, 1)
 	bg.BackgroundColor3 = Color3.new(0, 0, 0)
-	bg.BackgroundTransparency = 0.35
+	bg.BackgroundTransparency = 0.3
 	bg.BorderSizePixel = 0
 	bg.Parent = gui
+	local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0.2, 0); bc.Parent = bg
+	local stroke = Instance.new("UIStroke")
+	stroke.Name = "Stroke"; stroke.Thickness = 2; stroke.Color = Color3.new(1, 1, 1); stroke.Transparency = 0.5
+	stroke.Parent = bg
+	local track = Instance.new("Frame")
+	track.Name = "Track"
+	track.Position = UDim2.fromScale(0.04, 0.12)
+	track.Size = UDim2.fromScale(0.92, 0.4)
+	track.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+	track.BorderSizePixel = 0
+	track.Parent = bg
+	local tc = Instance.new("UICorner"); tc.CornerRadius = UDim.new(0.3, 0); tc.Parent = track
 	local hp = Instance.new("Frame")
 	hp.Name = "Hp"
-	hp.Size = UDim2.fromScale(1, 0.6)
+	hp.Size = UDim2.fromScale(1, 1)
 	hp.BorderSizePixel = 0
-	hp.Parent = bg
-	local tm = Instance.new("Frame")
-	tm.Name = "Time"
-	tm.Position = UDim2.fromScale(0, 0.68)
-	tm.Size = UDim2.fromScale(1, 0.3)
-	tm.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
-	tm.BorderSizePixel = 0
-	tm.Parent = bg
+	hp.Parent = track
+	local hc = Instance.new("UICorner"); hc.CornerRadius = UDim.new(0.3, 0); hc.Parent = hp
+	local txt = Instance.new("TextLabel")
+	txt.Name = "Txt"
+	txt.Position = UDim2.fromScale(0, 0.56)
+	txt.Size = UDim2.fromScale(1, 0.38)
+	txt.BackgroundTransparency = 1
+	txt.Font = Enum.Font.GothamBlack
+	txt.TextScaled = true
+	txt.TextColor3 = Color3.new(1, 1, 1)
+	txt.Text = ""
+	txt.Parent = bg
 	gui.Parent = rec.part
 end
 
-local function updateBars(rec, now)
+local function updateBars(rec)
 	local gui = rec.part:FindFirstChild("Bars")
 	if not gui then return end
-	local bg = gui:FindFirstChildOfClass("Frame")
+	local bg = gui:FindFirstChild("Bg")
+	if not bg then return end
 	local frac = math.clamp(rec.hp / BOX.Health, 0, 1)
-	bg.Hp.Size = UDim2.fromScale(frac, 0.6)
-	bg.Hp.BackgroundColor3 = TEAM_COLOR[rec.holeTeam]:Lerp(Color3.fromRGB(255, 60, 60), 1 - frac)
-	bg.Time.Size = UDim2.fromScale(math.clamp(1 - (now - rec.plugAt) / BOX.Lifetime, 0, 1), 0.3)
+	bg.Track.Hp.Size = UDim2.fromScale(frac, 1)
+	bg.Track.Hp.BackgroundColor3 = TEAM_COLOR[rec.holeTeam]:Lerp(Color3.fromRGB(255, 60, 60), 1 - frac)
+	bg.Txt.Text = tostring(math.ceil(math.max(rec.hp, 0)))
+	bg.Stroke.Color = rec.draining and Color3.fromRGB(255, 130, 60) or Color3.new(1, 1, 1)
+	bg.Stroke.Transparency = rec.draining and 0.1 or 0.5
+	rec.part:SetAttribute("Health", math.max(rec.hp, 0))
+end
+
+local function clearAlign(rec)
+	if rec.alignP then rec.alignP:Destroy(); rec.alignP = nil end
+	if rec.alignO then rec.alignO:Destroy(); rec.alignO = nil end
 end
 
 local function leaveHole(rec)
+	clearAlign(rec)
 	if rec.hole then
 		holes[rec.holeTeam][rec.hole] = nil
 		rec.hole, rec.holeTeam = nil, nil
@@ -396,18 +450,57 @@ local function leaveHole(rec)
 		local bars = rec.part:FindFirstChild("Bars")
 		if bars then bars:Destroy() end
 	end
+	rec.draining = false
+	rec.part:SetAttribute("Draining", false)
+	BoxModel.Recolor(rec.accents, BoxModel.Amber)
+	rec.part:FindFirstChild("Glow").Color = BoxModel.Amber
 end
 
-local function plug(rec, team, i)
+-- the box floats into the hole (physics-driven so it is interpolated smoothly on every client), then locks in
+local function beginPlug(rec, team, i)
 	local p = rec.part
 	p.AssemblyLinearVelocity, p.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
-	holes[team][i] = rec
-	rec.hole, rec.holeTeam, rec.plugAt, rec.hp, rec.thrower = i, team, os.clock(), BOX.Health, nil
+	holes[team][i] = rec -- the hole is reserved right away
+	rec.hole, rec.holeTeam, rec.hp, rec.thrower = i, team, BOX.Health, nil
+	rec.draining = false
 	p:SetAttribute("PlugTeam", team)
 	p:SetAttribute("Health", rec.hp)
-	setState(rec, "Plugged")
-	p.CFrame = holeCF(team, i)
+	setState(rec, "Plugging")
+	rec.plugStart = os.clock()
+	local target = holeCF(team, i)
+	local ap = Instance.new("AlignPosition")
+	ap.Mode = Enum.PositionAlignmentMode.OneAttachment
+	ap.Attachment0 = rec.att
+	ap.Position = target.Position
+	ap.MaxForce = 1e7
+	ap.MaxVelocity = 90
+	ap.Responsiveness = 4 / math.max(C.PLUG_ANIM, 0.1)
+	ap.ApplyAtCenterOfMass = true
+	ap.Parent = p
+	local ao = Instance.new("AlignOrientation")
+	ao.Mode = Enum.OrientationAlignmentMode.OneAttachment
+	ao.Attachment0 = rec.att
+	ao.CFrame = target.Rotation
+	ao.MaxTorque = 1e7
+	ao.MaxAngularVelocity = 14
+	ao.Responsiveness = 4 / math.max(C.PLUG_ANIM, 0.1)
+	ao.Parent = p
+	rec.alignP, rec.alignO = ap, ao
+	pcall(p.SetNetworkOwner, p, nil)
+	local col = TEAM_COLOR[team]
+	BoxModel.Recolor(rec.accents, col)
+	p:FindFirstChild("Glow").Color = col
 	makeBars(rec)
+	updateBars(rec)
+end
+
+local function finishPlug(rec)
+	local p = rec.part
+	clearAlign(rec)
+	p.AssemblyLinearVelocity, p.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+	setState(rec, "Plugged")
+	p.CFrame = holeCF(rec.holeTeam, rec.hole)
+	burstFX(p.Position, TEAM_COLOR[rec.holeTeam], 14, 22)
 end
 
 -- detaches the box the player is carrying; newState = "Loose" | "Thrown"
@@ -421,7 +514,6 @@ local function release(player, velocity, newState, atPos)
 	rec.carrier = nil
 	p:SetAttribute("Carrier", nil)
 	player:SetAttribute("Carrying", false)
-	setGunHidden(player.Character, false)
 	setState(rec, newState)
 	if atPos then p.CFrame = CFrame.new(atPos) * p.CFrame.Rotation end
 	p.AssemblyLinearVelocity = velocity
@@ -449,7 +541,6 @@ local function attach(player, rec)
 	carrying[player] = rec
 	p:SetAttribute("Carrier", player.UserId)
 	player:SetAttribute("Carrying", true)
-	setGunHidden(char, true)
 	return true
 end
 
@@ -461,9 +552,9 @@ local function destroyBox(rec, reason)
 	boxes[rec] = nil
 	byPart[rec.part] = nil
 	if reason ~= "clear" then
-		breakFX(pos)
+		burstFX(pos, Color3.fromRGB(255, 190, 80), 30, 35)
 		if team then
-			notify(team:upper() .. " box " .. (reason == "expired" and "expired" or "destroyed"), TEAM_COLOR[team])
+			notify(team:upper() .. " box " .. (reason == "drained" and "worn out" or "destroyed"), TEAM_COLOR[team])
 		end
 	end
 	rec.part:Destroy()
@@ -477,24 +568,26 @@ local function clearBoxes()
 	for _, p in Players:GetPlayers() do p:SetAttribute("Carrying", false) end
 end
 
--- random free spot on one half of the map (sign: -1 = team A side, +1 = team B side)
+-- random free spot on one end's half of the map (sign: which end, +-1)
 local overlap = OverlapParams.new()
-overlap.FilterType = Enum.RaycastFilterType.Include
-overlap.FilterDescendantsInstances = { coverFolder }
+overlap.FilterType = Enum.RaycastFilterType.Exclude
+overlap.FilterDescendantsInstances = { mapFolder }
 local function findSpot(sign)
-	local edge = LINE_Z - 14
-	local maxDz = math.max(10, edge - sign * wallZ)
+	local zMax = (LINE_Z - 8) - sign * wallZ -- farthest distance from the wall toward this end
+	local zMin = math.min(14, zMax)
+	zMax = math.max(zMin, math.min(zMax, MAP_L * 0.35))
 	local x, z
-	for _ = 1, 12 do
-		x = rnd:NextNumber(-(M.Width / 2 - 15), M.Width / 2 - 15)
-		z = wallZ + sign * rnd:NextNumber(math.min(18, maxDz), math.min(95, maxDz))
-		if #workspace:GetPartBoundsInBox(CFrame.new(x, 5, z), Vector3.new(9, 9, 9), overlap) == 0 then break end
+	for _ = 1, 20 do
+		x = rnd:NextNumber(-(MAP_W / 2 - 10), MAP_W / 2 - 10)
+		z = wallZ + sign * rnd:NextNumber(zMin, zMax)
+		local lcf = origin * CFrame.new(x, 6, z)
+		if #workspace:GetPartBoundsInBox(lcf, Vector3.new(6, 6, 6), overlap) == 0 then break end
 	end
-	return Vector3.new(x, 9, z)
+	return (origin * CFrame.new(x, 6, z)).Position
 end
 
 local function spawnPair()
-	for _, sign in { -1, 1 } do createBox(findSpot(sign)) end
+	for _, team in { TEAM_A, TEAM_B } do createBox(findSpot(SIGN[team])) end
 end
 
 -- picking up a loose box, or extracting an ENEMY plugged box (hold the prompt)
@@ -510,7 +603,7 @@ onPrompt = function(rec, player)
 	elseif rec.state == "Plugged" then
 		local from = rec.holeTeam
 		if from == team then return end -- your own boxes stay put
-		if (root.Position.Z - wallZ) * SIGN[from] <= -1 then return end -- you have to be on THEIR side of the wall
+		if (toLocal(root.Position).Z - wallZ) * SIGN[from] <= -1 then return end -- you have to be on THEIR side of the wall
 		if attach(player, rec) then
 			notify(team:upper() .. " took a box from " .. from:upper(), TEAM_COLOR[team])
 		end
@@ -649,11 +742,12 @@ RunService.Heartbeat:Connect(function(dt)
 	local nA, nB = countPlugged(TEAM_A), countPlugged(TEAM_B)
 	local diff = nA - nB
 	if diff ~= 0 then
-		wallZ = math.clamp(wallZ + diff * C.WALL_SPEED_PER_BOX * dt, -LINE_Z, LINE_Z)
+		wallZ = math.clamp(wallZ + diff * C.WALL_SPEED_PER_BOX * dt * SIGN[TEAM_B], -LINE_Z, LINE_Z)
 		moveWall()
-		if wallZ >= LINE_Z then endRound(TEAM_A) return end
-		if wallZ <= -LINE_Z then endRound(TEAM_B) return end
+		if wallZ * SIGN[TEAM_B] >= LINE_Z then endRound(TEAM_A) return end
+		if wallZ * SIGN[TEAM_A] >= LINE_Z then endRound(TEAM_B) return end
 	end
+	local pushing = (diff > 0 and TEAM_A) or (diff < 0 and TEAM_B) or nil -- the team currently winning the push
 
 	local list = {}
 	for rec in boxes do table.insert(list, rec) end
@@ -662,18 +756,34 @@ RunService.Heartbeat:Connect(function(dt)
 		local st = rec.state
 		local p = rec.part
 		if st == "Plugged" then
-			if now - rec.plugAt >= BOX.Lifetime then destroyBox(rec, "expired") end
+			-- the pushing team's boxes are slowly worn down
+			local drain = pushing ~= nil and rec.holeTeam == pushing
+			if rec.draining ~= drain then
+				rec.draining = drain
+				p:SetAttribute("Draining", drain)
+			end
+			if drain then
+				rec.hp -= BOX.PushDrainPerSec * dt
+				if rec.hp <= 0 then destroyBox(rec, "drained") end
+			end
+		elseif st == "Plugging" then
+			local target = holeCF(rec.holeTeam, rec.hole)
+			if rec.alignP then rec.alignP.Position = target.Position end
+			if rec.alignO then rec.alignO.CFrame = target.Rotation end
+			local age = now - rec.plugStart
+			if (age > 0.15 and (p.Position - target.Position).Magnitude < 0.4) or age > 1.5 then finishPlug(rec) end
 		elseif st == "Thrown" or st == "Loose" then
 			local pos = p.Position
-			if pos.Y < -30 or math.abs(pos.X) > M.Width / 2 + 5 or math.abs(pos.Z) > M.Length / 2 + 5 then
+			local lp = toLocal(pos)
+			if lp.Y < -25 or math.abs(lp.X) > MAP_W / 2 + 5 or math.abs(lp.Z) > MAP_L / 2 + 5 then
 				-- fell out of the map: put it back on the side it left from
 				p.AssemblyLinearVelocity = Vector3.zero
-				p.CFrame = CFrame.new(findSpot(pos.Z < 0 and -1 or 1))
+				p.CFrame = CFrame.new(findSpot(lp.Z < 0 and -1 or 1))
 				if st == "Thrown" then setState(rec, "Loose") end
 			elseif st == "Thrown" then
 				local idx = nearestHoleFor(rec.team, pos)
 				if idx then
-					plug(rec, rec.team, idx)
+					beginPlug(rec, rec.team, idx)
 				else
 					local caught = false
 					for _, pl in Players:GetPlayers() do
@@ -698,7 +808,7 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	-- carried boxes plug into your own side's empty holes when you walk up to them (you must be on your own side)
+	-- carried boxes float into your own side's empty holes when you walk up to them (you must be on your own side)
 	local carriers = {}
 	for pl, rec in carrying do table.insert(carriers, { pl, rec }) end
 	for _, e in carriers do
@@ -706,11 +816,11 @@ RunService.Heartbeat:Connect(function(dt)
 		local team = pl.Team and pl.Team.Name
 		local root = pl.Character and pl.Character:FindFirstChild("HumanoidRootPart")
 		if team and holes[team] and root and now - rec.carriedAt > 0.5
-			and (root.Position.Z - wallZ) * SIGN[team] > 0 then
+			and (toLocal(root.Position).Z - wallZ) * SIGN[team] > 0 then
 			local idx = nearestHoleFor(team, (root.CFrame * CARRY_OFFSET).Position)
 			if idx then
 				release(pl, Vector3.zero, "Loose")
-				plug(rec, team, idx)
+				beginPlug(rec, team, idx)
 			end
 		end
 	end
@@ -725,7 +835,7 @@ RunService.Heartbeat:Connect(function(dt)
 	if barTimer >= 0.15 then
 		barTimer = 0
 		for rec in boxes do
-			if rec.state == "Plugged" then updateBars(rec, now) end
+			if rec.state == "Plugged" or rec.state == "Plugging" then updateBars(rec) end
 		end
 	end
 	publishTimer += dt
@@ -733,7 +843,7 @@ RunService.Heartbeat:Connect(function(dt)
 		publishTimer = 0
 		stateFolder:SetAttribute("BoxesA", nA)
 		stateFolder:SetAttribute("BoxesB", nB)
-		stateFolder:SetAttribute("WallFrac", wallZ / LINE_Z)
+		stateFolder:SetAttribute("WallFrac", wallZ * SIGN[TEAM_B] / LINE_Z)
 	end
 end)
 
