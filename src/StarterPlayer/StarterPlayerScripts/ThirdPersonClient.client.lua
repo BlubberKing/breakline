@@ -1,4 +1,5 @@
--- ThirdPersonClient v3: IK hands on the gun, aim-driven gun joint, poses, recoil, reload, slide/crouch/mantle poses
+-- ThirdPersonClient v4: IK hands on the gun, aim-driven gun joint, poses, recoil, reload, slide/crouch/mantle poses,
+-- + Wall Push: while carrying a box the gun is hidden and BOTH hands hold the box (two-handed carry pose)
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -30,6 +31,8 @@ local CFG = {
 	},
 	RIGHT_POLE = V3(1.8, -1.2, 0.2),
 	LEFT_POLE  = V3(-1.2, -1.8, -0.6),
+	CARRY_LEFT_POLE = V3(-1.8, -1.2, 0.2), -- elbow position of the left arm while carrying a box (mirrors the right)
+	CARRY_TORSO_SHARE = 0.25,              -- how much of the aim pitch the torso takes while carrying
 	POUCH      = V3(-0.6, -0.05, -0.55), -- LowerTorso space
 	KICK_BACK = 0.14, KICK_UP_DEG = 4, KICK_TORSO_DEG = 1.2,
 	BOB = 0.035,
@@ -106,7 +109,9 @@ local function setup(char)
 
 	st.pouch = att(lt, "TP_Pouch", CFG.POUCH)
 	st.ikR = ik("TP_IK_Right", rua, rh, rGrip, att(ut, "TP_RightPole", CFG.RIGHT_POLE))
-	st.ikL = ik("TP_IK_Left", lua, lh, lFore, att(ut, "TP_LeftPole", CFG.LEFT_POLE))
+	st.leftPole = att(ut, "TP_LeftPole", CFG.LEFT_POLE)
+	st.ikL = ik("TP_IK_Left", lua, lh, lFore, st.leftPole)
+	st.rGrip, st.player = rGrip, Players:GetPlayerFromCharacter(char)
 
 	st.magParts = {}
 	for _, d in ipairs(gun:GetDescendants()) do
@@ -155,11 +160,30 @@ local function restore(st)
 	st.ikR.Weight, st.ikL.Weight = 0, 0
 end
 
+------------------------------------------------------------------ carrying a Wall Push box
+local carryBoxes = {} -- userId -> box part (refreshed a few times per second)
+local carryAcc = 1
+local function refreshCarryBoxes()
+	table.clear(carryBoxes)
+	for _, b in ipairs(game:GetService("CollectionService"):GetTagged("WPBox")) do
+		local uid = b:GetAttribute("Carrier")
+		if uid then carryBoxes[uid] = b end
+	end
+end
+local function carryBoxOf(plr)
+	if not plr or plr:GetAttribute("Carrying") ~= true then return nil end
+	local b = carryBoxes[plr.UserId]
+	if b and b.Parent and b:FindFirstChild("CarryR") and b:FindFirstChild("CarryL") then return b end
+	return nil
+end
+
 ------------------------------------------------------------------ per-frame pose
 local function update(st, dt, t, isLocal)
 	if st.hum.Health <= 0 then restore(st) return end
 	st.restored = false
 	st.ikR.Weight = 1
+	local cbox = carryBoxOf(st.player)
+	st.carry = approach(st.carry or 0, cbox and 1 or 0, 10, dt)
 
 	st.pitch  = approach(st.pitch, t.pitch, 18, dt)
 	st.ads    = approach(st.ads, (t.ads and not t.mantle) and 1 or 0, 15, dt)
@@ -205,7 +229,8 @@ local function update(st, dt, t, isLocal)
 	st.joint.C0 = aimCF * pose * bob * kick
 
 	-- body
-	local torsoPitch = st.pitch * CFG.TORSO_SHARE * (1 - 0.5 * lowered) + rad(CFG.KICK_TORSO_DEG * st.kick) - rad(12) * st.slide
+	local torsoShare = CFG.TORSO_SHARE + (CFG.CARRY_TORSO_SHARE - CFG.TORSO_SHARE) * st.carry
+	local torsoPitch = st.pitch * torsoShare * (1 - 0.5 * lowered) + rad(CFG.KICK_TORSO_DEG * st.kick) * (1 - st.carry) - rad(12) * st.slide
 	st.waist.C0 = st.waistC0 * CFrame.Angles(torsoPitch, 0, 0)
 	st.neck.C0 = st.neckC0 * CFrame.Angles(st.pitch * CFG.NECK_SHARE - rad(14) * st.slide, 0, 0)
 	st.rootJ.C0 = st.rootC0 * CFrame.Angles(rad(CFG.SLIDE_LEAN) * st.slide - rad(CFG.CROUCH_LEAN) * st.crouch, 0, 0)
@@ -221,8 +246,17 @@ local function update(st, dt, t, isLocal)
 		elseif phase < 0.86 then target = st.lMag
 		end
 	end
+	local rTarget = st.rGrip
+	if cbox then -- both hands on the box
+		target, rTarget, smooth = cbox.CarryL, cbox.CarryR, 0.06
+		st.leftPole.Position = CFG.CARRY_LEFT_POLE * st.k
+	else
+		st.leftPole.Position = CFG.LEFT_POLE * st.k
+	end
+	if st.ikR.Target ~= rTarget then st.ikR.Target = rTarget end
 	if st.ikL.Target ~= target then st.ikL.Target = target end
 	st.ikL.SmoothTime = smooth
+	st.ikR.SmoothTime = cbox and 0.06 or 0
 	st.ikL.Weight = 1 - 0.9 * st.mantle
 
 	local magOffGun = t.reloading and phase >= 0.36 and phase < 0.7
@@ -284,6 +318,8 @@ local poseSignal = (ok and preAnim) or RunService.Stepped
 -- Runs before animation + IK, so the IK solves against the new gun/torso pose
 poseSignal:Connect(function(a, b)
 	local dt = (typeof(b) == "number") and b or a
+	carryAcc += dt
+	if carryAcc > 0.1 then carryAcc = 0; refreshCarryBoxes() end
 	for _, plr in ipairs(Players:GetPlayers()) do
 		local char = plr.Character
 		if char then
@@ -349,11 +385,30 @@ end)
 
 ------------------------------------------------------------------ hide own gear/gun in first person
 RunService.RenderStepped:Connect(function()
+	-- other players: their world gun disappears while they carry a box
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Character then
+			local g = plr.Character:FindFirstChild("TPGun")
+			if g then
+				local want = (plr:GetAttribute("Carrying") == true) and 1 or 0
+				if g:GetAttribute("CarryHide") ~= want then
+					g:SetAttribute("CarryHide", want)
+					for _, d in ipairs(g:GetDescendants()) do
+						if d:IsA("BasePart") then d.LocalTransparencyModifier = want end
+					end
+				end
+			end
+			local hm = plr.Character:FindFirstChild("TP_HandMag")
+			if hm and plr:GetAttribute("Carrying") == true then hm.LocalTransparencyModifier = 1 end
+		end
+	end
 	local char = player.Character
 	if not char then return end
-	local ltm = isFirstPerson(char) and 1 or 0
+	local fp = isFirstPerson(char)
+	local carryingNow = player:GetAttribute("Carrying") == true
 	for _, name in ipairs({ "Gear", "TPGun" }) do
 		local f = char:FindFirstChild(name)
+		local ltm = (fp or (carryingNow and name == "TPGun")) and 1 or 0
 		if f then
 			for _, d in ipairs(f:GetDescendants()) do
 				if d:IsA("BasePart") then d.LocalTransparencyModifier = ltm end
@@ -361,5 +416,5 @@ RunService.RenderStepped:Connect(function()
 		end
 	end
 	local hm = char:FindFirstChild("TP_HandMag")
-	if hm then hm.LocalTransparencyModifier = ltm end
+	if hm then hm.LocalTransparencyModifier = (fp or carryingNow) and 1 or 0 end
 end)
