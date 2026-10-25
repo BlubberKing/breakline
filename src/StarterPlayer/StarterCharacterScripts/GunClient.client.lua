@@ -217,6 +217,11 @@ barFill.BorderSizePixel = 0; barFill.Size = UDim2.fromScale(1, 1); barFill.Paren
 -- ================= STATE =================
 local WEAPON, cfg, INTERVAL, sight
 local built, partsList, cfList = nil, {}, {}
+local IDENT = CFrame.identity
+local ReloadAnims = require(RS:WaitForChild("ReloadAnims"))
+local reloadAnim -- per-gun reload (ReloadAnims.lua), rebuilt on equip
+local OFFSCREEN = CFrame.new(0, -500, 0)
+local NEUTRAL_POSE
 local HIP, SPRINT, AIM = CFrame.identity, CFrame.identity, CFrame.identity
 local adsFov, adsSens = 58, 0.7
 
@@ -361,13 +366,15 @@ local function equip(id, sightId)
 	ownerTag.Parent = built.Model
 	built.Model.Parent = camera
 	partsList, cfList = {}, {}
-	for _, g in { "gun", "cycle", "mag", "left", "flash" } do
+	for _, g in { "gun", "cycle", "mag", "cover", "aux", "left", "flash" } do
 		for _, e in built.Groups[g] do
 			e.BaseSize = e.Part.Size
 			table.insert(partsList, e.Part)
 		end
 	end
 
+	reloadAnim = ReloadAnims.Make(cfg.Model, built.Points, VM_SCALE)
+	NEUTRAL_POSE = { tilt = IDENT, mag = IDENT, hand = built.Points.Fore.Position, grab = 0, fall = false }
 	local v = built.View or {}
 	HIP = CFrame.new(v.X or 0.6, v.Y or -1.0, v.Z or -1.15) * CFrame.Angles(0, rad(2.5), 0)
 	local sr = v.SprintRot or Vector3.new(-18, 48, 18)
@@ -389,38 +396,10 @@ local function equip(id, sightId)
 end
 
 -- ================= RELOAD =================
-local IDENT = CFrame.identity
 
--- returns gun tilt, mag offset (relative to MagPivot), left hand position (gun space), grab amount
 local function reloadPose(u)
-	local fore = built.Points.Fore.Position
-	if u <= 0 or u >= 1 then return IDENT, IDENT, fore, 0 end
-	local P = built.Points
-	local magP = P.MagPivot.Position + Vector3.new(-0.05, -0.1, 0)
-	local magLow = magP + Vector3.new(0, -0.25, 0.05)
-	local down = magP + Vector3.new(0.35, -1.9, 0.5)
-	local tilt = smooth(seg(u, 0, 0.14)) * (1 - smooth(seg(u, 0.84, 1)))
-	local tiltCF = CFrame.new(-0.12 * tilt, 0.08 * tilt, 0.05 * tilt)
-		* CFrame.Angles(rad(14 * tilt), rad(-12 * tilt), rad(32 * tilt))
-	local hand, grab
-	if u < 0.24 then
-		local a = smooth(seg(u, 0.06, 0.22)); hand = fore:Lerp(magP, a); grab = a
-	elseif u < 0.5 then
-		hand = magP:Lerp(down, smooth(seg(u, 0.26, 0.44))); grab = 1
-	elseif u < 0.66 then
-		hand = down:Lerp(magLow, smooth(seg(u, 0.5, 0.64))); grab = 1
-	elseif u < 0.76 then
-		hand = magLow:Lerp(magP, smooth(seg(u, 0.66, 0.7))); grab = 1
-	else
-		local a = smooth(seg(u, 0.76, 0.9)); hand = magP:Lerp(fore, a); grab = 1 - a
-	end
-	local magCF = IDENT
-	if u >= 0.24 and u < 0.72 then
-		local d = hand - magP
-		local out = math.clamp(d.Magnitude / 0.6, 0, 1)
-		magCF = CFrame.new(d) * CFrame.Angles(rad(-20 * out), 0, rad(12 * out))
-	end
-	return tiltCF, magCF, hand, grab
+	if u <= 0 or u >= 1 then return NEUTRAL_POSE end
+	return reloadAnim.Pose(u)
 end
 
 local function startReload()
@@ -428,19 +407,13 @@ local function startReload()
 	reloading = true
 	burstQueue, semiPending = 0, nil
 	reloadStart = os.clock()
-	reloadEvents = {
-		{ at = 0.02, fn = function() Sfx.Play("ReloadStart") end },
-		{ at = 0.26, fn = function() Sfx.Play("MagOut") end },
-		{ at = 0.68, fn = function()
-			Sfx.Play("MagIn")
-			recoilPos:Impulse(Vector3.new(0, 1.5, 0))
-			recoilRot:Impulse(Vector3.new(-40, 0, 30))
-		end },
-		{ at = 0.8, fn = function()
-			Sfx.Play("Bolt")
-			recoilPos:Impulse(Vector3.new(0, 0, 2.5))
-		end },
-	}
+	reloadEvents = {}
+	for _, e in reloadAnim.Events do
+		table.insert(reloadEvents, { at = e.at, fn = function()
+			Sfx.Play(e.snd, nil, e.pitch, e.vol)
+			if e.kick then recoilPos:Impulse(e.kick[1]); recoilRot:Impulse(e.kick[2]) end
+		end })
+	end
 	ReloadRemote:FireServer(WEAPON)
 	updateHUD()
 end
@@ -786,7 +759,8 @@ local function onRender(dt)
 	local mantleCF = CFrame.new(0.15 * mk, -0.75 * mk, 0.3 * mk)
 		* CFrame.Angles(rad(-38 * mk), rad(22 * mk), rad(32 * mk))
 
-	local tiltCF, magAnim, handPos, grab = reloadPose(reloading and reloadU or 0)
+	local rpose = reloadPose(reloading and reloadU or 0)
+	local tiltCF, handPos, grab = rpose.tilt, rpose.hand, rpose.grab
 
 	local rp, rr = recoilPos:Update(dt), recoilRot:Update(dt)
 	local kp, kr = 1 - aimAlpha * 0.45, 1 - aimAlpha * 0.6
@@ -818,10 +792,18 @@ local function onRender(dt)
 	if not scoped then
 		local i = 0
 		for _, g in built.Groups.gun do i += 1; cfList[i] = gunCF * g.Offset end
-		local cycleCF = gunCF * CFrame.new(0, 0, cycleZ)
+		local rz = rpose.cycleZ or cycleZ
+		local cycleCF = gunCF * CFrame.new(0, 0, rz)
 		for _, g in built.Groups.cycle do i += 1; cfList[i] = cycleCF * g.Offset end
-		local magCF = gunCF * built.Points.MagPivot * magAnim
-		for _, g in built.Groups.mag do i += 1; cfList[i] = magCF * g.Offset end
+		local magCF = gunCF * built.Points.MagPivot * rpose.mag
+		for _, g in built.Groups.mag do i += 1; cfList[i] = rpose.fall and OFFSCREEN or (magCF * g.Offset) end
+		local coverCF = gunCF * (rpose.cover or CFrame.identity)
+		for _, g in built.Groups.cover do i += 1; cfList[i] = coverCF * g.Offset end
+		for _, g in built.Groups.aux do
+			i += 1
+			local ac = rpose.aux and rpose.aux[g.Aux]
+			cfList[i] = ac and (gunCF * ac * g.Offset.Rotation) or OFFSCREEN
+		end
 		if cfg.Cycle == "Pump" and grab == 0 then handPos += Vector3.new(0, 0, cycleZ) end
 		local leftCF = gunCF * CFrame.new(handPos) * CFrame.Angles(rad(-20 * grab), 0, rad(-35 * grab))
 		for _, g in built.Groups.left do i += 1; cfList[i] = leftCF * g.Offset end
