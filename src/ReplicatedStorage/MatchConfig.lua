@@ -32,7 +32,9 @@ C.MAP = {
 }
 
 -- ===== wall =====
-C.WALL_SPEED_PER_BOX = 1.5 -- PROPOSAL: studs/second per box of difference (tie = wall stands still)
+-- studs/second by how many MORE plugged boxes the pushing team has: [1] = one box ahead, [2] = two ahead, [3] = three ahead.
+-- (Slowed down Oct 25: was 1.5 / 3.0 / 4.5.) Tie = wall stands still.
+C.WALL_SPEED = { 0.8, 1.5, 2.1 }
 
 -- ===== boxes =====
 C.BOX = {
