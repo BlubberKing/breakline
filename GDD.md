@@ -1,5 +1,5 @@
 # BREAKLINE — Game Design Document
-*Working title. Roblox competitive arcade FPS. Last updated: Oct 24, 2026 (gun system update).*
+*Working title. Roblox competitive arcade FPS. Last updated: Oct 24, 2026 (movement speed + crouch update).*
 
 > **Note to any AI reading this:** This file plus the `src/` folder is the source of truth.
 > Items marked **PROPOSAL** are ideas, not approved — ask the owner before building on them.
@@ -60,7 +60,7 @@
 - Movement ability is not in the reserve (TBD whether it can be swapped mid-match).
 
 ### 3.3 Special movement abilities
-Abilities that not everyone owns — bought/unlocked. Everyone keeps the base kit (sprint, slide, slide-jump, mantle).
+Abilities that not everyone owns — bought/unlocked. Everyone keeps the base kit (sprint, crouch, slide, slide-jump, mantle).
 Initial ideas (details TBD, balanced during development):
 - Phase Shift
 - Double Jump
@@ -171,10 +171,22 @@ Weapon move-speed: SMG 1.06, pistols ~1.05, LMG/sniper 0.9.
 - **TEMPORARY** — will be replaced by the lobby loadout screen (section 3). Remove `GunPicker` + the open `SetLoadout` remote then.
 
 ## 8. Movement (base kit, everyone has it)
-- Walk 16 / sprint 24
-- **Slide:** sprint + C / LeftCtrl / gamepad B / mobile button. Slope boost, steering, lowered hitbox + camera, buffered input.
-- **Slide-jump:** keeps momentum.
+Goal: fast-paced and fluid. All speeds are multiplied by the gun's move-speed (7.4).
+- **Walk 16 / sprint 30 / crouch 9** (sprint was 24). Speeds live at the top of `GunClient`.
+- **Crouch:** C / LeftCtrl / gamepad B / mobile button while **not** sprinting. Hold to crouch (`CROUCH_TOGGLE` in `Movement` switches
+  to tap-toggle). Lowers hitbox + camera, can't sprint while crouched, pressing sprint stands you up. Stays crouched under low ceilings.
+  Replicated as the `Crouching` character attribute (third person shows bent legs + lean).
+- **Slide:** same key while sprinting (speed ≥ 20). Small start boost (+6), steering, lowered hitbox + camera, buffered input
+  (press just before landing or while still speeding up). **Momentum rules:**
+  - Flat ground (under ~3.5°): keeps **all** momentum for ~0.95s, then blends smoothly back into a run (or crouch if C is still held).
+  - Downhill: **gains** speed (scaled by steepness, cap 58) and the slide timer pauses, so long ramps = long fast slides.
+  - Uphill: **loses** speed slowly (scaled by steepness); ends early if it drops below 14.
+  - Sliding off a ledge keeps the momentum into the air.
+- **Slide-jump:** keeps 95% of momentum (also works in the short blend right after a slide ends).
 - **Mantle:** jump into a ledge (1.4–7.5 studs).
+- **Speed feel (subtle, tunable in `SPEEDFX` at the top of `GunClient`):** sprint FOV 82 (was 80), slide FOV +7, extra FOV when going
+  faster than a sprint (downhill slides); quick FOV kick + dip when a slide starts; light camera rumble while sliding; faint speed lines
+  at the screen edges above ~25 speed (hidden while aiming); optional looping wind sound (`Wind` in SoundBank — empty = silent).
 
 ## 9. Tech Principles
 - **Data-driven:** stats in config modules (WeaponConfig, etc.).
@@ -191,7 +203,7 @@ Weapon move-speed: SMG 1.06, pistols ~1.05, LMG/sniper 0.9.
 
 ## 10. Roadmap
 1. **Gun feel + weapon system** — built (10 guns, sights, test picker), not playtested
-2. **Movement** — built, not playtested
+2. **Movement** — built (incl. crouch + momentum slide + speed effects), not playtested
 3. Gray-box map + wall/box server logic *(needs tuning approval, section 2.1)*
 4. Teams, rounds, respawn, match HUD
 5. Polish, mobile, playtests
@@ -200,16 +212,23 @@ Weapon move-speed: SMG 1.06, pistols ~1.05, LMG/sniper 0.9.
 
 ## 11. Current Status
 **Built (not playtested):** 10-gun roster with models, fire modes, sights (7.4); Armory test picker; HitFX (hitmarkers,
-damage numbers, combo counter, kill banner, impacts); slide / slide-jump / mantle; third-person world gun with IK hands;
+damage numbers, combo counter, kill banner, impacts); crouch / momentum slide / slide-jump / mantle + speed effects (section 8); third-person world gun with IK hands;
 custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
 
 **Changelog**
+- **Oct 24 (c):** Movement speed pass. Sprint 24 → 30. New **crouch** (C when not sprinting, crouch speed 9, third-person pose).
+  Slide reworked: keeps momentum on flat, gains downhill, loses a little uphill, smooth blend out, keeps momentum off ledges.
+  Speed effects: higher sprint/slide FOV, speed-based FOV, slide FOV kick + dip, slide camera rumble, edge speed lines,
+  optional wind loop (`Sfx.Loop`). Files: Movement, GunClient, ThirdPersonClient, ThirdPersonServer, Sfx, SoundBank.
 - **Oct 24 (b):** Gun system rebuilt to be data-driven: WeaponConfig v2, new GunModels (replaces GunModelBuilder + RifleModel —
   delete those two), GunClient v3, GunServer v2 (`SetLoadout` remote, pellets, burst-aware rate limit), ThirdPersonServer/Client
   rebuild the world gun on swap, Sfx.Play pitch/volume args, new GunPicker. **Fix:** hip crosshair now fully disappears when aiming.
 - **Oct 24 (a):** slide/mantle sounds; damage numbers come from the server; server fire-rate check no longer drops shots during lag.
 
 **To do / known:**
+- Playtest the new movement numbers: sprint 30, slide flat time 0.95s, downhill gain, speed lines strength — tell the AI what feels off.
+- Find a loopable wind sound ID for `Wind` in SoundBank (optional).
+- Mobile: the action button is now called "Crouch" and slides when sprinting; mobile has no sprint key yet (needs a sprint button).
 - Playtest everything; tune each gun (iron sight alignment, hip positions, recoil) — tell the AI what feels off per gun.
 - Guns share the same fire/reload sounds (pitched per gun) — find unique sound IDs per class later (SoundBank).
 - Reload animation is shared (mag swap) — shotgun shell-by-shell / revolver speedloader anims later.
