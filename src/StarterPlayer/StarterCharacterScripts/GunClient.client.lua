@@ -1,3 +1,5 @@
+-- GunClient v3: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
+-- Live weapon/sight switching via Player attributes "Weapon" / "Sight" (set by the server, see GunServer).
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -10,27 +12,22 @@ local humanoid = character:WaitForChild("Humanoid")
 local root = character:WaitForChild("HumanoidRootPart")
 local camera = workspace.CurrentCamera
 
-local Config = require(RS:WaitForChild("WeaponConfig"))
+local Weapons = require(RS:WaitForChild("WeaponConfig"))
 local GunMath = require(RS:WaitForChild("GunMath"))
 local Spring = require(RS:WaitForChild("Spring"))
-local Builder = require(RS:WaitForChild("GunModelBuilder"))
+local GunModels = require(RS:WaitForChild("GunModels"))
 local Sfx = require(RS:WaitForChild("Sfx"))
 local HitFX = require(RS:WaitForChild("HitFX"))
 local Remotes = RS:WaitForChild("GunRemotes")
 local FireRemote, ReloadRemote = Remotes:WaitForChild("Fire"), Remotes:WaitForChild("Reload")
 local HitConfirm, ShotFX, DamagedRemote = Remotes:WaitForChild("HitConfirm"), Remotes:WaitForChild("ShotFX"), Remotes:WaitForChild("Damaged")
 
-local WEAPON = "AR"
-local RETICLE = "Dot" -- "Dot", "Holo", "Chevron"
-local cfg = Config[WEAPON]
-local INTERVAL = 60 / cfg.RPM
+local VM_SCALE = 0.85 -- viewmodel gun size
 local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 80, 6
 local WALK_SPEED, SPRINT_SPEED = 16, 24
 local BIND = "GunUpdate"
-local ACCENT = Builder.Colors.Accent
-
-local HIP = CFrame.new(0.62, -0.62, -1.45) * CFrame.Angles(0, math.rad(2.5), 0)
-local SPRINT = CFrame.new(0.4, -0.78, -1.2) * CFrame.Angles(math.rad(-18), math.rad(48), math.rad(18))
+local ACCENT = GunModels.Colors.Accent
+local rad = math.rad
 
 player.CameraMode = Enum.CameraMode.LockFirstPerson
 UIS.MouseIconEnabled = false
@@ -60,12 +57,55 @@ for _, rot in { 0, 90 } do
 	table.insert(vignettes, f)
 end
 
-local cross = Instance.new("CanvasGroup")
+-- full-screen sniper scope (black outside a circle, thin crosshair)
+local scope = Instance.new("Frame")
+scope.Name = "ScopeOverlay"
+scope.AnchorPoint = Vector2.new(0.5, 0.5)
+scope.Position = UDim2.fromScale(0.5, 0.5)
+scope.Size = UDim2.fromScale(0.86, 0.86)
+scope.BackgroundTransparency = 1
+scope.Visible = false
+scope.Parent = gui
+do
+	local ar = Instance.new("UIAspectRatioConstraint"); ar.Parent = scope
+	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Parent = scope
+	local s = Instance.new("UIStroke"); s.Thickness = 3000; s.Color = Color3.new(0, 0, 0); s.Parent = scope
+	local edge = Instance.new("Frame")
+	edge.Size = UDim2.fromScale(1, 1); edge.BackgroundTransparency = 1; edge.Parent = scope
+	local ec = Instance.new("UICorner"); ec.CornerRadius = UDim.new(0.5, 0); ec.Parent = edge
+	local es = Instance.new("UIStroke"); es.Thickness = 40; es.Color = Color3.new(0, 0, 0); es.Transparency = 0.5; es.Parent = edge
+	local function ln(size, pos)
+		local f = Instance.new("Frame")
+		f.AnchorPoint = Vector2.new(0.5, 0.5)
+		f.Size, f.Position = size, pos
+		f.BackgroundColor3 = Color3.new(0, 0, 0)
+		f.BorderSizePixel = 0
+		f.Parent = scope
+	end
+	ln(UDim2.new(1, 0, 0, 2), UDim2.fromScale(0.5, 0.5))
+	ln(UDim2.new(0, 2, 1, 0), UDim2.fromScale(0.5, 0.5))
+	ln(UDim2.new(0.3, 0, 0, 6), UDim2.fromScale(0.15, 0.5))
+	ln(UDim2.new(0.3, 0, 0, 6), UDim2.fromScale(0.85, 0.5))
+	ln(UDim2.new(0, 6, 0.3, 0), UDim2.fromScale(0.5, 0.85))
+	local dot = Instance.new("Frame")
+	dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	dot.Position = UDim2.fromScale(0.5, 0.5)
+	dot.Size = UDim2.fromOffset(5, 5)
+	dot.BackgroundColor3 = Color3.fromRGB(255, 45, 45)
+	dot.BorderSizePixel = 0
+	local dc = Instance.new("UICorner"); dc.CornerRadius = UDim.new(0.5, 0); dc.Parent = dot
+	dot.Parent = scope
+end
+
+-- hip crosshair (plain Frame, faded per line, hidden completely while aiming)
+local cross = Instance.new("Frame")
+cross.Name = "Crosshair"
 cross.AnchorPoint = Vector2.new(0.5, 0.5)
 cross.Position = UDim2.fromScale(0.5, 0.5)
 cross.Size = UDim2.fromOffset(240, 240)
 cross.BackgroundTransparency = 1
 cross.Parent = gui
+local crossAll = {}
 local function line(w, h)
 	local f = Instance.new("Frame")
 	f.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -74,6 +114,7 @@ local function line(w, h)
 	f.BorderSizePixel = 0
 	local s = Instance.new("UIStroke"); s.Transparency = 0.55; s.Parent = f
 	f.Parent = cross
+	table.insert(crossAll, { f = f, s = s })
 	return f
 end
 local crossLines = {
@@ -85,7 +126,7 @@ line(2, 2).Position = UDim2.fromScale(0.5, 0.5)
 local panel = Instance.new("Frame")
 panel.AnchorPoint = Vector2.new(1, 1)
 panel.Position = UDim2.new(1, -36, 1, -32)
-panel.Size = UDim2.fromOffset(230, 84)
+panel.Size = UDim2.fromOffset(250, 84)
 panel.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
 panel.BackgroundTransparency = 0.35
 panel.BorderSizePixel = 0
@@ -102,10 +143,9 @@ local function label(pos, size, font, textSize, color, xAlign)
 	return l
 end
 local nameL = label(UDim2.fromOffset(16, 8), UDim2.new(1, -24, 0, 16), Enum.Font.GothamBold, 13, Color3.fromRGB(200, 200, 210))
-nameL.Text = cfg.Name
 local ammoL = label(UDim2.fromOffset(16, 22), UDim2.fromOffset(90, 46), Enum.Font.GothamBlack, 44, Color3.new(1, 1, 1), Enum.TextXAlignment.Right)
-local magL = label(UDim2.fromOffset(112, 38), UDim2.fromOffset(80, 24), Enum.Font.GothamBold, 18, Color3.fromRGB(150, 150, 160))
-magL.Text = "/ " .. cfg.MagSize
+local magL = label(UDim2.fromOffset(112, 38), UDim2.fromOffset(60, 24), Enum.Font.GothamBold, 18, Color3.fromRGB(150, 150, 160))
+local modeL = label(UDim2.new(1, -78, 0, 42), UDim2.fromOffset(66, 16), Enum.Font.GothamBold, 11, ACCENT, Enum.TextXAlignment.Right)
 local barBG = Instance.new("Frame")
 barBG.Position = UDim2.new(0, 16, 1, -12); barBG.Size = UDim2.new(1, -28, 0, 4)
 barBG.BackgroundColor3 = Color3.new(1, 1, 1); barBG.BackgroundTransparency = 0.85; barBG.BorderSizePixel = 0
@@ -114,9 +154,16 @@ local barFill = Instance.new("Frame")
 barFill.BorderSizePixel = 0; barFill.Size = UDim2.fromScale(1, 1); barFill.Parent = barBG
 
 -- ================= STATE =================
-local ammo, reloading, reloadStart, reloadEvents = cfg.MagSize, false, 0, {}
+local WEAPON, cfg, INTERVAL, sight
+local built, partsList, cfList = nil, {}, {}
+local HIP, SPRINT, AIM = CFrame.identity, CFrame.identity, CFrame.identity
+local adsFov, adsSens = 58, 0.7
+
+local ammo, reloading, reloadStart, reloadEvents = 0, false, 0, {}
 local triggerDown, aimHeld, shiftHeld = false, false, false
 local nextFireTime, bloom, sprayIndex, lastShotTime = 0, 0, 0, 0
+local burstQueue, semiPending = 0, nil
+local cycleStart = -10
 local aimAlpha, sprintAlpha, equipStart = 0, 0, os.clock()
 local slideAlpha, mantleAlpha = 0, 0
 local bobT, bobAmt, strafeRoll = 0, 0, 0
@@ -124,6 +171,8 @@ local wasGrounded, airVelY = true, 0
 local flashUntil, flashRoll, flashVisible = 0, 0, false
 local dmgAlpha = 0
 local gunCF = camera.CFrame
+local scoped = false
+local cleaned = false
 
 local recoilPos = Spring.new(400, 28)
 local recoilRot = Spring.new(380, 24)
@@ -136,15 +185,6 @@ local climbTarget, climbOffset, applied = Vector2.zero, Vector2.zero, Vector2.ze
 local lastPitch = nil
 
 local fx = HitFX.new(gui)
-local built = Builder.Build({ Reticle = RETICLE })
-built.Model.Parent = camera
-local partsList, cfList = {}, {}
-for _, g in { "gun", "mag", "left", "flash" } do
-	for _, e in built.Groups[g] do
-		e.BaseSize = e.Part.Size
-		table.insert(partsList, e.Part)
-	end
-end
 
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -157,17 +197,27 @@ end
 local function seg(u, a, b) return math.clamp((u - a) / (b - a), 0, 1) end
 local function smooth(x) return x * x * (3 - 2 * x) end
 local function rnd() return math.random() * 2 - 1 end
+local function magFov(mag) -- zoomed FOV for a magnified optic
+	return math.deg(2 * math.atan(math.tan(rad(BASE_FOV / 2)) / mag))
+end
+
+local function modeText()
+	if cfg.FireMode == "Burst" then return cfg.BurstCount .. "-BURST" end
+	if cfg.Pellets > 1 then return "PUMP" end
+	return string.upper(cfg.FireMode)
+end
 
 local function updateHUD()
 	ammoL.Text = tostring(ammo)
 	ammoL.TextColor3 = (ammo <= cfg.MagSize * 0.25) and Color3.fromRGB(255, 80, 80) or Color3.new(1, 1, 1)
 	nameL.Text = reloading and "RELOADING" or cfg.Name
+	magL.Text = "/ " .. cfg.MagSize
+	modeL.Text = modeText() .. " · " .. (sight.Display or "Iron")
 	if not reloading then
 		barFill.BackgroundColor3 = Color3.new(1, 1, 1)
 		barFill.Size = UDim2.fromScale(ammo / cfg.MagSize, 1)
 	end
 end
-updateHUD()
 
 local function enemyHumanoid(model)
 	local hum = model and model:FindFirstChildOfClass("Humanoid")
@@ -180,13 +230,16 @@ end
 local function currentSpread()
 	local s = cfg.SpreadHip + (cfg.SpreadADS - cfg.SpreadHip) * aimAlpha
 	if humanoid.FloorMaterial == Enum.Material.Air then s += cfg.SpreadAir
-	elseif humanoid.MoveDirection.Magnitude > 0.1 then s += cfg.SpreadMove * (1 - aimAlpha * 0.5) end
+	elseif humanoid.MoveDirection.Magnitude > 0.1 then
+		if cfg.SpreadMoveADS then s += cfg.SpreadMove + (cfg.SpreadMoveADS - cfg.SpreadMove) * aimAlpha
+		else s += cfg.SpreadMove * (1 - aimAlpha * 0.5) end
+	end
 	return s + bloom
 end
 
 local function spreadDirection(dir, deg)
 	if deg <= 0 then return dir end
-	local r = math.rad(deg) * math.sqrt(math.random())
+	local r = rad(deg) * math.sqrt(math.random())
 	local theta = math.random() * math.pi * 2
 	return (CFrame.lookAt(Vector3.zero, dir) * CFrame.Angles(0, 0, theta) * CFrame.Angles(r, 0, 0)).LookVector
 end
@@ -195,16 +248,17 @@ local function rotateCamera(dPitch, dYaw)
 	local cf = camera.CFrame
 	if (cf.LookVector.Y > 0.97 and dPitch > 0) or (cf.LookVector.Y < -0.97 and dPitch < 0) then dPitch = 0 end
 	local pos = cf.Position
-	camera.CFrame = CFrame.Angles(0, math.rad(dYaw), 0) * (cf - pos) * CFrame.Angles(math.rad(dPitch), 0, 0) + pos
+	camera.CFrame = CFrame.Angles(0, rad(dYaw), 0) * (cf - pos) * CFrame.Angles(rad(dPitch), 0, 0) + pos
 end
 
 local function ejectShell()
+	if not cfg.Shell then return end
 	local s = Instance.new("Part")
-	s.Size = Vector3.new(0.035, 0.035, 0.11)
-	s.Color = Color3.fromRGB(214, 168, 72)
+	s.Size = cfg.Shell.Size
+	s.Color = cfg.Shell.Color
 	s.Material = Enum.Material.Metal
 	s.CanCollide, s.CanQuery, s.CanTouch, s.CastShadow = false, false, false, false
-	s.CFrame = gunCF * built.EjectOffset * CFrame.Angles(0, math.rad(90), 0)
+	s.CFrame = gunCF * built.Points.Eject * CFrame.Angles(0, rad(90), 0)
 	s.Parent = workspace
 	local c = camera.CFrame
 	s.AssemblyLinearVelocity = root.AssemblyLinearVelocity + c.RightVector * (7 + math.random() * 3)
@@ -213,42 +267,84 @@ local function ejectShell()
 	Debris:AddItem(s, 0.6)
 end
 
+-- ================= EQUIP (build viewmodel for the current weapon + sight) =================
+local function equip(id, sightId)
+	if built then built.Model:Destroy() end
+	WEAPON = Weapons.Weapons[id] and id or Weapons.Default
+	cfg = Weapons.Get(WEAPON)
+	if not Weapons.HasSight(cfg, sightId) then sightId = cfg.DefaultSight end
+	INTERVAL = 60 / cfg.RPM
+
+	built = GunModels.BuildViewmodel(cfg.Model, sightId, VM_SCALE)
+	sight = built.Sight
+	built.Model.Parent = camera
+	partsList, cfList = {}, {}
+	for _, g in { "gun", "cycle", "mag", "left", "flash" } do
+		for _, e in built.Groups[g] do
+			e.BaseSize = e.Part.Size
+			table.insert(partsList, e.Part)
+		end
+	end
+
+	local v = built.View or {}
+	HIP = CFrame.new(v.X or 0.6, v.Y or -1.0, v.Z or -1.15) * CFrame.Angles(0, rad(2.5), 0)
+	local sr = v.SprintRot or Vector3.new(-18, 48, 18)
+	SPRINT = CFrame.new((v.X or 0.6) - 0.2, (v.Y or -1.0) - 0.15, (v.Z or -1.15) + 0.25) * CFrame.Angles(rad(sr.X), rad(sr.Y), rad(sr.Z))
+	-- puts the sight's aim point exactly at screen center, Eye studs in front of the camera
+	AIM = CFrame.new(0, 0, -built.Eye) * built.Points.Aim:Inverse()
+
+	adsFov = sight.Mag and magFov(sight.Mag) or cfg.ADSFov
+	adsSens = cfg.ADSSensitivity * (sight.Mag and math.tan(rad(adsFov / 2)) / math.tan(rad(cfg.ADSFov / 2)) or 1)
+
+	ammo, reloading, reloadEvents = cfg.MagSize, false, {}
+	nextFireTime, bloom, sprayIndex, burstQueue, semiPending = 0, 0, 0, 0, nil
+	cycleStart = -10
+	climbTarget = Vector2.zero
+	equipStart = os.clock()
+	flashVisible = true -- forces the flash refresh next frame
+	Sfx.Play("Equip")
+	updateHUD()
+end
+
 -- ================= RELOAD =================
-local AT_MAG = Vector3.new(0.08, -0.33, 0.75)
-local MAG_LOW = Vector3.new(0.08, -0.58, 0.8)
-local DOWN = Vector3.new(0.35, -2.2, 0.9)
 local IDENT = CFrame.identity
 
+-- returns gun tilt, mag offset (relative to MagPivot), left hand position (gun space), grab amount
 local function reloadPose(u)
-	if u <= 0 or u >= 1 then return IDENT, IDENT, IDENT end
+	local fore = built.Points.Fore.Position
+	if u <= 0 or u >= 1 then return IDENT, IDENT, fore, 0 end
+	local P = built.Points
+	local magP = P.MagPivot.Position + Vector3.new(-0.05, -0.1, 0)
+	local magLow = magP + Vector3.new(0, -0.25, 0.05)
+	local down = magP + Vector3.new(0.35, -1.9, 0.5)
 	local tilt = smooth(seg(u, 0, 0.14)) * (1 - smooth(seg(u, 0.84, 1)))
 	local tiltCF = CFrame.new(-0.12 * tilt, 0.08 * tilt, 0.05 * tilt)
-		* CFrame.Angles(math.rad(14 * tilt), math.rad(-12 * tilt), math.rad(32 * tilt))
+		* CFrame.Angles(rad(14 * tilt), rad(-12 * tilt), rad(32 * tilt))
 	local hand, grab
 	if u < 0.24 then
-		local a = smooth(seg(u, 0.06, 0.22)); hand = Vector3.zero:Lerp(AT_MAG, a); grab = a
+		local a = smooth(seg(u, 0.06, 0.22)); hand = fore:Lerp(magP, a); grab = a
 	elseif u < 0.5 then
-		hand = AT_MAG:Lerp(DOWN, smooth(seg(u, 0.26, 0.44))); grab = 1
+		hand = magP:Lerp(down, smooth(seg(u, 0.26, 0.44))); grab = 1
 	elseif u < 0.66 then
-		hand = DOWN:Lerp(MAG_LOW, smooth(seg(u, 0.5, 0.64))); grab = 1
+		hand = down:Lerp(magLow, smooth(seg(u, 0.5, 0.64))); grab = 1
 	elseif u < 0.76 then
-		hand = MAG_LOW:Lerp(AT_MAG, smooth(seg(u, 0.66, 0.7))); grab = 1
+		hand = magLow:Lerp(magP, smooth(seg(u, 0.66, 0.7))); grab = 1
 	else
-		local a = smooth(seg(u, 0.76, 0.9)); hand = AT_MAG:Lerp(Vector3.zero, a); grab = 1 - a
+		local a = smooth(seg(u, 0.76, 0.9)); hand = magP:Lerp(fore, a); grab = 1 - a
 	end
-	local leftCF = CFrame.new(hand) * CFrame.Angles(math.rad(-20 * grab), 0, math.rad(-35 * grab))
 	local magCF = IDENT
 	if u >= 0.24 and u < 0.72 then
-		local d = hand - AT_MAG
+		local d = hand - magP
 		local out = math.clamp(d.Magnitude / 0.6, 0, 1)
-		magCF = CFrame.new(d) * CFrame.Angles(math.rad(-20 * out), 0, math.rad(12 * out))
+		magCF = CFrame.new(d) * CFrame.Angles(rad(-20 * out), 0, rad(12 * out))
 	end
-	return tiltCF, magCF, leftCF
+	return tiltCF, magCF, hand, grab
 end
 
 local function startReload()
 	if reloading or ammo == cfg.MagSize or humanoid.Health <= 0 then return end
 	reloading = true
+	burstQueue, semiPending = 0, nil
 	reloadStart = os.clock()
 	reloadEvents = {
 		{ at = 0.02, fn = function() Sfx.Play("ReloadStart") end },
@@ -276,34 +372,47 @@ local function fire()
 	lastShotTime = now
 
 	local origin = camera.CFrame.Position
-	local dir = spreadDirection(camera.CFrame.LookVector, currentSpread())
-	local result = workspace:Raycast(origin, dir * cfg.Range, rayParams)
-	local hitPos = result and result.Position or origin + dir * cfg.Range
-	local hitPart = result and result.Instance
+	local baseDir = spreadDirection(camera.CFrame.LookVector, currentSpread())
+	local pelletSpread = cfg.PelletSpread * (1 + (cfg.ADSPelletMult - 1) * aimAlpha)
+	local muzzlePos = (gunCF * built.Points.Muzzle).Position
+	local shots, hitModels = {}, {}
 
-	fx:Tracer((gunCF * built.MuzzleOffset).Position, hitPos)
-	flashUntil = now + 0.035
-	flashRoll = math.random() * math.pi * 2
-	local fs = 0.8 + math.random() * 0.5
-	for _, e in built.Groups.flash do e.Part.Size = e.BaseSize * fs end
-	if sprayIndex % 2 == 0 then built.Smoke:Emit(1) end
-	ejectShell()
-	Sfx.Play("Fire")
-	Sfx.Play("FireTail")
-	if ammo <= cfg.MagSize * 0.25 then Sfx.Play("LowAmmo") end
-
-	if hitPart then
-		local model = hitPart:FindFirstAncestorOfClass("Model")
-		if enemyHumanoid(model) then
-			local head = GunMath.IsHeadshot(hitPart)
-			local dmg = GunMath.Damage(cfg, (hitPos - origin).Magnitude, head)
-			fx:Hit(model, hitPos, -dir, math.floor(dmg + 0.5), head)
-		elseif not (model and model:FindFirstChildOfClass("Humanoid")) then
-			fx:Impact(hitPos, result.Normal, hitPart)
+	for i = 1, cfg.Pellets do
+		local dir = cfg.Pellets > 1 and spreadDirection(baseDir, pelletSpread) or baseDir
+		local result = workspace:Raycast(origin, dir * cfg.Range, rayParams)
+		local hitPos = result and result.Position or origin + dir * cfg.Range
+		local hitPart = result and result.Instance
+		shots[i] = { dir, hitPart, hitPos }
+		if i <= 4 or i % 2 == 0 then fx:Tracer(muzzlePos, hitPos) end
+		if hitPart then
+			local model = hitPart:FindFirstAncestorOfClass("Model")
+			if enemyHumanoid(model) then
+				local h = hitModels[model] or { pos = hitPos, dir = dir, head = false }
+				h.head = h.head or GunMath.IsHeadshot(hitPart)
+				hitModels[model] = h
+			elseif not (model and model:FindFirstChildOfClass("Humanoid")) then
+				fx:Impact(hitPos, result.Normal, hitPart)
+			end
 		end
 	end
+	for model, h in hitModels do fx:Hit(model, h.pos, -h.dir, 0, h.head) end
 
-	FireRemote:FireServer(WEAPON, origin, dir, hitPart, hitPos)
+	flashUntil = now + 0.035
+	flashRoll = math.random() * math.pi * 2
+	local fs = (0.8 + math.random() * 0.5) * (cfg.Pellets > 1 and 1.5 or 1)
+	for _, e in built.Groups.flash do e.Part.Size = e.BaseSize * fs end
+	if sprayIndex % 2 == 0 or cfg.FireMode ~= "Auto" then built.Smoke:Emit(1) end
+	if cfg.Cycle then
+		cycleStart = now
+		if cfg.Cycle ~= "Slide" then task.delay(cfg.CycleDelay, function() Sfx.Play("Bolt") end) end
+	end
+	if cfg.Cycle ~= "Bolt" and cfg.Cycle ~= "Pump" then ejectShell()
+	else task.delay(cfg.CycleDelay + cfg.CycleTime * 0.4, function() if built then ejectShell() end end) end
+	Sfx.Play("Fire", nil, cfg.FirePitch, cfg.FireVolume)
+	Sfx.Play("FireTail", nil, cfg.FirePitch, cfg.FireVolume)
+	if ammo <= cfg.MagSize * 0.25 then Sfx.Play("LowAmmo") end
+
+	FireRemote:FireServer(WEAPON, origin, shots)
 
 	local pat = cfg.RecoilPattern[math.min(sprayIndex, #cfg.RecoilPattern)]
 	local m = 1 + (cfg.ADSRecoilMult - 1) * aimAlpha
@@ -319,15 +428,16 @@ local function fire()
 end
 
 -- ================= EVENTS =================
-HitConfirm.OnClientEvent:Connect(function(model, head, killed, dmg, hitPos)
+local conns = {}
+table.insert(conns, HitConfirm.OnClientEvent:Connect(function(model, head, killed, dmg, hitPos)
 	if model and dmg and hitPos then fx:Number(model, hitPos, dmg, head) end
 	if killed and model then
 		local p = Players:GetPlayerFromCharacter(model)
 		fx:Kill(model, p and p.DisplayName or model.Name)
 	end
-end)
+end))
 
-ShotFX.OnClientEvent:Connect(function(shooter, origin, endPos)
+table.insert(conns, ShotFX.OnClientEvent:Connect(function(shooter, origin, ends)
 	if shooter == player then return end
 	local char = shooter.Character
 	local head = char and char:FindFirstChild("Head")
@@ -335,30 +445,91 @@ ShotFX.OnClientEvent:Connect(function(shooter, origin, endPos)
 	local muzzle = tpGun and tpGun:FindFirstChild("MuzzlePoint", true)
 	local start = (muzzle and muzzle:IsA("Attachment") and muzzle.WorldPosition)
 		or (head and head.Position + head.CFrame.LookVector) or origin
-	fx:Tracer(start, endPos)
-	if head then Sfx.Play("Fire", head) end
-end)
+	if typeof(ends) == "Vector3" then ends = { ends } end
+	if type(ends) ~= "table" then return end
+	for i, e in ends do
+		if typeof(e) == "Vector3" and i <= 6 then fx:Tracer(start, e) end
+	end
+	local wcfg = Weapons.Get(shooter:GetAttribute("Weapon"))
+	if head then Sfx.Play("Fire", head, wcfg.FirePitch, wcfg.FireVolume) end
+end))
 
-DamagedRemote.OnClientEvent:Connect(function(dmg)
+table.insert(conns, DamagedRemote.OnClientEvent:Connect(function(dmg)
 	dmgAlpha = math.min(1, dmgAlpha + dmg / 35)
 	camPunch:Impulse(Vector3.new(-8, rnd() * 10, rnd() * 40))
 	Sfx.Play("Damaged")
-end)
+end))
 
-UIS.InputBegan:Connect(function(input, gpe)
-	if gpe then return end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then triggerDown = true
+local function menuOpen() return player:GetAttribute("GunMenuOpen") == true end
+
+table.insert(conns, UIS.InputBegan:Connect(function(input, gpe)
+	if gpe or menuOpen() then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		triggerDown = true
+		semiPending = os.clock()
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then aimHeld = true
 	elseif input.KeyCode == Enum.KeyCode.R then startReload()
 	elseif input.KeyCode == Enum.KeyCode.LeftShift then shiftHeld = true end
-end)
-UIS.InputEnded:Connect(function(input)
+end))
+table.insert(conns, UIS.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then triggerDown = false
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then aimHeld = false
 	elseif input.KeyCode == Enum.KeyCode.LeftShift then shiftHeld = false end
-end)
+end))
 
-Sfx.Play("Equip")
+local swapQueued = false
+local function onLoadoutChanged() -- deferred so Weapon + Sight changing together = one rebuild
+	if swapQueued then return end
+	swapQueued = true
+	task.defer(function()
+		swapQueued = false
+		if cleaned then return end
+		local id, s = player:GetAttribute("Weapon"), player:GetAttribute("Sight")
+		if id ~= WEAPON or s ~= (built and built.SightId) then equip(id, s) end
+	end)
+end
+table.insert(conns, player:GetAttributeChangedSignal("Weapon"):Connect(onLoadoutChanged))
+table.insert(conns, player:GetAttributeChangedSignal("Sight"):Connect(onLoadoutChanged))
+equip(player:GetAttribute("Weapon"), player:GetAttribute("Sight"))
+
+-- ================= FIRE CONTROL =================
+local function fireControl(now, canFire)
+	if menuOpen() then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
+	-- a click slightly early (e.g. during a bolt/pump cycle) is buffered for 0.2s
+	if semiPending and now - semiPending > 0.2 then semiPending = nil end
+	if not canFire then
+		if (triggerDown or semiPending) and ammo <= 0 and not reloading then startReload() end
+		return
+	end
+	if cfg.FireMode == "Auto" then
+		if triggerDown then
+			if nextFireTime < now - INTERVAL then nextFireTime = now end
+			while nextFireTime <= now and ammo > 0 do
+				fire()
+				nextFireTime += INTERVAL
+			end
+		end
+	elseif cfg.FireMode == "Semi" then
+		-- one shot per click
+		if semiPending and now >= nextFireTime then
+			semiPending = nil
+			fire()
+			nextFireTime = now + INTERVAL
+		end
+	else -- Burst (holding keeps bursting)
+		if burstQueue == 0 and (triggerDown or semiPending) and now >= nextFireTime then
+			burstQueue = math.min(cfg.BurstCount, ammo)
+			semiPending = nil
+			nextFireTime = now
+		end
+		while burstQueue > 0 and nextFireTime <= now and ammo > 0 do
+			fire()
+			burstQueue -= 1
+			nextFireTime += burstQueue > 0 and 60 / cfg.BurstRPM or cfg.BurstDelay
+		end
+		if ammo <= 0 then burstQueue = 0 end
+	end
+end
 
 -- ================= FRAME =================
 local function onRender(dt)
@@ -371,29 +542,24 @@ local function onRender(dt)
 	local moving = humanoid.MoveDirection.Magnitude > 0.1
 	local sliding = character:GetAttribute("Sliding") == true
 	local mantling = character:GetAttribute("Mantling") == true
+	if menuOpen() then shiftHeld = false end
 
 	-- states
 	local aiming = aimHeld and not reloading and alive and not mantling
 	local wantsSprint = shiftHeld and moving and not aiming and not triggerDown
 	local sprinting = wantsSprint and not sliding and not mantling
-	humanoid.WalkSpeed = wantsSprint and SPRINT_SPEED or WALK_SPEED
+	humanoid.WalkSpeed = (wantsSprint and SPRINT_SPEED or WALK_SPEED) * cfg.MoveSpeed
 	aimAlpha = approach(aimAlpha, aiming and 1 or 0, dt, cfg.ADSTime)
 	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
 	mantleAlpha = approach(mantleAlpha, mantling and 1 or 0, dt, 0.1)
-	UIS.MouseDeltaSensitivity = 1 + (cfg.ADSSensitivity - 1) * aimAlpha
+	UIS.MouseDeltaSensitivity = 1 + (adsSens - 1) * aimAlpha
 
 	-- firing
-	local canFire = alive and not reloading and ammo > 0 and sprintAlpha < 0.3 and mantleAlpha < 0.4 and (now - equipStart) > 0.3
-	if triggerDown and canFire then
-		if nextFireTime < now - INTERVAL then nextFireTime = now end
-		while nextFireTime <= now and ammo > 0 do
-			fire()
-			nextFireTime += INTERVAL
-		end
-	elseif triggerDown and ammo <= 0 and not reloading then
-		startReload()
-	end
+	local cycling = cfg.Cycle and cfg.Cycle ~= "Slide" and (now - cycleStart) < (cfg.CycleDelay + cfg.CycleTime)
+	local canFire = alive and not reloading and ammo > 0 and sprintAlpha < 0.3 and mantleAlpha < 0.4
+		and (now - equipStart) > cfg.EquipTime and not cycling
+	fireControl(now, canFire)
 	bloom = math.max(0, bloom - cfg.BloomRecovery * dt * (triggerDown and 0.25 or 1))
 
 	-- reload progress
@@ -435,11 +601,12 @@ local function onRender(dt)
 	rotateCamera(d.X, d.Y)
 	lastPitch = math.deg(math.asin(math.clamp(camera.CFrame.LookVector.Y, -1, 1)))
 	local slideRoll = -3 * slideAlpha * (1 - aimAlpha * 0.6)
-	camera.CFrame *= CFrame.Angles(0, 0, math.rad(cp.Z + slideRoll))
+	camera.CFrame *= CFrame.Angles(0, 0, rad(cp.Z + slideRoll))
 
 	local fp = fovPunch:Update(dt)
 	local fov = BASE_FOV + (SPRINT_FOV - BASE_FOV) * sprintAlpha + SLIDE_FOV_ADD * slideAlpha
-	camera.FieldOfView = fov + (cfg.ADSFov - fov) * aimAlpha + fp.X
+	local zoomFp = sight.Mag and fp.X / sight.Mag or fp.X
+	camera.FieldOfView = fov + (adsFov - fov) * aimAlpha + zoomFp
 
 	-- ===== viewmodel =====
 	local camCF = camera.CFrame
@@ -467,48 +634,66 @@ local function onRender(dt)
 	bobT += dt * flatSpeed * 0.62
 	local b = bobAmt
 	local bob = CFrame.new(math.sin(bobT) * 0.035 * b, -math.abs(math.cos(bobT)) * 0.04 * b + 0.02 * b, 0)
-		* CFrame.Angles(math.rad(math.abs(math.cos(bobT)) * 0.8 * b), 0, math.rad(math.sin(bobT) * 1.4 * b))
+		* CFrame.Angles(rad(math.abs(math.cos(bobT)) * 0.8 * b), 0, rad(math.sin(bobT) * 1.4 * b))
 	local br = 1 - aimAlpha * 0.8
-	local breathe = CFrame.new(0, math.sin(now * 1.7) * 0.01 * br, 0) * CFrame.Angles(math.rad(math.sin(now * 1.7) * 0.3 * br), 0, 0)
+	local breathe = CFrame.new(0, math.sin(now * 1.7) * 0.01 * br, 0) * CFrame.Angles(rad(math.sin(now * 1.7) * 0.3 * br), 0, 0)
 
-	local e = math.clamp((now - equipStart) / 0.45, 0, 1)
+	local e = math.clamp((now - equipStart) / math.max(cfg.EquipTime + 0.15, 0.3), 0, 1)
 	local ie = (1 - e) ^ 3
-	local equipCF = CFrame.new(0.1 * ie, -0.9 * ie, 0.2 * ie) * CFrame.Angles(math.rad(-35 * ie), math.rad(-15 * ie), math.rad(20 * ie))
+	local equipCF = CFrame.new(0.1 * ie, -0.9 * ie, 0.2 * ie) * CFrame.Angles(rad(-35 * ie), rad(-15 * ie), rad(20 * ie))
 
-	-- slide: cant left and tuck in (mostly straightened when aiming)
 	local sk = smooth(slideAlpha)
 	local skPos = sk * (1 - aimAlpha * 0.9)
 	local skRoll = sk * (1 - aimAlpha * 0.75)
 	local slideCF = CFrame.new(-0.1 * skPos, -0.05 * skPos, 0.12 * skPos)
-		* CFrame.Angles(math.rad(3 * skPos), math.rad(4 * skPos), math.rad(-16 * skRoll))
+		* CFrame.Angles(rad(3 * skPos), rad(4 * skPos), rad(-16 * skRoll))
 
-	-- mantle: drop the gun down and to the side
 	local mk = smooth(mantleAlpha)
 	local mantleCF = CFrame.new(0.15 * mk, -0.75 * mk, 0.3 * mk)
-		* CFrame.Angles(math.rad(-38 * mk), math.rad(22 * mk), math.rad(32 * mk))
+		* CFrame.Angles(rad(-38 * mk), rad(22 * mk), rad(32 * mk))
 
-	local tiltCF, magAnim, leftAnim = reloadPose(reloading and reloadU or 0)
+	local tiltCF, magAnim, handPos, grab = reloadPose(reloading and reloadU or 0)
 
 	local rp, rr = recoilPos:Update(dt), recoilRot:Update(dt)
 	local kp, kr = 1 - aimAlpha * 0.45, 1 - aimAlpha * 0.6
-	local recoilCF = CFrame.new(rp.X * kp, rp.Y * kp, rp.Z * kp) * CFrame.Angles(math.rad(rr.X * kr), math.rad(rr.Y * kr), math.rad(rr.Z * kr))
+	local recoilCF = CFrame.new(rp.X * kp, rp.Y * kp, rp.Z * kp) * CFrame.Angles(rad(rr.X * kr), rad(rr.Y * kr), rad(rr.Z * kr))
 
 	local ea = smooth(aimAlpha)
-	local base = HIP:Lerp(built.AimOffset, ea):Lerp(SPRINT, sprintAlpha * (1 - aimAlpha))
+	local base = HIP:Lerp(AIM, ea):Lerp(SPRINT, sprintAlpha * (1 - aimAlpha))
 
-	gunCF = camCF * base * mantleCF * slideCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(math.rad(-lp.Y * 20), 0, 0)
-		* breathe * bob * CFrame.Angles(math.rad(sw.X), math.rad(sw.Y), math.rad(sw.Z + strafeRoll))
+	gunCF = camCF * base * mantleCF * slideCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(rad(-lp.Y * 20), 0, 0)
+		* breathe * bob * CFrame.Angles(rad(sw.X), rad(sw.Y), rad(sw.Z + strafeRoll))
 		* tiltCF * recoilCF
 
-	local i = 0
-	for _, g in built.Groups.gun do i += 1; cfList[i] = gunCF * g.Offset end
-	local magCF = gunCF * built.MagPivot * magAnim
-	for _, g in built.Groups.mag do i += 1; cfList[i] = magCF * g.Offset end
-	local leftCF = gunCF * built.LeftPivot * leftAnim
-	for _, g in built.Groups.left do i += 1; cfList[i] = leftCF * g.Offset end
-	local flashCF = gunCF * built.MuzzleOffset * CFrame.Angles(0, 0, flashRoll)
-	for _, g in built.Groups.flash do i += 1; cfList[i] = flashCF * g.Offset end
-	workspace:BulkMoveTo(partsList, cfList, Enum.BulkMoveMode.FireCFrameChanged)
+	-- bolt / pump / slide travel
+	local cycleZ = 0
+	if cfg.Cycle then
+		local u = (now - cycleStart - cfg.CycleDelay) / cfg.CycleTime
+		if u > 0 and u < 1 then cycleZ = math.sin(math.pi * u) * cfg.CycleDist * VM_SCALE end
+	end
+
+	-- sniper scope: hide the gun and show the full-screen scope when fully aimed
+	local wantScope = sight.Overlay == true and aimAlpha > 0.9
+	if wantScope ~= scoped then
+		scoped = wantScope
+		scope.Visible = scoped
+		built.Model.Parent = scoped and nil or camera
+	end
+
+	if not scoped then
+		local i = 0
+		for _, g in built.Groups.gun do i += 1; cfList[i] = gunCF * g.Offset end
+		local cycleCF = gunCF * CFrame.new(0, 0, cycleZ)
+		for _, g in built.Groups.cycle do i += 1; cfList[i] = cycleCF * g.Offset end
+		local magCF = gunCF * built.Points.MagPivot * magAnim
+		for _, g in built.Groups.mag do i += 1; cfList[i] = magCF * g.Offset end
+		if cfg.Cycle == "Pump" and grab == 0 then handPos += Vector3.new(0, 0, cycleZ) end
+		local leftCF = gunCF * CFrame.new(handPos) * CFrame.Angles(rad(-20 * grab), 0, rad(-35 * grab))
+		for _, g in built.Groups.left do i += 1; cfList[i] = leftCF * g.Offset end
+		local flashCF = gunCF * built.Points.Muzzle * CFrame.Angles(0, 0, flashRoll)
+		for _, g in built.Groups.flash do i += 1; cfList[i] = flashCF * g.Offset end
+		workspace:BulkMoveTo(partsList, cfList, Enum.BulkMoveMode.FireCFrameChanged)
+	end
 
 	local flashOn = now < flashUntil
 	if flashOn ~= flashVisible then
@@ -517,14 +702,20 @@ local function onRender(dt)
 		built.Light.Brightness = flashOn and 4 or 0
 	end
 
-	-- crosshair
-	local spread = currentSpread()
-	local gap = math.tan(math.rad(spread)) / math.tan(math.rad(camera.FieldOfView / 2)) * (camera.ViewportSize.Y / 2) + 5
+	-- crosshair: spread gap, fades out fast and is fully hidden while aiming down sights
+	local spread = currentSpread() + (cfg.Pellets > 1 and cfg.PelletSpread or 0)
+	local gap = math.tan(rad(spread)) / math.tan(rad(camera.FieldOfView / 2)) * (camera.ViewportSize.Y / 2) + 5
 	gap = math.min(gap, 110)
 	for _, c in crossLines do
 		c.f.Position = UDim2.new(0.5, c.d.X * (gap + 4), 0.5, c.d.Y * (gap + 4))
 	end
-	cross.GroupTransparency = math.clamp(math.max(aimAlpha, sprintAlpha, mantleAlpha) * 1.3, 0, 1)
+	local hide = math.clamp(math.max(aimAlpha * 3, sprintAlpha * 1.3, mantleAlpha * 1.3), 0, 1)
+	cross.Visible = hide < 0.99 and alive and not menuOpen()
+	for _, c in crossAll do
+		c.f.BackgroundTransparency = hide
+		c.s.Transparency = 0.55 + 0.45 * hide
+	end
+	if not menuOpen() and UIS.MouseIconEnabled then UIS.MouseIconEnabled = false end
 
 	-- damage vignette
 	dmgAlpha = math.max(0, dmgAlpha - dt * 2.2)
@@ -536,13 +727,13 @@ end
 pcall(function() RunService:UnbindFromRenderStep(BIND) end)
 RunService:BindToRenderStep(BIND, Enum.RenderPriority.Camera.Value + 1, onRender)
 
-local cleaned = false
 local function cleanup()
 	if cleaned then return end
 	cleaned = true
 	pcall(function() RunService:UnbindFromRenderStep(BIND) end)
+	for _, c in conns do c:Disconnect() end
 	fx:Destroy()
-	built.Model:Destroy()
+	if built then built.Model:Destroy() end
 	UIS.MouseDeltaSensitivity = 1
 	camera.FieldOfView = BASE_FOV
 end
