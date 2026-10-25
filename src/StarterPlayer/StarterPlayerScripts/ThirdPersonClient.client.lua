@@ -234,9 +234,11 @@ end
 local localT = { pitch = 0, ads = false, sprint = false, slide = false, mantle = false, crouch = false, reloading = false }
 local lastSend, sent = 0, {}
 
+-- Locked first person always counts (the distance check alone fails while falling fast and showed your own body)
 local function isFirstPerson(char)
+	if player.CameraMode == Enum.CameraMode.LockFirstPerson then return true end
 	local head = char and char:FindFirstChild("Head")
-	return head and (workspace.CurrentCamera.CFrame.Position - head.Position).Magnitude < 1.5
+	return head and (workspace.CurrentCamera.CFrame.Position - head.Position).Magnitude < 3
 end
 
 RunService.Heartbeat:Connect(function()
