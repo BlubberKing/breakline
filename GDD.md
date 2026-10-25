@@ -1,5 +1,5 @@
 # BREAKLINE — Game Design Document
-*Working title. Roblox competitive arcade FPS. Last updated: Oct 24, 2026 (movement speed + crouch update).*
+*Working title. Roblox competitive arcade FPS. Last updated: Oct 24, 2026 (momentum jump + mobile sprint update).*
 
 > **Note to any AI reading this:** This file plus the `src/` folder is the source of truth.
 > Items marked **PROPOSAL** are ideas, not approved — ask the owner before building on them.
@@ -173,6 +173,12 @@ Weapon move-speed: SMG 1.06, pistols ~1.05, LMG/sniper 0.9.
 ## 8. Movement (base kit, everyone has it)
 Goal: fast-paced and fluid. All speeds are multiplied by the gun's move-speed (7.4).
 - **Walk 16 / sprint 30 / crouch 9** (sprint was 24). Speeds live at the top of `GunClient`.
+- **Sprint:** hold Shift. **Mobile:** "Sprint" button above the jump button; **gamepad:** click the left stick. Both are tap-to-toggle
+  (button turns accent-colored while on) and switch off when you stop moving. Sent to `Movement` as the `SprintToggle` attribute.
+- **Jump (momentum):** low and snappy, not springy — jump height 4.6 (Roblox default 7.2) and 1.4× gravity on the way down only.
+  You keep your run speed in the air, so a sprint-jump goes far and flat (+2.5 forward speed when jumping at ≥ 24 speed).
+  Air control: steer slowly (turn rate 3.2 rad/s), pressing backwards brakes, no input = keep drifting. Hitting a wall drops the
+  momentum into it. Walking off a ledge works the same way. All in `CFG` at the top of `Movement` (JUMP_HEIGHT, FALL_GRAVITY_MULT, AIR_*).
 - **Crouch:** C / LeftCtrl / gamepad B / mobile button while **not** sprinting. Hold to crouch (`CROUCH_TOGGLE` in `Movement` switches
   to tap-toggle). Lowers hitbox + camera, can't sprint while crouched, pressing sprint stands you up. Stays crouched under low ceilings.
   Replicated as the `Crouching` character attribute (third person shows bent legs + lean).
@@ -183,10 +189,12 @@ Goal: fast-paced and fluid. All speeds are multiplied by the gun's move-speed (7
   - Uphill: **loses** speed slowly (scaled by steepness); ends early if it drops below 14.
   - Sliding off a ledge keeps the momentum into the air.
 - **Slide-jump:** keeps 95% of momentum (also works in the short blend right after a slide ends).
-- **Mantle:** jump into a ledge (1.4–7.5 studs).
+- **Mantle:** jump into a ledge (1.4–7.5 studs). With the lower jump, mantle is how you get onto anything above ~4.5 studs.
+- **First person:** your own body + gear are always hidden locally (fixes seeing your body while falling).
 - **Speed feel (subtle, tunable in `SPEEDFX` at the top of `GunClient`):** sprint FOV 82 (was 80), slide FOV +7, extra FOV when going
   faster than a sprint (downhill slides); quick FOV kick + dip when a slide starts; light camera rumble while sliding; faint speed lines
-  at the screen edges above ~25 speed (hidden while aiming); optional looping wind sound (`Wind` in SoundBank — empty = silent).
+  at the screen edges — start at ~17 speed, about 60% strength at a normal sprint, full at ~38 (slides) — plus a soft dark edge
+  vignette at speed; all hidden while aiming. Optional looping wind sound (`Wind` in SoundBank — empty = silent).
 
 ## 9. Tech Principles
 - **Data-driven:** stats in config modules (WeaponConfig, etc.).
@@ -212,10 +220,14 @@ Goal: fast-paced and fluid. All speeds are multiplied by the gun's move-speed (7
 
 ## 11. Current Status
 **Built (not playtested):** 10-gun roster with models, fire modes, sights (7.4); Armory test picker; HitFX (hitmarkers,
-damage numbers, combo counter, kill banner, impacts); crouch / momentum slide / slide-jump / mantle + speed effects (section 8); third-person world gun with IK hands;
+damage numbers, combo counter, kill banner, impacts); crouch / momentum slide / slide-jump / momentum jump / mantle + speed effects + mobile sprint button (section 8); third-person world gun with IK hands;
 custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
 
 **Changelog**
+- **Oct 24 (d):** Momentum jump: lower, snappier jump (height 4.6, 1.4× fall gravity) that keeps your run speed in the air, small
+  sprint-jump boost, limited air steering. **Fix:** own body showed in first person while falling. Speed lines now visible at a
+  normal sprint (stronger, thicker, plus a soft edge vignette). New **mobile sprint button** (+ gamepad L3), tap-to-toggle.
+  Files: Movement, GunClient, ThirdPersonClient.
 - **Oct 24 (c):** Movement speed pass. Sprint 24 → 30. New **crouch** (C when not sprinting, crouch speed 9, third-person pose).
   Slide reworked: keeps momentum on flat, gains downhill, loses a little uphill, smooth blend out, keeps momentum off ledges.
   Speed effects: higher sprint/slide FOV, speed-based FOV, slide FOV kick + dip, slide camera rumble, edge speed lines,
@@ -226,9 +238,10 @@ custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
 - **Oct 24 (a):** slide/mantle sounds; damage numbers come from the server; server fire-rate check no longer drops shots during lag.
 
 **To do / known:**
-- Playtest the new movement numbers: sprint 30, slide flat time 0.95s, downhill gain, speed lines strength — tell the AI what feels off.
+- Playtest the new movement numbers: sprint 30, jump height 4.6 + air momentum, slide flat time 0.95s, downhill gain, speed lines
+  strength — tell the AI what feels off. Check the map: ledges you used to jump onto (4.6–7.2 studs) now need a mantle.
 - Find a loopable wind sound ID for `Wind` in SoundBank (optional).
-- Mobile: the action button is now called "Crouch" and slides when sprinting; mobile has no sprint key yet (needs a sprint button).
+- Mobile: test the Sprint + Crouch buttons on a phone (or Studio's device emulator); move the Sprint button if it overlaps anything.
 - Playtest everything; tune each gun (iron sight alignment, hip positions, recoil) — tell the AI what feels off per gun.
 - Guns share the same fire/reload sounds (pitched per gun) — find unique sound IDs per class later (SoundBank).
 - Reload animation is shared (mag swap) — shotgun shell-by-shell / revolver speedloader anims later.
