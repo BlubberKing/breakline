@@ -67,6 +67,7 @@ local function remote(name)
 	local r = Instance.new("RemoteEvent"); r.Name = name; r.Parent = remotes; return r
 end
 local ThrowRemote, DropRemote, NotifyRemote = remote("Throw"), remote("Drop"), remote("Notify")
+local BoxBreakRemote, SoulRemote = remote("BoxBreak"), remote("SoulFX") -- client-side effects: box destroyed / player died
 remotes.Parent = RS
 
 local stateFolder = Instance.new("Folder")
@@ -552,7 +553,7 @@ local function destroyBox(rec, reason)
 	boxes[rec] = nil
 	byPart[rec.part] = nil
 	if reason ~= "clear" then
-		burstFX(pos, Color3.fromRGB(255, 190, 80), 30, 35)
+		BoxBreakRemote:FireAllClients(pos, team and TEAM_COLOR[team] or nil)
 		if team then
 			notify(team:upper() .. " box " .. (reason == "drained" and "worn out" or "destroyed"), TEAM_COLOR[team])
 		end
@@ -616,6 +617,7 @@ BoxDamage.Event:Connect(function(part, dmg, shooter)
 	if not shooter or not shooter.Team or shooter.Team.Name == rec.holeTeam then return end
 	rec.hp -= dmg
 	part:SetAttribute("Health", math.max(rec.hp, 0))
+	part:SetAttribute("LastHit", workspace:GetServerTimeNow()) -- makes the face look angry (BoxModel)
 	if rec.hp <= 0 then destroyBox(rec, "shot") end
 end)
 
@@ -704,6 +706,7 @@ local function onCharacter(player, char)
 		hum.Died:Connect(function()
 			local rec = carrying[player]
 			local root = char:FindFirstChild("HumanoidRootPart")
+			if root then SoulRemote:FireAllClients(root.Position) end -- blue soul death effect (DeathFX)
 			if rec then release(player, Vector3.zero, "Loose", root and root.Position + Vector3.new(0, 1, 0)) end
 		end)
 	end
@@ -742,7 +745,8 @@ RunService.Heartbeat:Connect(function(dt)
 	local nA, nB = countPlugged(TEAM_A), countPlugged(TEAM_B)
 	local diff = nA - nB
 	if diff ~= 0 then
-		wallZ = math.clamp(wallZ + diff * C.WALL_SPEED_PER_BOX * dt * SIGN[TEAM_B], -LINE_Z, LINE_Z)
+		local speed = C.WALL_SPEED[math.min(math.abs(diff), #C.WALL_SPEED)]
+		wallZ = math.clamp(wallZ + math.sign(diff) * speed * dt * SIGN[TEAM_B], -LINE_Z, LINE_Z)
 		moveWall()
 		if wallZ * SIGN[TEAM_B] >= LINE_Z then endRound(TEAM_A) return end
 		if wallZ * SIGN[TEAM_A] >= LINE_Z then endRound(TEAM_B) return end
