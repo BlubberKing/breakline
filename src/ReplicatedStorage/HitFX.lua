@@ -3,6 +3,7 @@ local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 local Sfx = require(script.Parent:WaitForChild("Sfx"))
 
+local HOLE_LIFE = 10 -- seconds a bullet mark stays
 local HitFX = {}
 HitFX.__index = HitFX
 
@@ -308,8 +309,11 @@ function HitFX:Impact(pos, normal, part)
 	hole.Color = Color3.fromRGB(18, 18, 20)
 	hole.CFrame = CFrame.lookAt(pos + normal * 0.012, pos + normal * 2) * CFrame.Angles(0, 0, math.random() * 6.28)
 	hole.Parent = self.folder
-	table.insert(self.holes, hole)
-	if #self.holes > 80 then table.remove(self.holes, 1):Destroy() end
+	-- stick to the surface it hit (the wall moves) and fade away; remove if the surface disappears
+	local rec = { part = hole, host = part, born = os.clock() }
+	if part and part:IsA("BasePart") then rec.rel = part.CFrame:ToObjectSpace(hole.CFrame) end
+	table.insert(self.holes, rec)
+	if #self.holes > 80 then table.remove(self.holes, 1).part:Destroy() end
 
 	local att = self:_burst(pos, normal, 3, {
 		Texture = SMOKE_TEX, Color = part.Color:Lerp(WHITE, 0.25), LightEmission = 0, LightInfluence = 1,
@@ -327,6 +331,18 @@ end
 
 -- ===== per-frame =====
 function HitFX:_update(dt)
+	local nowc = os.clock()
+	for i = #self.holes, 1, -1 do
+		local r = self.holes[i]
+		local age = nowc - r.born
+		if age > HOLE_LIFE or not r.part.Parent or (r.rel and (not r.host or not r.host:IsDescendantOf(workspace))) then
+			r.part:Destroy()
+			table.remove(self.holes, i)
+		else
+			if r.rel then r.part.CFrame = r.host.CFrame * r.rel end
+			r.part.Transparency = math.clamp((age - (HOLE_LIFE - 2)) / 2, 0, 1)
+		end
+	end
 	local cam = self.camera
 	local now = os.clock()
 
