@@ -228,9 +228,10 @@ function Models.WASP(k)
 	k.box("StockArmL", V(0.025, 0.06, 0.6), CF(-0.08, 0.46, 0.55), C.Dark)
 	k.box("ButtPlate", V(0.18, 0.28, 0.05), CF(0, 0.42, 0.88), C.Dark)
 	k.tag = "Iron"
-	k.box("RearSight", V(0.08, 0.07, 0.04), CF(0, 0.635, 0.12), C.Dark)
+	k.box("RearBase", V(0.09, 0.04, 0.04), CF(0, 0.62, 0.12), C.Dark)
+	for _, sx in ipairs({ -1, 1 }) do k.box("RearEar", V(0.024, 0.07, 0.04), CF(sx * 0.04, 0.665, 0.12), C.Dark) end
 	k.box("FrontBase", V(0.04, 0.12, 0.04), CF(0, 0.54, -1.1), C.Dark)
-	k.box("FrontSight", V(0.02, 0.06, 0.02), CF(0, 0.63, -1.1), C.Dark)
+	k.box("FrontSight", V(0.024, 0.07, 0.024), CF(0, 0.635, -1.1), C.Dark)
 	k.tag = nil
 	k.irons(V(0, 0.67, 0.12), 0.42)
 	k.mount(CF(0, 0.605, -0.35))
@@ -403,8 +404,11 @@ function Models.V9(k)
 	k.box("Slide", V(0.16, 0.16, 0.9), CF(0, 0.4, -0.25), C.Body)
 	k.box("Serrations", V(0.165, 0.11, 0.14), CF(0, 0.4, 0.1), C.Dark)
 	k.box("EjectionPort", V(0.02, 0.06, 0.16), CF(0.082, 0.44, -0.2), C.Steel, METAL)
-	k.box("RearSight", V(0.11, 0.05, 0.05), CF(0, 0.505, 0.15), C.Dark)
-	k.box("FrontSight", V(0.03, 0.05, 0.03), CF(0, 0.505, -0.66), C.Dark)
+	k.tag = "Iron"
+	k.box("RearBase", V(0.11, 0.025, 0.05), CF(0, 0.4925, 0.15), C.Dark)
+	for _, sx in ipairs({ -1, 1 }) do k.box("RearEar", V(0.03, 0.06, 0.05), CF(sx * 0.04, 0.535, 0.15), C.Dark) end
+	k.box("FrontSight", V(0.026, 0.05, 0.03), CF(0, 0.505, -0.66), C.Dark)
+	k.tag = nil
 	k.cylZ("BarrelTip", 0.03, 0.07, CF(0, 0.4, -0.71), C.Dark)
 	k.group = "gun"
 	k.irons(V(0, 0.53, 0.15), 0.62)
@@ -429,8 +433,11 @@ function Models.MAGNUM(k)
 	k.box("Barrel", V(0.09, 0.11, 0.9), CF(0, 0.43, -0.85), C.Steel, METAL)
 	k.box("Underlug", V(0.07, 0.09, 0.75), CF(0, 0.33, -0.8), C.Steel, METAL)
 	k.glow("RibStripe", V(0.035, 0.012, 0.7), CF(0, 0.492, -0.85))
-	k.box("FrontRamp", V(0.03, 0.06, 0.1), CF(0, 0.52, -1.22), C.Dark)
-	k.box("RearNotch", V(0.1, 0.04, 0.05), CF(0, 0.54, 0.02), C.Dark)
+	k.tag = "Iron"
+	k.box("FrontRamp", V(0.026, 0.06, 0.1), CF(0, 0.53, -1.22), C.Dark)
+	k.box("RearBase", V(0.1, 0.025, 0.05), CF(0, 0.5375, 0.02), C.Dark)
+	for _, sx in ipairs({ -1, 1 }) do k.box("RearEar", V(0.03, 0.055, 0.05), CF(sx * 0.04, 0.5775, 0.02), C.Dark) end
+	k.tag = nil
 	k.muzzle(V(0, 0.43, -1.32))
 	k.fore(g * CF(-0.02, -0.05, -0.02))
 	k.irons(V(0, 0.56, 0.02), 0.62)
