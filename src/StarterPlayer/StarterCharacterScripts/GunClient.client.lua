@@ -820,7 +820,21 @@ local function onRender(dt)
 		end
 		if cfg.Cycle == "Pump" and grab == 0 then handPos += Vector3.new(0, 0, cycleZ) end
 		local leftCF = gunCF * CFrame.new(handPos) * CFrame.Angles(rad(-20 * grab), 0, rad(-35 * grab))
-		for _, g in built.Groups.left do i += 1; cfList[i] = leftCF * g.Offset end
+		-- left arm: sleeve + cuff point from the hand to a fixed shoulder point below + behind the camera, so when the hand
+		-- goes up to cock the gun the arm tilts down off screen instead of its back end showing
+		local shoulder = built.Points.Fore.Position + Vector3.new(-1.3, -3.4, 3.0)
+		local armDir = (shoulder - handPos).Unit
+		for _, g in built.Groups.left do
+			i += 1
+			if g.Dyn == "sleeve" then
+				local len = built.SleeveLen
+				cfList[i] = gunCF * CFrame.lookAt(handPos + armDir * (0.15 + len / 2), handPos + armDir * (1 + len / 2))
+			elseif g.Dyn == "cuff" then
+				cfList[i] = gunCF * CFrame.lookAt(handPos + armDir * 0.2, handPos + armDir)
+			else
+				cfList[i] = leftCF * g.Offset
+			end
+		end
 		local flashCF = gunCF * built.Points.Muzzle * CFrame.Angles(0, 0, flashRoll)
 		for _, g in built.Groups.flash do i += 1; cfList[i] = flashCF * g.Offset end
 		workspace:BulkMoveTo(partsList, cfList, Enum.BulkMoveMode.FireCFrameChanged)
