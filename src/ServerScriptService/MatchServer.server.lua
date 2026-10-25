@@ -208,7 +208,7 @@ do
 		table.insert(wallBase, origin:ToObjectSpace(part.CFrame)) -- local to map space, moved along Z later
 	end
 	local H, T = WALL_H, M.WallThickness
-	wp(mk("Wall", Vector3.new(MAP_W, H, T), CFrame.new(0, H / 2, 0), Color3.fromRGB(140, 210, 255), Enum.Material.Glass, 0.8))
+	wp(mk("Wall", Vector3.new(MAP_W, H, T), CFrame.new(0, H / 2, 0), Color3.fromRGB(140, 210, 255), Enum.Material.SmoothPlastic, 0.8))
 	wp(mk("WallTop", Vector3.new(MAP_W, 0.8, T + 0.4), CFrame.new(0, H, 0), Color3.fromRGB(255, 255, 255), Enum.Material.Neon))
 	local o = BOX.Size + 0.6
 	for _, t in C.Teams do
