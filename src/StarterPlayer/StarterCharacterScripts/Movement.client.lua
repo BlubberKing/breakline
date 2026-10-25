@@ -1,4 +1,5 @@
--- Movement: slide (sprint + C / LeftCtrl / ButtonB / mobile button) and mantle (jump into a ledge)
+-- Movement v2: crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
+-- momentum slide (keeps speed on flat, gains downhill, loses a little uphill), slide-out blend, mantle.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
@@ -11,20 +12,32 @@ local hum = char:WaitForChild("Humanoid")
 local root = char:WaitForChild("HumanoidRootPart")
 
 local CFG = {
-	SLIDE_MIN_SPEED   = 17,   -- need to be sprinting (sprint = 24)
-	SLIDE_BOOST       = 9,
-	SLIDE_MAX_START   = 38,
-	SLIDE_FRICTION    = 19,   -- studs/s^2 lost on flat ground
-	SLIDE_SLOPE_ACCEL = 60,   -- gain on downhill
-	SLIDE_END_SPEED   = 12,
-	SLIDE_MAX_TIME    = 1.2,
-	SLIDE_STEER       = 1.8,  -- rad/s
-	SLIDE_COOLDOWN    = 0.5,
-	SLIDE_HIP_FACTOR  = 0.4,  -- lower = lower camera + hitbox
-	SLIDE_BUFFER      = 0.2,  -- press slide just before landing
-	SLIDE_JUMP_KEEP   = 0.9,  -- momentum kept on slide-jump
-	SLIDE_JUMP_CARRY  = 0.45,
-	CAM_SLIDE_DROP    = -0.35,
+	-- slide (walk = 16, sprint = 30, both set in GunClient)
+	SLIDE_MIN_SPEED     = 20,   -- need to be sprinting to slide; slower than this = crouch instead
+	SLIDE_BOOST         = 6,    -- extra speed when the slide starts
+	SLIDE_MAX_START     = 40,
+	SLIDE_MAX_SPEED     = 58,   -- cap when gaining speed downhill
+	SLIDE_FLAT_TOL      = 0.06, -- slopes gentler than ~3.5 degrees count as flat
+	SLIDE_FLAT_FRICTION = 0,    -- studs/s^2 lost on flat ground (0 = keep all momentum)
+	SLIDE_DOWNHILL_ACCEL= 70,   -- gain per second on downhill (scaled by steepness)
+	SLIDE_UPHILL_BASE   = 4,    -- loss per second when sliding up any slope
+	SLIDE_UPHILL_ACCEL  = 28,   -- extra loss per second (scaled by steepness)
+	SLIDE_FLAT_TIME     = 0.95, -- slide length on flat/uphill; the timer pauses while going downhill
+	SLIDE_MAX_TIME      = 4,    -- hard safety cap
+	SLIDE_END_SPEED     = 14,
+	SLIDE_STEER         = 1.8,  -- rad/s
+	SLIDE_COOLDOWN      = 0.5,
+	SLIDE_HIP_FACTOR    = 0.4,  -- lower = lower camera + hitbox
+	SLIDE_BUFFER        = 0.2,  -- press slide just before landing
+	SLIDE_JUMP_KEEP     = 0.95, -- momentum kept on slide-jump
+	SLIDE_JUMP_CARRY    = 0.45,
+	SLIDE_EXIT_BLEND    = 0.28, -- seconds to blend from slide speed back to run/crouch speed
+	CAM_SLIDE_DROP      = -0.35,
+
+	-- crouch
+	CROUCH_TOGGLE       = false, -- false = hold C, true = tap C to toggle
+	CROUCH_HIP_FACTOR   = 0.6,
+	CAM_CROUCH_DROP     = -0.2,
 
 	MANTLE_MIN_H      = 1.4,  -- ledge height above feet (in air)
 	MANTLE_GROUND_MIN = 2.4,  -- from ground, lower ledges just use a normal jump
@@ -154,17 +167,29 @@ local function findLedge()
 end
 
 ------------------------------------------------------------------ state
-local mode = "none" -- none | slide | carry | mantle
+local mode = "none" -- none | slide | slideout | carry | mantle
 local slideDir, slideSpeed, slideTime, slideAir, slideStuck = Vector3.zero, 0, 0, 0, 0
 local slideReadyAt, slideQueuedAt = 0, -1
+local slideFlatTime = 0
 local carryV, carryT = Vector3.zero, 0
 local mantleData, mantleReadyAt = nil, 0
 local lastJumpReq, lastLedgeCheck = -1, 0
 local wasGrounded = true
 local camKick, camOffsetY = 0, 0
+local crouchHeld, crouching = false, false
+local exitV, exitT = Vector3.zero, 0
+
+local function sprintKeyDown()
+	return UIS:IsKeyDown(Enum.KeyCode.LeftShift)
+end
+-- something above our head would block standing back up from the current (lowered) height
+local function ceilingBlocked()
+	local need = math.max(baseHip - hum.HipHeight, 0) + rootHalf() + 1.4
+	return workspace:Raycast(root.Position, Vector3.new(0, need, 0), rayParams) ~= nil
+end
 
 local function canSlide()
-	return mode == "none" and hum.Health > 0 and grounded() and os.clock() >= slideReadyAt
+	return (mode == "none" or mode == "slideout") and hum.Health > 0 and grounded() and os.clock() >= slideReadyAt
 		and hvel().Magnitude >= CFG.SLIDE_MIN_SPEED
 end
 
@@ -174,17 +199,26 @@ local function startSlide()
 	slideDir = v.Magnitude > 0.1 and v.Unit or flatLook()
 	slideSpeed = math.min(v.Magnitude + CFG.SLIDE_BOOST, CFG.SLIDE_MAX_START)
 	slideTime, slideAir, slideStuck = 0, 0, 0
+	slideFlatTime, slideQueuedAt = 0, -1
 	mode = "slide"
+	crouching = false
+	char:SetAttribute("Crouching", false)
 	char:SetAttribute("Sliding", true)
-	playSound("Slide", 0.7)
+	playSound("Slide")
 	drivePlanar(slideDir * slideSpeed)
 end
 
-local function endSlide()
-	mode = "none"
-	release()
+-- blend = true: ease from slide speed back into run/crouch speed instead of snapping
+local function endSlide(blend)
 	char:SetAttribute("Sliding", false)
 	slideReadyAt = os.clock() + CFG.SLIDE_COOLDOWN
+	if blend then
+		exitV, exitT = slideDir * math.max(slideSpeed, 0), 0
+		mode = "slideout"
+	else
+		mode = "none"
+		release()
+	end
 end
 
 local function finishMantle()
@@ -197,7 +231,7 @@ local function finishMantle()
 end
 
 local function startMantle(ledge)
-	if mode == "slide" then endSlide() end
+	if mode == "slide" then endSlide(false) end
 	release()
 	local riseY = ledge.top + baseHip + rootHalf() + 0.25
 	mantleData = {
@@ -214,13 +248,24 @@ end
 local function updateSlide(dt)
 	slideTime += dt
 	local r = workspace:Raycast(root.Position, Vector3.new(0, -(hum.HipHeight + rootHalf() + 1.5), 0), rayParams)
+	local slope = 0 -- > 0 = sliding downhill, < 0 = uphill (sine of the slope angle along the slide)
 	if r then
 		slideAir = 0
-		slideSpeed += flat(r.Normal):Dot(slideDir) * CFG.SLIDE_SLOPE_ACCEL * dt
+		slope = flat(r.Normal):Dot(slideDir)
 	else
 		slideAir += dt
 	end
-	slideSpeed -= CFG.SLIDE_FRICTION * dt
+
+	if slope > CFG.SLIDE_FLAT_TOL then -- downhill: gain speed, timer paused
+		slideSpeed = math.min(slideSpeed + slope * CFG.SLIDE_DOWNHILL_ACCEL * dt, math.max(slideSpeed, CFG.SLIDE_MAX_SPEED))
+	elseif slope < -CFG.SLIDE_FLAT_TOL then -- uphill: lose a little
+		slideSpeed -= (CFG.SLIDE_UPHILL_BASE - slope * CFG.SLIDE_UPHILL_ACCEL) * dt
+		slideFlatTime += dt
+	else -- flat: keep momentum
+		slideSpeed -= CFG.SLIDE_FLAT_FRICTION * dt
+		slideFlatTime += dt
+	end
+	if slideAir > 0 then slideFlatTime += dt end
 
 	local md = flat(hum.MoveDirection)
 	if md.Magnitude > 0.1 then
@@ -233,8 +278,29 @@ local function updateSlide(dt)
 	drivePlanar(slideDir * math.max(slideSpeed, 0))
 
 	if slideTime > 0.1 and hvel().Magnitude < slideSpeed * 0.4 then slideStuck += dt else slideStuck = 0 end
-	if slideSpeed <= CFG.SLIDE_END_SPEED or slideTime >= CFG.SLIDE_MAX_TIME or slideAir > 0.25 or slideStuck > 0.1 then
-		endSlide()
+	if slideStuck > 0.1 then
+		endSlide(false) -- ran into something
+	elseif slideAir > 0.25 then
+		-- slid off a ledge: keep the momentum into the air
+		local keep = slideDir * math.max(slideSpeed, 0)
+		endSlide(false)
+		carryV, carryT = keep, 0
+		mode = "carry"
+		drivePlanar(carryV)
+	elseif slideSpeed <= CFG.SLIDE_END_SPEED or slideFlatTime >= CFG.SLIDE_FLAT_TIME or slideTime >= CFG.SLIDE_MAX_TIME then
+		endSlide(true)
+	end
+end
+
+local function updateSlideOut(dt)
+	exitT += dt
+	local f = clamp(exitT / CFG.SLIDE_EXIT_BLEND, 0, 1)
+	f = f * f * (3 - 2 * f)
+	local target = flat(hum.MoveDirection) * hum.WalkSpeed
+	drivePlanar(exitV:Lerp(target, f))
+	if exitT >= CFG.SLIDE_EXIT_BLEND or not grounded() then
+		release()
+		mode = "none"
 	end
 end
 
@@ -269,17 +335,34 @@ local function updateMantle(dt)
 end
 
 ------------------------------------------------------------------ input
-local function onSlide(_, state)
-	if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
-	if canSlide() then startSlide() else slideQueuedAt = os.clock() end
-	return Enum.ContextActionResult.Sink
+-- one button: slide when sprinting fast enough, otherwise crouch
+local function onCrouchSlide(_, state)
+	if state == Enum.UserInputState.Begin then
+		if canSlide() then
+			startSlide()
+		elseif not grounded() or (sprintKeyDown() and flat(hum.MoveDirection).Magnitude > 0.1) then
+			slideQueuedAt = os.clock() -- landing / reaching sprint speed within the buffer = slide
+		end
+		if mode ~= "slide" then
+			if CFG.CROUCH_TOGGLE then crouchHeld = not crouchHeld else crouchHeld = true end
+		elseif not CFG.CROUCH_TOGGLE then
+			crouchHeld = true -- keep holding after the slide = stay crouched
+		end
+		return Enum.ContextActionResult.Sink
+	elseif state == Enum.UserInputState.End or state == Enum.UserInputState.Cancel then
+		if not CFG.CROUCH_TOGGLE then crouchHeld = false end
+		return Enum.ContextActionResult.Sink
+	end
+	return Enum.ContextActionResult.Pass
 end
-CAS:BindAction("Slide", onSlide, true, Enum.KeyCode.C, Enum.KeyCode.LeftControl, Enum.KeyCode.ButtonB)
-CAS:SetTitle("Slide", "Slide")
+CAS:BindAction("CrouchSlide", onCrouchSlide, true, Enum.KeyCode.C, Enum.KeyCode.LeftControl, Enum.KeyCode.ButtonB)
+CAS:SetTitle("CrouchSlide", "Crouch")
 
 local jumpConn = UIS.JumpRequest:Connect(function()
 	lastJumpReq = os.clock()
 	if hum.Health <= 0 then return end
+	local fromSlideOut = mode == "slideout"
+	if fromSlideOut then release(); mode = "none" end
 	if mode == "slide" or (mode == "none" and grounded()) then
 		if os.clock() >= mantleReadyAt then
 			local ledge = findLedge()
@@ -287,10 +370,14 @@ local jumpConn = UIS.JumpRequest:Connect(function()
 		end
 		if mode == "slide" then -- slide-jump keeps momentum
 			local keep = slideDir * math.max(slideSpeed, 0) * CFG.SLIDE_JUMP_KEEP
-			endSlide()
+			endSlide(false)
 			carryV, carryT = keep, 0
 			mode = "carry"
 			hum:ChangeState(Enum.HumanoidStateType.Jumping)
+			drivePlanar(carryV)
+		elseif fromSlideOut then -- jump right after a slide still keeps the momentum
+			carryV, carryT = hvel(), 0
+			mode = "carry"
 			drivePlanar(carryV)
 		end
 	end
@@ -301,10 +388,11 @@ local stepConn = RunService.Stepped:Connect(function(_, dt)
 	if hum.Health <= 0 then return end
 	local now = os.clock()
 	local g = grounded()
-	if g and not wasGrounded and now - slideQueuedAt < CFG.SLIDE_BUFFER and canSlide() then startSlide() end
+	if now - slideQueuedAt < CFG.SLIDE_BUFFER and canSlide() then startSlide() end
 	wasGrounded = g
 
 	if mode == "slide" then updateSlide(dt)
+	elseif mode == "slideout" then updateSlideOut(dt)
 	elseif mode == "carry" then updateCarry(dt)
 	elseif mode == "mantle" then updateMantle(dt) end
 
@@ -321,8 +409,22 @@ local stepConn = RunService.Stepped:Connect(function(_, dt)
 		end
 	end
 
-	-- hip height (slide crouch), stays low under ceilings
-	local targetHip = (mode == "slide") and baseHip * CFG.SLIDE_HIP_FACTOR or baseHip
+	-- crouch: hold the key (or stay down under a low ceiling). Sprinting stands you back up.
+	local low = hum.HipHeight < baseHip - 0.05
+	local blocked = low and ceilingBlocked()
+	if crouchHeld and sprintKeyDown() and flat(hum.MoveDirection).Magnitude > 0.1 and not blocked then
+		crouchHeld = false -- pressing sprint cancels crouch (also cancels toggle-crouch)
+	end
+	local wantCrouch = (mode == "none" or mode == "slideout") and g and (crouchHeld or blocked)
+	if wantCrouch ~= crouching then
+		crouching = wantCrouch
+		char:SetAttribute("Crouching", crouching)
+	end
+
+	-- hip height (slide / crouch), stays low under ceilings
+	local targetHip = baseHip
+	if mode == "slide" then targetHip = baseHip * CFG.SLIDE_HIP_FACTOR
+	elseif crouching then targetHip = baseHip * CFG.CROUCH_HIP_FACTOR end
 	if targetHip > hum.HipHeight + 0.01 then
 		local need = (targetHip - hum.HipHeight) + rootHalf() + 1.4
 		if workspace:Raycast(root.Position, Vector3.new(0, need, 0), rayParams) then targetHip = hum.HipHeight end
@@ -331,7 +433,8 @@ local stepConn = RunService.Stepped:Connect(function(_, dt)
 
 	-- camera
 	camKick = approach(camKick, 0, 10, dt)
-	camOffsetY = approach(camOffsetY, (mode == "slide" and CFG.CAM_SLIDE_DROP or 0) + camKick, 14, dt)
+	local drop = (mode == "slide" and CFG.CAM_SLIDE_DROP) or (crouching and CFG.CAM_CROUCH_DROP) or 0
+	camOffsetY = approach(camOffsetY, drop + camKick, 14, dt)
 	hum.CameraOffset = Vector3.new(0, camOffsetY, 0)
 end)
 
@@ -339,7 +442,8 @@ hum.Died:Connect(function()
 	release()
 	char:SetAttribute("Sliding", false)
 	char:SetAttribute("Mantling", false)
-	CAS:UnbindAction("Slide")
+	char:SetAttribute("Crouching", false)
+	CAS:UnbindAction("CrouchSlide")
 	jumpConn:Disconnect()
 	stepConn:Disconnect()
 end)
