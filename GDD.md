@@ -1,9 +1,16 @@
 # BREAKLINE — Game Design Document
-*Working title. Roblox competitive arcade FPS. Last updated: Oct 24, 2026.*
+*Working title. Roblox competitive arcade FPS. Last updated: Oct 24, 2026 (gun system update).*
 
 > **Note to any AI reading this:** This file plus the `src/` folder is the source of truth.
 > Items marked **PROPOSAL** are ideas, not approved — ask the owner before building on them.
 > Items marked **TBD** are intentionally undecided and will be hashed out during development.
+>
+> **RULE — ALWAYS SEND A NEW GDD:** Every time you change *anything* (code, design, tuning, decisions),
+> update this file (including section 11 Current Status + the date at the top) and send the owner the
+> **complete new GDD.md** in your reply, so they can replace the file in the repo. No exceptions.
+>
+> **Owner is new to GitHub** — give very simple click-by-click steps when they need to add/replace files.
+> Catch-up phrase for a new chat: *"Clone github.com/BlubberKing/breakline, read GDD.md and the src folder, then continue."*
 
 ---
 
@@ -101,17 +108,67 @@ List TBD.
 ## 6. Weapon Modification (Gunsmith)
 - A lobby area to modify guns with **attachments** — scopes/sights and similar (full attachment list TBD).
 - **No weapon skins or charms yet** (later).
-- Existing groundwork: the reticle option (Dot / Holo / Chevron) in GunClient, sight tuning in GunModelBuilder.
+- Existing groundwork: sights are already modular attachments (see 7.3) — each gun lists which sights it accepts,
+  optics mount on the gun's rail and hide the folding iron sights. The temporary Armory picker already toggles them.
 
 ## 7. Weapons
-Data-driven via `WeaponConfig`. Current gun:
 
-**VX-9 RIFLE (AR)**
-- 18 damage, 1.6x headshot multiplier
-- 650 RPM, 30-round mag, 1.9s reload, 700 stud range
-- Falloff: from 40 to 100 studs, down to 70%
-- Arcade accuracy: accurate hipfire, light movement penalty, small readable recoil pattern
-- ADS FOV 58 · base FOV 75 · sprint FOV 80
+### 7.1 System (data-driven)
+- **`WeaponConfig`** (ReplicatedStorage) — every gun's stats. Shared defaults in `W.Defaults`; each gun only lists what differs.
+  Supports `FireMode` = Auto / Semi / Burst, `Pellets` (shotguns), `Cycle` = Bolt / Pump / Slide (animated + blocks firing),
+  per-gun recoil pattern, spread, ADS speed/zoom, move-speed multiplier, equip time, shell look, fire-sound pitch/volume.
+  Helpers: `W.Get(id)`, `W.TTK(cfg, head)`, `W.AvgInterval(cfg)`.
+- **`GunModels`** (ReplicatedStorage) — every gun's model is built from parts in code, plus the **sights**. One description
+  builds both the first-person viewmodel and the third-person world gun. *(Replaces the old GunModelBuilder + RifleModel.)*
+- **`GunClient`** — one script runs every gun (fire modes, pellets, bolt/pump anims, optics, sniper scope overlay). Rebuilds instantly on swap.
+- **`GunServer`** — validates every shot per weapon (fire rate incl. bursts, ammo, pellets, range, line of sight). Shotgun pellets
+  are summed into **one** damage number per target. Owns the equipped gun as Player attributes `Weapon` + `Sight` (remote `SetLoadout`).
+- **`ThirdPersonServer/Client`** — world gun rebuilds when the player swaps; IK hands follow the new grip points.
+- Health = 100. Hitscan for all guns (for now).
+
+### 7.2 Adding a new gun (checklist)
+1. `WeaponConfig`: add `W.Weapons.MYGUN = { Name, Class, Inspiration, Sights, DefaultSight, ...stats }` and add `"MYGUN"` to `W.Order`.
+2. `GunModels`: add `Models.MYGUN = function(k) ... end` using the kit (`k.box`, `k.cylZ`, `k.ring`, `k.glow`…). It **must** call
+   `k.grip`, `k.fore`, `k.magwell`, `k.muzzle`, `k.eject`, `k.mount`, `k.irons`. Iron-sight parts go after `k.tag = "Iron"`.
+   Mag parts after `k.group = "mag"`, bolt/pump/slide after `k.group = "cycle"`. Or reuse a model: `Model = "VX9"` in the config.
+3. Done — it shows up in the Armory picker automatically with its stats and TTK.
+
+### 7.3 Sights
+| Sight | Zoom | Notes |
+|---|---|---|
+| Iron | gun's ADS FOV | Built into each gun (unique per gun) |
+| Red Dot | gun's ADS FOV | Small tube, dot reticle |
+| Holo | gun's ADS FOV | Open window, ring + dot reticle |
+| 3x (Ranger) | 3x | Short scope, chevron reticle; aim sensitivity scales with zoom |
+| 8x (Sniper) | 8x | Full-screen black scope overlay; gun model hides while scoped |
+- Aiming fully hides the hip crosshair (it is gone by ~1/3 of the way into ADS).
+
+### 7.4 Roster v1 (all tuning is a first pass — to be balanced in playtests)
+Each gun is inspired by a real gun + its counterparts in **The Finals** and **Rivals** (researched Oct 24, 2026).
+Reference points: Finals AKM 21 dmg/617 RPM, FCAR ~530 RPM, XP-54 16 dmg/880 RPM, LH1 44 dmg semi, SR-84 118/236 dmg,
+M26 Matter 11 pellets, V9S 38 dmg; Rivals AR, Burst Rifle (3-round), Uzi, Shotgun (10 pellets), Sniper (3x headshot), Revolver.
+
+| ID | Name | Class | Real / Finals / Rivals | Dmg | Rate | Mag | Reload | TTK body / head | Sights |
+|---|---|---|---|---|---|---|---|---|---|
+| VX9 | VX-9 Rifle | AR (auto) | M4 / FCAR, ARN-220 / Assault Rifle | 18 (1.6x) | 650 | 30 | 1.9s | 0.46s / 0.28s | Iron, Red Dot, Holo, 3x |
+| KR47 | KR-47 Bruiser | AR (auto) | AKM / AKM / AR (heavier) | 22 (1.5x) | 540 | 30 | 2.3s | 0.44s / 0.33s | Iron, Red Dot, Holo |
+| HX3 | HX-3 Burst | Burst rifle | FAMAS / FAMAS / Burst Rifle | 22 (1.55x) | 3-burst | 24 | 2.0s | 0.50s / 0.13s | Iron, Red Dot, Holo, 3x |
+| WASP | Wasp SMG | SMG (auto) | MP7, Vector / XP-54, M11 / Uzi | 14 (1.4x) | 900 | 40 | 1.8s | 0.47s / 0.33s | Iron, Red Dot, Holo |
+| ANVIL | Anvil LMG | LMG (auto) | M249, M60 / M60, Lewis / Minigun role | 17 (1.4x) | 620 | 80 | 3.8s | 0.48s / 0.39s | Iron, Red Dot, Holo, 3x |
+| LONGSHOT | Longshot DMR | Marksman (semi) | M14 EBR / LH1 / — | 38 (1.75x) | 260 | 15 | 2.4s | 0.46s / 0.23s | Iron, Red Dot, 3x |
+| HALO50 | Halo-50 Sniper | Sniper (bolt) | AWM / SR-84 / Sniper | 85 (2x) | 48 | 5 | 3.0s | 1.25s / one-shot head | 8x, 3x, Iron |
+| BREACHER | Breacher Pump | Shotgun (pump) | Remington 870 / M26 Matter / Shotgun | 9x10 | 80 | 6 | 2.6s | one-shot point blank | Iron, Red Dot |
+| V9 | V9 Sidearm | Pistol (semi) | Glock 17 / V9S / Handgun | 24 (1.6x) | 420 | 15 | 1.3s | 0.57s / 0.29s | Iron, Red Dot |
+| MAGNUM | Magnum .44 | Revolver (semi) | S&W M29 / R.357 / Revolver | 45 (1.6x) | 140 | 6 | 2.4s | 0.86s / 0.43s | Iron, Red Dot |
+
+Balance notes: autos cluster around **~0.45s body TTK** (matches the ~0.5s TTK proposal); trade-offs come from range falloff,
+mobility, handling, mag size and recoil. Damage falloff makes SMG/shotgun weak at range; DMR/sniper/burst reward headshots.
+Weapon move-speed: SMG 1.06, pistols ~1.05, LMG/sniper 0.9.
+
+### 7.5 Temporary Armory picker
+- **GUNS [G]** tab at the top of the screen (or press **G**). Shows every gun as a card with class, inspiration, damage/RPM/mag/reload,
+  TTK, stat bars, and **sight toggles** under each gun. Click a card to equip; swapping is instant and also updates the third-person gun.
+- **TEMPORARY** — will be replaced by the lobby loadout screen (section 3). Remove `GunPicker` + the open `SetLoadout` remote then.
 
 ## 8. Movement (base kit, everyone has it)
 - Walk 16 / sprint 24
@@ -126,14 +183,14 @@ Data-driven via `WeaponConfig`. Current gun:
 - Parts players and bullets should pass through (e.g. the middle wall) need **CanCollide = false AND CanQuery = false**.
 
 ### Code layout (Rojo-style)
-- `src/ReplicatedStorage/` — shared modules (WeaponConfig, GunMath, Spring, Sfx, SoundBank, HitFX, GunModelBuilder, RifleModel)
+- `src/ReplicatedStorage/` — shared modules: WeaponConfig, GunModels, GunMath, Spring, Sfx, SoundBank, HitFX
 - `src/ServerScriptService/` — GunServer, ThirdPersonServer, AvatarService
-- `src/StarterPlayer/StarterPlayerScripts/` — ThirdPersonClient
+- `src/StarterPlayer/StarterPlayerScripts/` — ThirdPersonClient, GunPicker (temp)
 - `src/StarterPlayer/StarterCharacterScripts/` — GunClient, Movement
 - File endings: `.server.lua` = Script, `.client.lua` = LocalScript, `.lua` = ModuleScript
 
 ## 10. Roadmap
-1. **Gun feel** — built, not playtested
+1. **Gun feel + weapon system** — built (10 guns, sights, test picker), not playtested
 2. **Movement** — built, not playtested
 3. Gray-box map + wall/box server logic *(needs tuning approval, section 2.1)*
 4. Teams, rounds, respawn, match HUD
@@ -142,11 +199,19 @@ Data-driven via `WeaponConfig`. Current gun:
    *(order within this phase TBD; 1v1/2v2 modes can come with phase 4)*
 
 ## 11. Current Status
-**Built (not playtested):** VX-9 rifle with full gun feel, HUD and reticle options; HitFX (hitmarkers, damage numbers, combo counter, kill banner, impacts); slide / slide-jump / mantle; third-person world gun with IK hands; custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
+**Built (not playtested):** 10-gun roster with models, fire modes, sights (7.4); Armory test picker; HitFX (hitmarkers,
+damage numbers, combo counter, kill banner, impacts); slide / slide-jump / mantle; third-person world gun with IK hands;
+custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
 
-**Fixed Oct 24:** slide/mantle sounds; damage numbers now come from the server; server fire-rate check no longer drops shots during lag.
+**Changelog**
+- **Oct 24 (b):** Gun system rebuilt to be data-driven: WeaponConfig v2, new GunModels (replaces GunModelBuilder + RifleModel —
+  delete those two), GunClient v3, GunServer v2 (`SetLoadout` remote, pellets, burst-aware rate limit), ThirdPersonServer/Client
+  rebuild the world gun on swap, Sfx.Play pitch/volume args, new GunPicker. **Fix:** hip crosshair now fully disappears when aiming.
+- **Oct 24 (a):** slide/mantle sounds; damage numbers come from the server; server fire-rate check no longer drops shots during lag.
 
 **To do / known:**
-- Playtest gun + movement.
+- Playtest everything; tune each gun (iron sight alignment, hip positions, recoil) — tell the AI what feels off per gun.
+- Guns share the same fire/reload sounds (pitched per gun) — find unique sound IDs per class later (SoundBank).
+- Reload animation is shared (mag swap) — shotgun shell-by-shell / revolver speedloader anims later.
 - Middle wall parts need CanQuery = false when built.
 - Everything in sections 2.1 (proposals), 2.2, 3–6 is not built yet.
