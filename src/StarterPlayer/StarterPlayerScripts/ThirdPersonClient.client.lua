@@ -16,7 +16,6 @@ local CFG = {
 	SEND_RATE = 20,
 	ADS_FOV_BELOW = 66,
 	SPRINT_SPEED_ABOVE = 20,
-	RELOAD_TIME = 1.9,
 	TORSO_SHARE = 0.45, -- share of aim pitch taken by the upper torso (rest goes to the gun)
 	NECK_SHARE = 0.5,
 	SHOULDER = V3(0.45, 0.55, -0.3), -- gun pitch pivot (UpperTorso space)
@@ -38,28 +37,16 @@ local CFG = {
 	SLIDE_LEAN = 25,
 }
 
-pcall(function()
-	local cfg = require(RS:WaitForChild("WeaponConfig", 5))
-	local ar = cfg.AR or (cfg.Weapons and cfg.Weapons.AR)
-	if ar and type(ar.ReloadTime) == "number" then CFG.RELOAD_TIME = ar.ReloadTime end
-end)
-local SoundBank
-pcall(function() SoundBank = require(RS:WaitForChild("SoundBank", 3)) end)
+local Weapons = require(RS:WaitForChild("WeaponConfig"))
+local Sfx
+pcall(function() Sfx = require(RS:WaitForChild("Sfx", 3)) end)
 
 local function approach(a, b, speed, dt) return a + (b - a) * (1 - exp(-speed * dt)) end
 local function poseCF(p, k)
 	return CFrame.new(p[1] * k) * CFrame.fromEulerAnglesYXZ(rad(p[2].X), rad(p[2].Y), rad(p[2].Z))
 end
 local function playAt(part, key, volume)
-	local id = SoundBank and SoundBank[key]
-	if type(id) ~= "string" or id == "" then return end
-	local s = Instance.new("Sound")
-	s.SoundId = id
-	s.Volume = volume or 0.6
-	s.RollOffMaxDistance = 120
-	s.Parent = part
-	s:Play()
-	Debris:AddItem(s, 4)
+	if Sfx then Sfx.Play(key, part, 1, volume) end
 end
 
 ------------------------------------------------------------------ setup per character
@@ -109,6 +96,7 @@ local function setup(char)
 		rKnee = (char:FindFirstChild("RightLowerLeg") or {}).RightKnee,
 		lKnee = (char:FindFirstChild("LeftLowerLeg") or {}).LeftKnee,
 		lFore = lFore, lMag = lMag, gun = gun,
+		reloadTime = Weapons.Get(gun:GetAttribute("Weapon")).ReloadTime,
 		shoulder = CFG.SHOULDER * k, poses = {},
 		pitch = 0, ads = 0, sprint = 0, reload = 0, reloadT = 0, slide = 0, mantle = 0,
 		kick = 0, bobT = 0, turnLag = 0, flashToken = 0, wasSlide = false, restored = true,
@@ -147,7 +135,11 @@ end
 local function getState(char)
 	local st = states[char]
 	if st then
-		if not st.gun.Parent then states[char] = nil else return st end
+		if st.gun.Parent then return st end
+		-- gun was swapped: reset the joints, remove the old IK rig so it can be rebuilt on the new gun
+		st.waist.C0, st.neck.C0, st.rootJ.C0 = st.waistC0, st.neckC0, st.rootC0
+		for _, inst in ipairs(st.created) do inst:Destroy() end
+		states[char] = nil
 	end
 	if (retryAt[char] or 0) > os.clock() then return nil end
 	st = setup(char)
@@ -218,7 +210,7 @@ local function update(st, dt, t, isLocal)
 
 	-- left hand: foregrip, or reload sequence (mag -> pouch -> mag -> foregrip)
 	local target, smooth = st.lFore, 0
-	local phase = st.reloadT / CFG.RELOAD_TIME
+	local phase = st.reloadT / st.reloadTime
 	if t.reloading then
 		smooth = 0.09
 		if phase < 0.1 then target = st.lFore
