@@ -684,12 +684,15 @@ function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor)
 	local scaled = {}
 	for name, cf in pairs(pts) do scaled[name] = scaleCF(cf, s) end
 
+	local SLEEVE_LEN = 3.6
 	-- arms (camera-sized, not gun-scaled). Right arm rides the grip, left arm is animated for reloads.
 	local function arm(group, size, offset, color)
 		local p = makePart({ Name = "Arm", Size = size, Color = color, Material = SP }, 1)
 		p.Anchored = true
 		p.Parent = model
-		table.insert(groups[group], { Part = p, Offset = offset })
+		local entry = { Part = p, Offset = offset }
+		table.insert(groups[group], entry)
+		return entry
 	end
 	local rHand = scaled.Grip.Position
 	local rDir = V(0.45, -0.5, 1).Unit
@@ -698,12 +701,14 @@ function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor)
 	arm("gun", V(0.36, 0.36, 0.16), CFrame.lookAt(rHand + rDir * 0.2, rHand + rDir), C.Dark)
 	local lDir = V(-0.6, -0.55, 1).Unit
 	arm("left", V(0.24, 0.24, 0.36), ang(0, 0, -25), C.Glove)
-	arm("left", V(0.34, 0.34, 1.9), CFrame.lookAt(lDir * 1.1, lDir * 2), C.Sleeve)
-	arm("left", V(0.36, 0.36, 0.16), CFrame.lookAt(lDir * 0.2, lDir), C.Dark)
+	-- the left sleeve + cuff are re-aimed every frame by GunClient (Dyn) so the arm always runs down toward a shoulder below the
+	-- screen, no matter how high / far back the hand goes. Long on purpose so its far end stays off screen.
+	arm("left", V(0.34, 0.34, SLEEVE_LEN), CFrame.lookAt(lDir * 1.1, lDir * 2), C.Sleeve).Dyn = "sleeve"
+	arm("left", V(0.36, 0.36, 0.16), CFrame.lookAt(lDir * 0.2, lDir), C.Dark).Dyn = "cuff"
 
 	return {
 		Model = model, Groups = groups, Points = scaled,
-		Eye = desc.Eye, Sight = desc.Sight, SightId = desc.SightId, View = desc.View,
+		SleeveLen = SLEEVE_LEN, Eye = desc.Eye, Sight = desc.Sight, SightId = desc.SightId, View = desc.View,
 		Light = light, Smoke = smoke,
 	}
 end
