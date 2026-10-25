@@ -12,6 +12,8 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local CollectionService = game:GetService("CollectionService")
 local BoxModel = require(RS:WaitForChild("BoxModel"))
+local BoxFX = require(RS:WaitForChild("BoxFX"))
+local DeathFX = require(RS:WaitForChild("DeathFX"))
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -183,6 +185,13 @@ setCarrying(player:GetAttribute("Carrying") == true)
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 	if input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.ButtonL1 then drop() end
+end)
+
+Remotes:WaitForChild("BoxBreak").OnClientEvent:Connect(function(pos, color)
+	pcall(BoxFX.Break, pos, color)
+end)
+Remotes:WaitForChild("SoulFX").OnClientEvent:Connect(function(pos)
+	pcall(DeathFX.Play, pos)
 end)
 
 NotifyRemote.OnClientEvent:Connect(function(text, color)
