@@ -1,5 +1,5 @@
 # BREAKLINE — Game Design Document
-*Working title. Roblox competitive arcade FPS. Last updated: Oct 25, 2026 (Wall Push v2: MapBounds fitting, living boxes, two-handed carry).*
+*Working title. Roblox competitive arcade FPS. Last updated: Oct 25, 2026 (v2.1: faces visible through wall/scope, bullet marks fade).*
 
 > **Note to any AI reading this:** This file plus the `src/` folder is the source of truth.
 > Items marked **PROPOSAL** are ideas, not approved — ask the owner before building on them.
@@ -37,7 +37,7 @@
 - **The code only builds the gameplay pieces. You build and decorate the map.** `MatchServer` creates: invisible boundary walls + ceiling, the 2 finish lines, the 6 invisible team spawns, the middle wall with its holes, and the boxes. Nothing else (no floor, no cover, no lobby floor).
 - **MapBounds (how the code fits your map):** put an **anchored, fully transparent Part named `MapBounds`** in Workspace, sized to cover the playable area. Width = X size, Length = Z size, Height = Y size; the **bottom** of the part is the ground level. Red's end is the Front (-Z) end, Blue's the Back (+Z) end (`MAP.SwapEnds` flips this). Rotating MapBounds rotates everything. Finish lines/spawns sit `MAP.FinishInset` studs in from each end; the wall is as tall as MapBounds (max `WallHeightMax`); hole + spawn positions are fractions of the width. Resize MapBounds and everything re-fits on the next server start. If it is missing, a 140x60x260 default is created at the origin and a warning is printed.
 - **Lobby:** put a `SpawnLocation` named `LobbySpawn` in Workspace (anywhere); if none exists an invisible one is created inside MapBounds.
-- **Wall:** transparent glass; players **and bullets pass through** it. **3 indents (holes) per side, 6 total.**
+- **Wall:** transparent (plain transparent plastic, NOT Glass material, so box faces show through); players **and bullets pass through** it. **3 indents (holes) per side, 6 total.**
 - **Boxes:** look like little robots: dark steel crate, glowing edges in amber (turns **team-colored when plugged**), antenna bulb, soft light, and an **animated face on all 4 sides** (blinks; wide-eyed when carried; squeezed eyes + "O" mouth when thrown; happy when it goes in; worried when worn down or drained; panicking under 30% health). **1 box spawns on each side at round start, then 1 new box per side every 60s.** Loose boxes glow yellow. **No expiry timer.**
 - **Pick up:** hold **E** (0.25s) on a loose box. **Plugging:** carry a box up to one of **your own side's** empty holes (within 7 studs) and it **floats into the hole** with a short animation + burst of sparks.
 - **Stealing:** you may plug **any** box in **any** hole on your side - boxes don't belong to a specific hole. You can also **extract an enemy's plugged box**: stand on their side and **hold E (1.5s)** on it, then carry it to your side and plug it into one of your holes.
@@ -240,6 +240,7 @@ damage numbers, combo counter, kill banner, impacts); crouch / momentum slide / 
 custom blocky "operator" avatar with team-colored accents; SoundBank filled in.
 
 **Changelog**
+- **Oct 25 (g):** **v2.1 fixes.** Box faces now visible through the wall and through scopes (wall no longer uses Glass material, which hid SurfaceGuis behind it; face max distance raised). Bullet marks now stick to the surface they hit (follow the moving wall), fade out after 10s, and are removed if the surface goes away. Files: MatchServer, BoxModel, HitFX.
 - **Oct 25 (f):** **Wall Push v2.** Map is now yours: code only builds boundary walls, finish lines, invisible spawns, the wall and boxes, fitted to a `MapBounds` part. New `BoxModel` (robot boxes with animated faces, team-colored edges). Box health 5000, no expiry timer, 1 box per side at start, push drain 10 HP/s on the pushing team's boxes, health bars visible from both sides, box floats into the hole. New two-handed carry pose in first + third person (`MatchClient`, `ThirdPersonClient` v4), smaller box on screen. **Fix:** leftover first-person arms/gun after teleport (`GunClient`, `MatchClient`). Files: MatchConfig, BoxModel (new), MatchServer, MatchClient, ThirdPersonClient, GunClient.
 - **Oct 24 (e):** **Wall Push main mode v1.** New `MatchConfig`, `MatchServer`, `MatchClient`. Teams (Red/Blue 3v3), rounds, gray-box map with transparent wall,
   6 holes, boxes (pick up, carry, throw, catch, plug, extract from enemy side, health, 2-min expiry, 1 spawn per side per minute), wall push + win at finish line, HUD.
