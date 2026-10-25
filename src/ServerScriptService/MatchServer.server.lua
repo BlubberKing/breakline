@@ -694,8 +694,36 @@ local function resetToLobby()
 	end
 end
 
+-- ===================== guaranteed team spawn =====================
+-- Roblox's own SpawnLocation matching is not reliable for both teams (a pad can end up under your floor, or a team can fall back
+-- to a random spawn). So after every character loads we place it ourselves on its team's finish line: slot = its place in the team,
+-- height = a raycast down onto the real floor (ignores the generated pieces + players).
+local function teamSpawnCF(player, teamName)
+	local mates = teamObjs[teamName]:GetPlayers()
+	table.sort(mates, function(a, b) return a.UserId < b.UserId end)
+	local slot = (table.find(mates, player) or 1) - 1
+	local x = spawnX[(slot % #spawnX) + 1]
+	local z = SIGN[teamName] * LINE_Z
+	local from = origin * Vector3.new(x, 20, z)
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore = { mapFolder }
+	for _, pl in Players:GetPlayers() do if pl.Character then table.insert(ignore, pl.Character) end end
+	rp.FilterDescendantsInstances = ignore
+	local hit = workspace:Raycast(from, Vector3.new(0, -(MAP_H + 60), 0), rp)
+	local pos = hit and (hit.Position + Vector3.new(0, 3.5, 0)) or (origin * Vector3.new(x, 4, z))
+	return CFrame.lookAt(pos, Vector3.new(origin:PointToWorldSpace(Vector3.new(x, 0, 0)).X, pos.Y, origin:PointToWorldSpace(Vector3.new(x, 0, 0)).Z))
+end
+
 -- ===================== players =====================
 local function onCharacter(player, char)
+	do -- put Red / Blue players on their own finish line
+		local root = char:WaitForChild("HumanoidRootPart", 10)
+		local tn = player.Team and player.Team.Name
+		if root and tn and teamObjs[tn] and tn ~= "Lobby" and char.Parent then
+			char:PivotTo(teamSpawnCF(player, tn))
+		end
+	end
 	local function group(part)
 		if part:IsA("BasePart") then part.CollisionGroup = "WPPlayer" end
 	end
