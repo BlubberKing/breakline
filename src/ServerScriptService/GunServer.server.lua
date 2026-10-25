@@ -1,6 +1,8 @@
+-- GunServer v2: server-authoritative ammo, fire rate and damage for every weapon in WeaponConfig.
+-- Also owns the equipped weapon: Player attributes "Weapon" + "Sight" (changed through SetLoadout).
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
-local Config = require(RS:WaitForChild("WeaponConfig"))
+local Weapons = require(RS:WaitForChild("WeaponConfig"))
 local GunMath = require(RS:WaitForChild("GunMath"))
 
 local remotes = Instance.new("Folder")
@@ -10,23 +12,45 @@ local function remote(name)
 end
 local FireRemote, ReloadRemote = remote("Fire"), remote("Reload")
 local HitConfirm, ShotFX, Damaged = remote("HitConfirm"), remote("ShotFX"), remote("Damaged")
+local SetLoadout = remote("SetLoadout")
 remotes.Parent = RS
 
 local state = {}
 local function getState(player, weapon)
-	state[player] = state[player] or {}
-	local w = state[player][weapon]
-	if not w then
-		w = { ammo = Config[weapon].MagSize, lastFire = 0, reloadUntil = 0 }
-		state[player][weapon] = w
+	local s = state[player]
+	if not s or s.weapon ~= weapon then
+		s = { weapon = weapon, ammo = Weapons.Get(weapon).MagSize, lastFire = 0, reloadUntil = 0 }
+		state[player] = s
 	end
-	return w
+	return s
 end
-Players.PlayerAdded:Connect(function(p) p.CharacterAdded:Connect(function() state[p] = nil end) end)
+
+local function onPlayer(p)
+	p:SetAttribute("Weapon", Weapons.Default)
+	p:SetAttribute("Sight", Weapons.Get(Weapons.Default).DefaultSight)
+	p.CharacterAdded:Connect(function() state[p] = nil end)
+end
+Players.PlayerAdded:Connect(onPlayer)
+for _, p in Players:GetPlayers() do onPlayer(p) end
 Players.PlayerRemoving:Connect(function(p) state[p] = nil end)
 
+-- TEMP test picker (later: lobby loadout). Validates the weapon + sight and swaps instantly.
+local lastSwap = {}
+SetLoadout.OnServerEvent:Connect(function(player, weapon, sight)
+	if type(weapon) ~= "string" or not Weapons.Weapons[weapon] then return end
+	local cfg = Weapons.Get(weapon)
+	if type(sight) ~= "string" or not Weapons.HasSight(cfg, sight) then sight = cfg.DefaultSight end
+	local now = os.clock()
+	if now - (lastSwap[player] or 0) < 0.25 then return end
+	lastSwap[player] = now
+	state[player] = nil
+	player:SetAttribute("Sight", sight)
+	player:SetAttribute("Weapon", weapon)
+end)
+
 ReloadRemote.OnServerEvent:Connect(function(player, weapon)
-	local cfg = Config[weapon]; if not cfg then return end
+	if weapon ~= player:GetAttribute("Weapon") then return end
+	local cfg = Weapons.Get(weapon)
 	local w = getState(player, weapon)
 	local now = os.clock()
 	if now < w.reloadUntil then return end
@@ -34,50 +58,25 @@ ReloadRemote.OnServerEvent:Connect(function(player, weapon)
 	w.ammo = cfg.MagSize
 end)
 
-FireRemote.OnServerEvent:Connect(function(player, weapon, origin, dir, hitPart, hitPos)
-	local cfg = Config[weapon]
-	if not cfg or typeof(origin) ~= "Vector3" or typeof(dir) ~= "Vector3" then return end
-	local m = dir.Magnitude
-	if not (m > 0.9 and m < 1.1) then return end
+local function maxBudget(cfg)
+	if cfg.FireMode == "Burst" then return cfg.BurstCount + 0.5 end
+	return math.clamp(0.25 / (60 / cfg.RPM), 1.2, 3)
+end
 
-	local char = player.Character
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	local myHum = char and char:FindFirstChildOfClass("Humanoid")
-	if not root or not myHum or myHum.Health <= 0 then return end
-	if (origin - root.Position).Magnitude > 10 then return end
-
-	local w = getState(player, weapon)
-	local now = os.clock()
-	if now < w.reloadUntil or w.ammo <= 0 then return end
-	-- rate limit that allows small bursts (lag bunches shots together); still caps at RPM
-	local interval = 60 / cfg.RPM
-	w.budget = math.min((w.budget or 3) + (now - w.lastFire) / interval, 3)
-	if w.budget < 1 then return end
-	w.budget -= 1
-	w.ammo -= 1
-	w.lastFire = now
-
-	-- show this shot to everyone else
-	local endPos = origin + dir.Unit * cfg.Range
-	if typeof(hitPos) == "Vector3" and (hitPos - origin).Magnitude <= cfg.Range + 5 then endPos = hitPos end
-	for _, p in Players:GetPlayers() do
-		if p ~= player then ShotFX:FireClient(p, player, origin, endPos) end
-	end
-
+-- validates one pellet; returns model, humanoid, damage, head, hitPos or nil
+local function checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
 	if typeof(hitPart) ~= "Instance" or not hitPart:IsA("BasePart") or typeof(hitPos) ~= "Vector3" then return end
 	if not hitPart:IsDescendantOf(workspace) then return end
-
 	local model = hitPart:FindFirstAncestorOfClass("Model")
 	local hum = model and model:FindFirstChildOfClass("Humanoid")
 	if not hum or hum.Health <= 0 or model == char then return end
-
 	local targetPlayer = Players:GetPlayerFromCharacter(model)
 	if targetPlayer and not player.Neutral and targetPlayer.Team == player.Team then return end
 
 	local toHit = hitPos - origin
 	local dist = toHit.Magnitude
 	if dist > cfg.Range or dist < 0.01 then return end
-	if toHit.Unit:Dot(dir.Unit) < 0.95 then return end
+	if toHit.Unit:Dot(dir) < 0.95 then return end
 	if (hitPart.Position - hitPos).Magnitude > hitPart.Size.Magnitude / 2 + 7 then return end
 
 	local params = RaycastParams.new()
@@ -89,8 +88,69 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, dir, hitPart, 
 	if workspace:Raycast(origin, toHit.Unit * math.max(dist - 0.5, 0), params) then return end
 
 	local head = GunMath.IsHeadshot(hitPart)
-	local dmg = GunMath.Damage(cfg, dist, head)
-	hum:TakeDamage(dmg)
-	HitConfirm:FireClient(player, model, head, hum.Health <= 0, math.floor(dmg + 0.5), hitPos)
-	if targetPlayer then Damaged:FireClient(targetPlayer, dmg, origin) end
+	return model, hum, GunMath.Damage(cfg, dist, head), head, hitPos, targetPlayer
+end
+
+-- shots = { { dir, hitPart, hitPos }, ... } one entry per pellet
+FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
+	if weapon ~= player:GetAttribute("Weapon") then return end
+	local cfg = Weapons.Get(weapon)
+	if typeof(origin) ~= "Vector3" or type(shots) ~= "table" then return end
+	if #shots < 1 or #shots > cfg.Pellets then return end
+
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local myHum = char and char:FindFirstChildOfClass("Humanoid")
+	if not root or not myHum or myHum.Health <= 0 then return end
+	if (origin - root.Position).Magnitude > 10 then return end
+
+	local w = getState(player, weapon)
+	local now = os.clock()
+	if now < w.reloadUntil or w.ammo <= 0 then return end
+	-- rate limit that allows small bursts (lag bunches shots together); still caps at the weapon's rate
+	local cap = maxBudget(cfg)
+	w.budget = math.min((w.budget or cap) + (now - w.lastFire) / Weapons.AvgInterval(cfg), cap)
+	if w.budget < 1 then return end
+	w.budget -= 1
+	w.ammo -= 1
+	w.lastFire = now
+
+	local first, maxCone = nil, math.cos(math.rad(cfg.PelletSpread * 2.2 + 1))
+	local ends, hits = {}, {}
+	for i, shot in shots do
+		if type(shot) ~= "table" then return end
+		local dir, hitPart, hitPos = shot[1], shot[2], shot[3]
+		if typeof(dir) ~= "Vector3" then return end
+		local m = dir.Magnitude
+		if not (m > 0.9 and m < 1.1) then return end
+		dir = dir.Unit
+		first = first or dir
+		if dir:Dot(first) < maxCone then continue end
+
+		local endPos = origin + dir * cfg.Range
+		if typeof(hitPos) == "Vector3" and (hitPos - origin).Magnitude <= cfg.Range + 5 then endPos = hitPos end
+		ends[i] = endPos
+
+		local model, hum, dmg, head, pos, targetPlayer = checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
+		if model then
+			local h = hits[model] or { hum = hum, dmg = 0, head = false, pos = pos, player = targetPlayer }
+			h.dmg += dmg
+			h.head = h.head or head
+			hits[model] = h
+		end
+	end
+
+	-- show this shot to everyone else
+	for _, p in Players:GetPlayers() do
+		if p ~= player then ShotFX:FireClient(p, player, origin, ends) end
+	end
+
+	-- one damage number per target per shot (shotgun pellets are added together)
+	for model, h in hits do
+		if h.hum.Health > 0 then
+			h.hum:TakeDamage(h.dmg)
+			HitConfirm:FireClient(player, model, h.head, h.hum.Health <= 0, math.floor(h.dmg + 0.5), h.pos)
+			if h.player then Damaged:FireClient(h.player, h.dmg, origin) end
+		end
+	end
 end)
