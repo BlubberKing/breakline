@@ -434,7 +434,7 @@ GunModels.Sights = Sights
 
 Sights.Iron = { Display = "Iron" }
 
-Sights.RedDot = { Display = "Red Dot", Reticle = "Dot", Eye = 0.45,
+Sights.RedDot = { Display = "Red Dot", Reticle = "Dot", Eye = 0.45, Scale = 0.7,
 	Build = function(k, m)
 		k.box("DotBase", V(0.2, 0.07, 0.34), m * CF(0, 0.035, 0), C.Body)
 		local c = m * CF(0, 0.2, -0.02)
@@ -443,13 +443,13 @@ Sights.RedDot = { Display = "Red Dot", Reticle = "Dot", Eye = 0.45,
 		k.box("DotBridge", V(0.12, 0.06, 0.18), c * CF(0, -0.14, 0), C.Body)
 		k.cylX("DotKnob", 0.05, 0.08, c * CF(0.15, -0.03, 0.03), C.Metal)
 		k.glow("DotStripe", V(0.04, 0.01, 0.12), c * CF(0, 0.135, 0))
-		k.box("DotLens", V(0.008, 0.21, 0.21), c * CF(0, 0, -0.07) * ang(0, 90, 0), C.Lens, GLASS,
+		k.box("DotLens", V(0.008, 0.21, 0.21), c * CF(0, 0, -0.07) * ang(0, 90, 0), C.Lens, SP,
 			{ Shape = CYL, Transparency = 0.8, NoShadow = true })
 		k.box("DotReticle", V(0.2, 0.2, 0.002), c * CF(0, 0, -0.06), C.Dark, SP, { Transparency = 1, Reticle = "Dot" })
 		return c * CF(0, 0, -0.06)
 	end }
 
-Sights.Holo = { Display = "Holo", Reticle = "Holo", Eye = 0.55,
+Sights.Holo = { Display = "Holo", Reticle = "Holo", Eye = 0.55, Scale = 0.75,
 	Build = function(k, m)
 		k.box("HoloBase", V(0.26, 0.09, 0.52), m * CF(0, 0.045, 0), C.Body)
 		k.box("HoloBattery", V(0.24, 0.07, 0.2), m * CF(0, 0.12, 0.14), C.Body)
@@ -458,12 +458,12 @@ Sights.Holo = { Display = "Holo", Reticle = "Holo", Eye = 0.55,
 		k.box("HoloTop", V(0.345, 0.04, 0.14), c * CF(0, 0.15, 0), C.Body)
 		k.box("HoloLow", V(0.3, 0.05, 0.12), c * CF(0, -0.125, 0), C.Body)
 		k.glow("HoloStripe", V(0.18, 0.01, 0.06), c * CF(0, 0.172, 0))
-		k.box("HoloGlass", V(0.28, 0.2, 0.01), c * CF(0, 0.01, -0.05), C.Lens, GLASS, { Transparency = 0.82, NoShadow = true })
+		k.box("HoloGlass", V(0.28, 0.2, 0.01), c * CF(0, 0.01, -0.05), C.Lens, SP, { Transparency = 0.82, NoShadow = true })
 		k.box("HoloReticle", V(0.26, 0.2, 0.002), c * CF(0, 0.01, -0.04), C.Dark, SP, { Transparency = 1, Reticle = "Holo" })
 		return c * CF(0, 0.01, -0.04)
 	end }
 
-Sights.Ranger3x = { Display = "3x", Reticle = "Chevron", Mag = 3, Eye = 0.16,
+Sights.Ranger3x = { Display = "3x", Reticle = "Chevron", Mag = 3, Eye = 0.16, Scale = 0.8,
 	Build = function(k, m)
 		k.box("ScopeBase", V(0.2, 0.08, 0.42), m * CF(0, 0.04, 0), C.Body)
 		local c = m * CF(0, 0.24, -0.05)
@@ -472,13 +472,13 @@ Sights.Ranger3x = { Display = "3x", Reticle = "Chevron", Mag = 3, Eye = 0.16,
 		k.ring("ScopeEye", c * CF(0, 0, 0.29), 0.12, 0.04, 0.08, C.Dark)
 		k.box("ScopeTop", V(0.08, 0.06, 0.2), c * CF(0, 0.17, 0.02), C.Dark)
 		k.glow("ScopeStripe", V(0.03, 0.01, 0.32), c * CF(0.11, 0.11, 0) * ang(0, 0, -45))
-		k.box("ScopeLens", V(0.008, 0.25, 0.25), c * CF(0, 0, -0.3) * ang(0, 90, 0), C.Lens, GLASS,
+		k.box("ScopeLens", V(0.008, 0.25, 0.25), c * CF(0, 0, -0.3) * ang(0, 90, 0), C.Lens, SP,
 			{ Shape = CYL, Transparency = 0.85, NoShadow = true })
 		k.box("ScopeReticle", V(0.24, 0.24, 0.002), c * CF(0, 0, -0.29), C.Dark, SP, { Transparency = 1, Reticle = "Chevron" })
 		return c * CF(0, 0, 0.33)
 	end }
 
-Sights.Sniper8x = { Display = "8x", Mag = 8, Eye = 0.2, Overlay = true,
+Sights.Sniper8x = { Display = "8x", Mag = 8, Eye = 0.2, Overlay = true, Scale = 0.85,
 	Build = function(k, m)
 		local c = m * CF(0, 0.3, -0.05)
 		for _, z in ipairs({ -0.25, 0.2 }) do
@@ -491,7 +491,7 @@ Sights.Sniper8x = { Display = "8x", Mag = 8, Eye = 0.2, Overlay = true,
 		k.cylY("TurretTop", 0.1, 0.12, c * CF(0, 0.17, -0.02), C.Dark)
 		k.cylX("TurretSide", 0.1, 0.12, c * CF(0.17, 0, -0.02), C.Dark)
 		k.glow("ScopeStripe", V(0.03, 0.01, 0.6), c * CF(0, 0.137, -0.05))
-		k.box("ScopeLens", V(0.008, 0.33, 0.33), c * CF(0, 0, -0.74) * ang(0, 90, 0), C.Lens, GLASS,
+		k.box("ScopeLens", V(0.008, 0.33, 0.33), c * CF(0, 0, -0.74) * ang(0, 90, 0), C.Lens, SP,
 			{ Shape = CYL, Transparency = 0.7, Reflectance = 0.3, NoShadow = true })
 		return c * CF(0, 0, 0.64)
 	end }
@@ -510,7 +510,19 @@ function GunModels.Describe(modelId, sightId)
 		for _, d in ipairs(k.parts) do if d.Tag ~= "Iron" then table.insert(kept, d) end end
 		k.parts = kept
 		k.group, k.tag = "gun", "Sight"
-		aim = sight.Build(k, k.pts.Mount)
+		local first, mount = #k.parts + 1, k.pts.Mount
+		aim = sight.Build(k, mount)
+		local sc = sight.Scale or 1 -- optics are shrunk toward their mount point (smaller on screen)
+		if sc ~= 1 then
+			for i = first, #k.parts do
+				local d = k.parts[i]
+				local rel = mount:ToObjectSpace(d.CF)
+				d.Size = d.Size * sc
+				d.CF = mount * (CF(rel.Position * sc) * rel.Rotation)
+			end
+			local rel = mount:ToObjectSpace(aim)
+			aim = mount * (CF(rel.Position * sc) * rel.Rotation)
+		end
 		eye = sight.Eye
 	end
 	k.pts.Aim = aim
