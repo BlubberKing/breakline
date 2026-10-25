@@ -26,13 +26,15 @@ task.spawn(function()
 end)
 
 -- parent = nil -> 2D (your own gun). parent = Part/Attachment -> 3D positional.
-function Sfx.Play(name, parent)
+-- pitch / volume = optional multipliers (each gun sets FirePitch / FireVolume in WeaponConfig)
+function Sfx.Play(name, parent, pitch, volume)
 	local t = templates[name]
 	if not t then return nil end
 	local def = Bank[name]
 	local s = t:Clone()
 	local lo, hi = def.PitchMin or 1, def.PitchMax or 1
-	s.PlaybackSpeed = lo + math.random() * (hi - lo)
+	s.PlaybackSpeed = (lo + math.random() * (hi - lo)) * (pitch or 1)
+	s.Volume = t.Volume * (volume or 1)
 	s.Parent = parent or SoundService
 	s:Play()
 	s.Ended:Once(function() s:Destroy() end)
