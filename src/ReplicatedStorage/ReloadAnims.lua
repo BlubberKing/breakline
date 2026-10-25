@@ -195,11 +195,11 @@ function Defs.ANVIL(a)
 		end,
 		events = {
 			{ at = 0.02, snd = "ReloadStart" },
-			{ at = 0.22, snd = "Bolt", pitch = 0.75, vol = 0.8 },
+			{ at = 0.22, snd = "CoverOpen" },
 			{ at = 0.40, snd = "MagOut" },
 			{ at = 0.75, snd = "MagIn", kick = { V(0, 1.5, 0), V(-30, 0, 20) } },
-			{ at = 0.84, snd = "MagIn", pitch = 1.8, vol = 0.4 },
-			{ at = 0.92, snd = "Bolt", pitch = 0.7, vol = 1, kick = { V(0, -0.5, 2.5), V(-20, 0, 0) } },
+			{ at = 0.84, snd = "BeltIn" },
+			{ at = 0.92, snd = "CoverClose", kick = { V(0, -0.5, 2.5), V(-20, 0, 0) } },
 		},
 	}
 end
@@ -247,19 +247,19 @@ function Defs.HALO50(a)
 		{ t = 0.22, hand = V(0.22, 0.4, 0.42), cyc = 0.47 },
 		{ t = 0.26, tr = -32 },
 	}
-	local events = { { at = 0.02, snd = "ReloadStart" }, { at = 0.22, snd = "Bolt", pitch = 0.9 } }
+	local events = { { at = 0.02, snd = "ReloadStart" }, { at = 0.22, snd = "BoltOpen" } }
 	for i = 0, 4 do
 		local t0 = 0.28 + i * 0.1
 		table.insert(keys, { t = t0, hand = pouch, grab = 1, tr = -32 })
 		table.insert(keys, { t = t0 + 0.055, hand = side, grab = 1 })
 		table.insert(keys, { t = t0 + 0.075, hand = inside, grab = 0.4 })
-		table.insert(events, { at = t0 + 0.075, snd = "MagIn", pitch = 1.5, vol = 0.45 })
+		table.insert(events, { at = t0 + 0.075, snd = "RoundIn" })
 	end
 	table.insert(keys, { t = 0.80, hand = V(0.22, 0.4, 0.42), grab = 1, cyc = 0.47, tr = 15 })
 	table.insert(keys, { t = 0.9, hand = V(0.22, 0.4, 0.1), cyc = 0 })
 	table.insert(keys, { t = 0.95, tr = 0 })
 	table.insert(keys, { t = 1, hand = FO, grab = 0 })
-	table.insert(events, { at = 0.9, snd = "Bolt", kick = { V(0, 0, 3), V(-15, 0, 0) } })
+	table.insert(events, { at = 0.9, snd = "BoltClose", kick = { V(0, 0, 3), V(-15, 0, 0) } })
 	return {
 		tilt = { roll = 0, pitch = 14, yaw = 14, lift = V(-0.3, 0.6, 0.15), rise = 0.12, fall = 0.9 },
 		keys = keys,
@@ -294,14 +294,14 @@ function Defs.BREACHER(a)
 		table.insert(keys, { t = t0, hand = pouch, grab = 1 })
 		table.insert(keys, { t = t0 + 0.055, hand = below, grab = 1 })
 		table.insert(keys, { t = t0 + 0.075, hand = port, grab = 0.5 })
-		table.insert(events, { at = t0 + 0.075, snd = "MagIn", pitch = 1.3, vol = 0.5 })
+		table.insert(events, { at = t0 + 0.075, snd = "ShellIn" })
 	end
 	table.insert(keys, { t = 0.77, hand = V(0, 0.32, -1.2), grab = 1 })
 	table.insert(keys, { t = 0.85, hand = V(0, 0.32, -0.7), cyc = 0.5 })
 	table.insert(keys, { t = 0.92, hand = V(0, 0.32, -1.2), cyc = 0 })
 	table.insert(keys, { t = 1, hand = FO, grab = 0 })
-	table.insert(events, { at = 0.84, snd = "Bolt", kick = { V(0, 0, 2.5), V(0, 0, 0) } })
-	table.insert(events, { at = 0.92, snd = "Bolt", kick = { V(0, 0, -2), V(0, 0, 0) } })
+	table.insert(events, { at = 0.84, snd = "PumpBack", kick = { V(0, 0, 2.5), V(0, 0, 0) } })
+	table.insert(events, { at = 0.92, snd = "PumpForward", kick = { V(0, 0, -2), V(0, 0, 0) } })
 	return {
 		tilt = { roll = -55, pitch = 18, yaw = 10, lift = V(-0.35, 0.55, 0.15), rise = 0.1, fall = 0.9 },
 		keys = keys,
@@ -371,8 +371,8 @@ function Defs.MAGNUM(a)
 	}
 	local events = {
 		{ at = 0.02, snd = "ReloadStart" },
-		{ at = 0.22, snd = "MagOut", pitch = 1.2 },
-		{ at = 0.38, snd = "MagOut", pitch = 1.9, vol = 0.8 },
+		{ at = 0.22, snd = "CylinderOpen" },
+		{ at = 0.38, snd = "CasingOut" },
 	}
 	for i = 0, 5 do
 		local t0 = 0.45 + i * 0.075
@@ -380,13 +380,13 @@ function Defs.MAGNUM(a)
 		table.insert(keys, { t = t0, hand = pouch, grab = 1, rz = 30 + 60 * i })
 		table.insert(keys, { t = t0 + 0.045, hand = top, grab = 1 })
 		table.insert(keys, { t = t0 + 0.058, hand = top + V(0, -0.1, 0), grab = 0.4 })
-		table.insert(events, { at = t0 + 0.058, snd = "MagIn", pitch = 1.7, vol = 0.4 })
+		table.insert(events, { at = t0 + 0.058, snd = "RoundIn" })
 	end
 	table.insert(keys, { t = 0.90, hand = cylHand(OUT), grab = 1, rz = 390 })
 	table.insert(keys, { t = 0.95, hand = cylHand(V(0, 0, 0)), mag = V(0, 0, 0), rz = 420 })
 	table.insert(keys, { t = 0.97 })
 	table.insert(keys, { t = 1, hand = FO, grab = 0 })
-	table.insert(events, { at = 0.95, snd = "MagIn", pitch = 1.1, vol = 0.9, kick = { V(0, 1.2, 0), V(-30, 0, 25) } })
+	table.insert(events, { at = 0.95, snd = "CylinderClose", kick = { V(0, 1.2, 0), V(-30, 0, 25) } })
 	return {
 		tilt = { roll = -22, pitch = 22, yaw = 12, lift = V(-0.3, 0.45, 0.2), rise = 0.12, fall = 0.92 },
 		keys = keys,
@@ -454,6 +454,20 @@ function ReloadAnims.Make(modelId, P, s)
 	local MPcf = CF(P.MagPivot.Position / s) * P.MagPivot.Rotation
 	local spec = def({ MP = MPcf.Position, MPcf = MPcf, FO = P.Fore.Position / s })
 	prepare(spec.keys)
+	-- charging handle / slide rack: shorter pull and the left hand never goes back toward the camera
+	local ZMAX = 0.18
+	for _, k in ipairs(spec.keys) do
+		if k.cyc and k.cyc > 0 and k.hand.Z > -0.35 then
+			local shift = math.min(math.max(k.cyc * 0.5, k.hand.Z - ZMAX), k.cyc * 0.9) -- hand and handle move back by the same amount
+			k.cyc -= shift
+			k.hand = V(k.hand.X, k.hand.Y, k.hand.Z - shift)
+		end
+	end
+	-- the last part of every reload (charge / rack / pump) plays a bit slower: authored time A.. maps to real time A2..
+	local WA, WA2 = 0.76, 0.68
+	local function toAuthored(u) if u <= WA2 then return u * WA / WA2 end return WA + (u - WA2) * (1 - WA) / (1 - WA2) end
+	local function toReal(t) if t <= WA then return t * WA2 / WA end return WA2 + (t - WA) * (1 - WA2) / (1 - WA) end
+	for _, e in ipairs(spec.events) do e.at = toReal(e.at) end
 	local keys, tl = spec.keys, spec.tilt
 	-- keep the action on screen: the mag swap is authored low (real reload height); squash anything that dips below
 	-- the magwell so the hand/mag stay inside the camera frame. The intentional mag "drop" (< -1.2) stays offscreen.
@@ -481,6 +495,7 @@ function ReloadAnims.Make(modelId, P, s)
 
 	local function Pose(u)
 		if u <= 0 or u >= 1 then return neutral end
+		u = toAuthored(u)
 		local k0, k1, x = sample(keys, u)
 		local e = smooth(seg(u, 0, tl.rise)) * (1 - smooth(seg(u, tl.fall, 1)))
 		local pose = {}
