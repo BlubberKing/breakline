@@ -240,6 +240,7 @@ local wasGrounded, airVelY = true, 0
 local flashUntil, flashRoll, flashVisible = 0, 0, false
 local dmgAlpha = 0
 local gunCF = camera.CFrame
+local shotShift = CFrame.identity -- rotation from the camera center to where the sight/reticle really points (slides, crouch, mantle)
 local scoped = false
 local cleaned = false
 local cleanup -- defined at the bottom
@@ -427,7 +428,7 @@ local function fire()
 	lastShotTime = now
 
 	local origin = camera.CFrame.Position
-	local baseDir = spreadDirection(camera.CFrame.LookVector, currentSpread())
+	local baseDir = spreadDirection(shotShift:VectorToWorldSpace(camera.CFrame.LookVector), currentSpread())
 	local pelletSpread = cfg.PelletSpread * (1 + (cfg.ADSPelletMult - 1) * aimAlpha)
 	local muzzlePos = (gunCF * built.Points.Muzzle).Position
 	local shots, hitModels = {}, {}
@@ -769,6 +770,15 @@ local function onRender(dt)
 	local ea = smooth(aimAlpha)
 	local base = HIP:Lerp(AIM, ea):Lerp(SPRINT, sprintAlpha * (1 - aimAlpha))
 
+	do -- bullets follow the sight: if a slide/crouch/mantle pushes the reticle off screen center, shoot through the reticle
+		local aimLocal = CFrame.new(built.Points.Aim.Position)
+		local vN = (camCF * base * aimLocal).Position - camCF.Position
+		local vF = (camCF * base * mantleCF * slideCF * crouchCF * aimLocal).Position - camCF.Position
+		local a, b = vN.Unit, vF.Unit
+		local axis = a:Cross(b)
+		local angle = math.min(math.acos(math.clamp(a:Dot(b), -1, 1)), rad(25)) * aimAlpha
+		shotShift = axis.Magnitude > 1e-5 and CFrame.fromAxisAngle(axis.Unit, angle) or CFrame.identity
+	end
 	gunCF = camCF * base * mantleCF * slideCF * crouchCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(rad(-lp.Y * 20), 0, 0)
 		* breathe * bob * CFrame.Angles(rad(sw.X), rad(sw.Y), rad(sw.Z + strafeRoll))
 		* tiltCF * recoilCF
