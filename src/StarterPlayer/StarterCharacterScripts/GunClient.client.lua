@@ -26,6 +26,8 @@ local HitConfirm, ShotFX, DamagedRemote = Remotes:WaitForChild("HitConfirm"), Re
 local VM_SCALE = 0.85 -- viewmodel gun size
 local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 82, 7
 local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
+local MatchCfg = require(RS:WaitForChild("MatchConfig"))
+local function isCarrying() return player:GetAttribute("Carrying") == true end -- holding a Wall Push box: no guns/gadgets
 -- speed feel (all subtle on purpose)
 local SPEEDFX = {
 	FOV_FROM = 30, FOV_TO = 55, FOV_ADD = 6,      -- extra FOV when going faster than a sprint (slides, downhill)
@@ -416,7 +418,7 @@ local function reloadPose(u)
 end
 
 local function startReload()
-	if reloading or ammo == cfg.MagSize or humanoid.Health <= 0 then return end
+	if reloading or ammo == cfg.MagSize or humanoid.Health <= 0 or isCarrying() then return end
 	reloading = true
 	burstQueue, semiPending = 0, nil
 	reloadStart = os.clock()
@@ -648,11 +650,13 @@ local function onRender(dt)
 	if alive then hideBody() end
 
 	-- states
-	local aiming = aimHeld and not reloading and alive and not mantling
+	local carryingBox = isCarrying()
+	if carryingBox then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
+	local aiming = aimHeld and not reloading and alive and not mantling and not carryingBox
 	local wantsSprint = (shiftHeld or sprintToggle) and moving and not aiming and not triggerDown and not crouching
 	local sprinting = wantsSprint and not sliding and not mantling
 	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
-	humanoid.WalkSpeed = baseSpeed * cfg.MoveSpeed
+	humanoid.WalkSpeed = baseSpeed * (carryingBox and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed)
 	aimAlpha = approach(aimAlpha, aiming and 1 or 0, dt, cfg.ADSTime)
 	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
@@ -661,7 +665,7 @@ local function onRender(dt)
 
 	-- firing
 	local cycling = cfg.Cycle and cfg.Cycle ~= "Slide" and (now - cycleStart) < (cfg.CycleDelay + cfg.CycleTime)
-	local canFire = alive and not reloading and ammo > 0 and sprintAlpha < 0.3 and mantleAlpha < 0.4
+	local canFire = alive and not carryingBox and not reloading and ammo > 0 and sprintAlpha < 0.3 and mantleAlpha < 0.4
 		and (now - equipStart) > cfg.EquipTime and not cycling
 	fireControl(now, canFire)
 	bloom = math.max(0, bloom - cfg.BloomRecovery * dt * (triggerDown and 0.25 or 1))
@@ -799,8 +803,9 @@ local function onRender(dt)
 	if wantScope ~= scoped then
 		scoped = wantScope
 		scope.Visible = scoped
-		built.Model.Parent = not scoped and camera or nil
 	end
+	local vmParent = (not scoped and not carryingBox) and camera or nil -- gun is put away while carrying a box
+	if built.Model.Parent ~= vmParent then built.Model.Parent = vmParent end
 
 	if not scoped then
 		local i = 0
@@ -832,7 +837,7 @@ local function onRender(dt)
 		c.f.Position = UDim2.new(0.5, c.d.X * (gap + 4), 0.5, c.d.Y * (gap + 4))
 	end
 	local hide = math.clamp(math.max(aimAlpha * 3, sprintAlpha * 1.3, mantleAlpha * 1.3), 0, 1)
-	cross.Visible = hide < 0.99 and alive and not menuOpen()
+	cross.Visible = hide < 0.99 and alive and not menuOpen() and not carryingBox
 	for _, c in crossAll do
 		c.f.BackgroundTransparency = hide
 		c.s.Transparency = 0.55 + 0.45 * hide
