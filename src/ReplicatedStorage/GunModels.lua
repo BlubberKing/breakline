@@ -460,33 +460,41 @@ GunModels.Sights = Sights
 
 Sights.Iron = { Display = "Iron" }
 
-Sights.RedDot = { Display = "Red Dot", Reticle = "Dot", Eye = 0.45, Scale = 0.7,
+Sights.RedDot = { Display = "Compact Reflector", Reticle = "Dot", Eye = 0.45, Scale = 0.75,
 	Build = function(k, m)
-		k.box("DotBase", V(0.2, 0.07, 0.34), m * CF(0, 0.035, 0), C.Body)
-		local c = m * CF(0, 0.2, -0.02)
-		k.ring("DotHood", c, 0.1, 0.03, 0.2, C.Body)
-		k.ring("DotLip", c * CF(0, 0, -0.1), 0.105, 0.025, 0.03, C.Metal)
-		k.box("DotBridge", V(0.12, 0.06, 0.18), c * CF(0, -0.14, 0), C.Body)
-		k.cylX("DotKnob", 0.05, 0.08, c * CF(0.15, -0.03, 0.03), C.Metal)
-		k.glow("DotStripe", V(0.04, 0.01, 0.12), c * CF(0, 0.135, 0))
-		k.box("DotLens", V(0.008, 0.21, 0.21), c * CF(0, 0, -0.07) * ang(0, 90, 0), C.Lens, SP,
-			{ Shape = CYL, Transparency = 0.8, NoShadow = true })
-		k.box("DotReticle", V(0.2, 0.2, 0.002), c * CF(0, 0, -0.06), C.Dark, SP, { Transparency = 1, Reticle = "Dot" })
-		return c * CF(0, 0, -0.06)
+		-- enclosed housing with two screws on the rear face, open arched window above it (like The Finals' Compact Reflector)
+		k.box("DotBase", V(0.2, 0.05, 0.3), m * CF(0, 0.025, 0), C.Body)
+		k.box("DotHousing", V(0.22, 0.1, 0.24), m * CF(0, 0.1, -0.02), C.Body)
+		for _, sx in ipairs({ -1, 1 }) do
+			k.cylZ("DotScrew", 0.02, 0.045, m * CF(sx * 0.06, 0.1, 0.108), C.Metal, METAL)
+		end
+		local c = m * CF(0, 0.26, -0.04)
+		for _, sx in ipairs({ -1, 1 }) do
+			k.box("DotPost", V(0.03, 0.2, 0.14), c * CF(sx * 0.1, 0, 0), C.Body)
+			k.box("DotCorner", V(0.055, 0.03, 0.14), c * CF(sx * 0.082, 0.082, 0) * ang(0, 0, -sx * 45), C.Body)
+		end
+		k.box("DotTop", V(0.12, 0.03, 0.14), c * CF(0, 0.104, 0), C.Body)
+		k.glow("DotStripe", V(0.04, 0.01, 0.1), m * CF(0, 0.152, -0.02))
+		k.box("DotLens", V(0.17, 0.19, 0.008), c * CF(0, 0, -0.03), C.Lens, SP, { Transparency = 0.85, NoShadow = true })
+		k.box("DotReticle", V(0.2, 0.2, 0.002), c * CF(0, 0, -0.02), C.Dark, SP, { Transparency = 1, Reticle = "Dot" })
+		return c * CF(0, 0, -0.02)
 	end }
 
-Sights.Holo = { Display = "Holo", Reticle = "Holo", Eye = 0.55, Scale = 0.75,
+Sights.Holo = { Display = "Holographic", Reticle = "Holo", Eye = 0.55, Scale = 0.75,
 	Build = function(k, m)
-		k.box("HoloBase", V(0.26, 0.09, 0.52), m * CF(0, 0.045, 0), C.Body)
-		k.box("HoloBattery", V(0.24, 0.07, 0.2), m * CF(0, 0.12, 0.14), C.Body)
-		local c = m * CF(0, 0.25, -0.1)
-		for _, sx in ipairs({ -1, 1 }) do k.box("HoloPost", V(0.035, 0.28, 0.12), c * CF(sx * 0.155, 0, 0), C.Body) end
-		k.box("HoloTop", V(0.345, 0.04, 0.14), c * CF(0, 0.15, 0), C.Body)
-		k.box("HoloLow", V(0.3, 0.05, 0.12), c * CF(0, -0.125, 0), C.Body)
-		k.glow("HoloStripe", V(0.18, 0.01, 0.06), c * CF(0, 0.172, 0))
-		k.box("HoloGlass", V(0.28, 0.2, 0.01), c * CF(0, 0.01, -0.05), C.Lens, SP, { Transparency = 0.82, NoShadow = true })
-		k.box("HoloReticle", V(0.26, 0.2, 0.002), c * CF(0, 0.01, -0.04), C.Dark, SP, { Transparency = 1, Reticle = "Holo" })
-		return c * CF(0, 0.01, -0.04)
+		-- chunky rectangular frame, big open window, rear buttons (like The Finals' Holographic)
+		k.box("HoloBase", V(0.3, 0.13, 0.4), m * CF(0, 0.065, 0), C.Body)
+		k.cylZ("HoloBtnMid", 0.02, 0.07, m * CF(0, 0.07, 0.205), C.Dark)
+		for _, sx in ipairs({ -1, 1 }) do
+			k.box("HoloBtn", V(0.07, 0.05, 0.02), m * CF(sx * 0.1, 0.07, 0.205), C.Dark)
+		end
+		local c = m * CF(0, 0.25, -0.08)
+		for _, sx in ipairs({ -1, 1 }) do k.box("HoloPost", V(0.045, 0.24, 0.16), c * CF(sx * 0.135, 0, 0), C.Body) end
+		k.box("HoloTop", V(0.315, 0.045, 0.16), c * CF(0, 0.1425, 0), C.Body)
+		k.glow("HoloStripe", V(0.18, 0.01, 0.06), c * CF(0, 0.168, 0))
+		k.box("HoloGlass", V(0.23, 0.2, 0.008), c * CF(0, -0.01, -0.04), C.Lens, SP, { Transparency = 0.85, NoShadow = true })
+		k.box("HoloReticle", V(0.26, 0.2, 0.002), c * CF(0, -0.01, -0.03), C.Dark, SP, { Transparency = 1, Reticle = "Holo" })
+		return c * CF(0, -0.01, -0.03)
 	end }
 
 Sights.Ranger3x = { Display = "3x", Reticle = "Chevron", Mag = 3, Eye = 0.16, Scale = 0.8,
@@ -591,8 +599,7 @@ local function buildReticle(part, style, color)
 		frame(5, 26, 0, false, -35, 7.5, 10.6)
 		frame(2, 60, 0.3, false, 0, 0, 52)
 	else
-		frame(30, 30, 0.82, true)
-		frame(10, 10, 0, true)
+		frame(8, 8, 0, true)
 	end
 	return gui
 end
