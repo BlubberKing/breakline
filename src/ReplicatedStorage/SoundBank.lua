@@ -15,5 +15,6 @@ return {
 	Damaged     = { Id = "5718786992", Volume = 0.60 },
 	Slide       = { Id = "138269837525273", Volume = 0.50 },
 	Mantle      = { Id = "120034381418358", Volume = 0.50 },
+	SoulRocket  = { Id = "", Volume = 0.6, MaxDistance = 400 }, -- rocket-into-the-sky whoosh for the death effect (empty = falls back to the Wind sound, pitched up)
 	Wind        = { Id = "93035214379043", Volume = 0.50 }, -- looping wind rush at high speed (paste a loopable wind sound ID)
 }
