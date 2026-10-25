@@ -162,9 +162,13 @@ function BoxFX.Break(pos, teamColor)
 	Debris:AddItem(ghost, 0.8)
 
 	-- sound (3D). Reuses the existing Damaged / Impact / Kill sounds, layered + pitched low for a heavy "crunch".
-	Sfx.Play("Impact", a, 0.55, 2.2)
-	Sfx.Play("Damaged", a, 0.7, 0.9)
-	Sfx.Play("Kill", a, 0.8, 0.6)
+	if Sfx.Has("BoxBreak") then
+		Sfx.Play("BoxBreak", a)
+	else
+		Sfx.Play("Impact", a, 0.55, 2.2)
+		Sfx.Play("Damaged", a, 0.7, 0.9)
+		Sfx.Play("Kill", a, 0.8, 0.6)
+	end
 end
 
 return BoxFX
