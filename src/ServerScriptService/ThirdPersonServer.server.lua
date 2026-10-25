@@ -1,7 +1,8 @@
--- ThirdPersonServer v2: world rifle on a torso joint, aim/state replication, shot + reload broadcast
+-- ThirdPersonServer v3: world gun (any weapon, rebuilt on swap) on a torso joint, aim/state replication, shot + reload broadcast
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
-local RifleModel = require(RS:WaitForChild("RifleModel"))
+local GunModels = require(RS:WaitForChild("GunModels"))
+local Weapons = require(RS:WaitForChild("WeaponConfig"))
 
 local GUN_SCALE = 0.55 -- world rifle size relative to the character
 
@@ -22,12 +23,6 @@ local function remote(name)
 end
 local Look, Shot = remote("TPLook"), remote("TPShot")
 
-local RELOAD_TIME = 1.9
-pcall(function()
-	local cfg = require(RS:WaitForChild("WeaponConfig", 5))
-	local ar = cfg.AR or (cfg.Weapons and cfg.Weapons.AR)
-	if ar and type(ar.ReloadTime) == "number" then RELOAD_TIME = ar.ReloadTime end
-end)
 
 local function accentFor(player)
 	if player.Team and not player.Neutral then return player.TeamColor.Color end
@@ -42,7 +37,11 @@ local function attachGun(player, char)
 	local oldJoint = torso:FindFirstChild("GunJoint")
 	if oldJoint then oldJoint:Destroy() end
 
-	local gun = RifleModel.Build({ scale = GUN_SCALE, accent = accentFor(player), reticle = "None", name = "TPGun" })
+	local cfg = Weapons.Get(player:GetAttribute("Weapon"))
+	local sight = player:GetAttribute("Sight")
+	if not Weapons.HasSight(cfg, sight) then sight = cfg.DefaultSight end
+	local gun = GunModels.BuildWorld(cfg.Model, sight, GUN_SCALE, accentFor(player), "TPGun")
+	gun:SetAttribute("Weapon", cfg.Id)
 	local k = torso.Size.Y / 1.6
 	local c0 = CFrame.new(0.42 * k, 0.05 * k, -1.2 * k)
 	gun:PivotTo(torso.CFrame * c0)
@@ -55,6 +54,7 @@ local function attachGun(player, char)
 	joint.C0 = c0
 	joint.Parent = torso
 
+	if char:GetAttribute("AimPitch") ~= nil then return end -- weapon swap: keep the live state
 	char:SetAttribute("AimPitch", 0)
 	char:SetAttribute("ADS", false)
 	char:SetAttribute("Sprint", false)
@@ -67,8 +67,23 @@ local function onPlayer(player)
 	player.CharacterAdded:Connect(function(char) attachGun(player, char) end)
 	local function recolor()
 		local gun = player.Character and player.Character:FindFirstChild("TPGun")
-		if gun then RifleModel.SetAccent(gun, accentFor(player)) end
+		if gun then GunModels.SetAccent(gun, accentFor(player)) end
 	end
+	local queued = false
+	local function rebuild() -- deferred so Weapon + Sight changing together = one rebuild
+		if queued then return end
+		queued = true
+		task.wait()
+		queued = false
+		local char = player.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if hum and hum.Health > 0 then
+			char:SetAttribute("Reloading", false)
+			attachGun(player, char)
+		end
+	end
+	player:GetAttributeChangedSignal("Weapon"):Connect(function() task.spawn(rebuild) end)
+	player:GetAttributeChangedSignal("Sight"):Connect(function() task.spawn(rebuild) end)
 	player:GetPropertyChangedSignal("Team"):Connect(recolor)
 	player:GetPropertyChangedSignal("TeamColor"):Connect(recolor)
 	if player.Character then task.spawn(attachGun, player, player.Character) end
@@ -134,7 +149,7 @@ task.spawn(function()
 		local token = {}
 		reloadToken[player] = token
 		char:SetAttribute("Reloading", true)
-		task.delay(RELOAD_TIME, function()
+		task.delay(Weapons.Get(player:GetAttribute("Weapon")).ReloadTime, function()
 			if reloadToken[player] == token and char.Parent then char:SetAttribute("Reloading", false) end
 		end)
 	end)
