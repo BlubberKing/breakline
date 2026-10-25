@@ -76,6 +76,15 @@ local function newKit()
 	return k
 end
 
+-- aux parts: loose rounds / shells / casings used only by reload animations (hidden otherwise, not on the world gun)
+local BRASS, SHELLRED = Color3.fromRGB(214, 168, 72), Color3.fromRGB(190, 52, 44)
+local function addAux(k, firstId, n, len, dia, color)
+	local g = k.group
+	k.group = "aux"
+	for i = 0, n - 1 do k.cylZ("Round", len, dia, CF(), color, METAL, { Aux = firstId + i }) end
+	k.group = g
+end
+
 local function stdGrip(k, color, z, tilt)
 	z, tilt = z or 0.04, tilt or -16
 	local g = P(0, -0.02, z, tilt)
@@ -140,7 +149,9 @@ function Models.KR47(k)
 	k.box("Rail", V(0.1, 0.03, 0.4), CF(0, 0.59, -0.3), C.Dark)
 	k.box("Selector", V(0.02, 0.05, 0.45), CF(0.105, 0.4, -0.25), C.Metal)
 	k.box("EjectionPort", V(0.02, 0.08, 0.26), CF(0.102, 0.48, -0.4), C.Dark)
+	k.group = "cycle"
 	k.box("ChargingHandle", V(0.1, 0.04, 0.05), CF(0.13, 0.5, -0.6), C.Steel, METAL)
+	k.group = "gun"
 	k.box("LowerGuard", V(0.22, 0.2, 0.75), CF(0, 0.36, -1.3), C.Wood, WOOD)
 	k.box("UpperGuard", V(0.16, 0.09, 0.7), CF(0, 0.5, -1.28), C.Wood, WOOD)
 	k.glow("GuardStripeR", V(0.01, 0.025, 0.45), CF(0.112, 0.36, -1.3))
@@ -206,6 +217,9 @@ function Models.WASP(k)
 	k.box("Rail", V(0.1, 0.03, 0.8), CF(0, 0.59, -0.35), C.Dark)
 	k.glow("SideStripeR", V(0.01, 0.03, 0.8), CF(0.102, 0.44, -0.35))
 	k.glow("SideStripeL", V(0.01, 0.03, 0.8), CF(-0.102, 0.44, -0.35))
+	k.group = "cycle"
+	k.box("ChargingKnob", V(0.07, 0.06, 0.12), CF(0.125, 0.5, -0.1), C.Steel, METAL)
+	k.group = "gun"
 	k.cylZ("Suppressor", 0.55, 0.12, CF(0, 0.4, -1.55), C.Dark)
 	k.muzzle(V(0, 0.4, -1.84))
 	k.fore(CF(0, 0.16, -1.0))
@@ -231,8 +245,10 @@ end
 function Models.ANVIL(k)
 	stdGrip(k, C.Dark)
 	k.box("Receiver", V(0.24, 0.3, 1.3), CF(0, 0.38, -0.3), C.Body)
+	k.group = "cover"
 	k.box("FeedCover", V(0.24, 0.08, 0.7), CF(0, 0.57, -0.25), C.Metal)
 	k.box("Rail", V(0.12, 0.03, 0.6), CF(0, 0.625, -0.25), C.Dark)
+	k.group = "gun"
 	k.box("Handguard", V(0.22, 0.2, 0.6), CF(0, 0.36, -1.3), C.Polymer)
 	k.box("HeatShield", V(0.18, 0.05, 0.7), CF(0, 0.5, -1.6), C.Metal)
 	k.glow("SideStripeR", V(0.01, 0.035, 0.9), CF(0.122, 0.34, -0.3))
@@ -259,6 +275,9 @@ function Models.ANVIL(k)
 	k.box("Mag", V(0.34, 0.36, 0.4), CF(-0.03, 0.0, -0.55), C.Olive)
 	k.glow("MagBase", V(0.36, 0.04, 0.42), CF(-0.03, -0.19, -0.55))
 	k.magwell(CF(0, 0.1, -0.55))
+	k.group = "aux"
+	for i = 0, 3 do k.box("BeltLink", V(0.05, 0.05, 0.1), CF(), BRASS, METAL, { Aux = i + 1 }) end
+	k.group = "gun"
 end
 
 -- M14 EBR: tan chassis, vented guard
@@ -272,6 +291,9 @@ function Models.LONGSHOT(k)
 		for i = 0, 3 do k.box("Vent", V(0.02, 0.08, 0.13), CF(sx * 0.102, 0.38, -1.1 - i * 0.2), C.Dark) end
 	end
 	k.glow("Stripe", V(0.1, 0.02, 0.6), CF(0, 0.275, -1.4))
+	k.group = "cycle"
+	k.box("OpRodHandle", V(0.07, 0.07, 0.16), CF(0.13, 0.42, -0.3), C.Steel, METAL)
+	k.group = "gun"
 	k.cylZ("Barrel", 0.9, 0.09, CF(0, 0.4, -2.3), C.Metal, METAL)
 	k.box("MuzzleBrake", V(0.12, 0.12, 0.25), CF(0, 0.4, -2.85), C.Dark)
 	k.muzzle(V(0, 0.4, -2.98))
@@ -329,6 +351,8 @@ function Models.HALO50(k)
 	k.box("Mag", V(0.14, 0.22, 0.34), CF(0, 0.07, -0.45), C.Dark)
 	k.glow("MagBase", V(0.16, 0.04, 0.36), CF(0, -0.05, -0.45))
 	k.magwell(CF(0, 0.12, -0.45))
+	addAux(k, 1, 5, 0.26, 0.07, BRASS)
+	k.group = "gun"
 end
 
 -- Remington 870: pump shotgun, tube mag under the barrel
@@ -359,6 +383,8 @@ function Models.BREACHER(k)
 	for i = 0, 3 do k.box("PumpRidge", V(0.21, 0.19, 0.04), pump * CF(0, 0, -0.18 + i * 0.12), C.Dark) end
 	k.fore(pump * CF(0, -0.05, 0))
 	k.magwell(CF(0, 0.2, -0.45))
+	addAux(k, 1, 6, 0.3, 0.1, SHELLRED)
+	k.group = "gun"
 end
 
 -- Glock 17: slim slide + frame
@@ -419,6 +445,9 @@ function Models.MAGNUM(k)
 		k.cylZ("Flute", 0.28, 0.06, CF(math.cos(a) * 0.14, 0.36 + math.sin(a) * 0.14, -0.2), C.Dark)
 	end
 	k.magwell(CF(0, 0.36, -0.2))
+	addAux(k, 1, 6, 0.2, 0.06, BRASS)  -- 1-6: spent casings
+	addAux(k, 7, 6, 0.22, 0.055, BRASS) -- 7-12: fresh rounds
+	k.group = "gun"
 	k.view = { X = 0.45, Y = -0.8, Z = -1.3, SprintRot = V(-40, 20, 10) }
 end
 
@@ -592,7 +621,7 @@ function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor)
 	local pts = desc.Points
 	local model = Instance.new("Model")
 	model.Name = "Viewmodel"
-	local groups = { gun = {}, mag = {}, cycle = {}, left = {}, flash = {} }
+	local groups = { gun = {}, mag = {}, cycle = {}, cover = {}, aux = {}, left = {}, flash = {} }
 	local magPivot = scaleCF(pts.MagPivot, s)
 	for _, d in ipairs(desc.Parts) do
 		local p = makePart(d, s)
@@ -600,7 +629,7 @@ function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor)
 		p.Parent = model
 		local off = scaleCF(d.CF, s)
 		if d.Group == "mag" then off = magPivot:Inverse() * off end
-		table.insert(groups[d.Group], { Part = p, Offset = off })
+		table.insert(groups[d.Group], { Part = p, Offset = off, Aux = d.Aux })
 		if d.Reticle then buildReticle(p, d.Reticle, reticleColor or C.Reticle) end
 	end
 	local muzzle = scaleCF(pts.Muzzle, s)
@@ -689,7 +718,7 @@ function GunModels.BuildWorld(modelId, sightId, s, accent, name)
 		p.Parent = model
 	end
 	for _, d in ipairs(desc.Parts) do
-		if not d.Reticle then
+		if not d.Reticle and d.Group ~= "aux" then
 			local p = makePart(d, s)
 			if d.Glow and accent then p.Color = accent end
 			p.CastShadow = not d.NoShadow and d.Size.Magnitude * s > 0.3
