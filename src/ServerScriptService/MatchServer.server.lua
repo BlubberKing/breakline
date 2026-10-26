@@ -19,6 +19,9 @@ local Debris = game:GetService("Debris")
 
 local C = require(RS:WaitForChild("MatchConfig"))
 local BoxModel = require(RS:WaitForChild("BoxModel"))
+local PC = require(RS:WaitForChild("PlaceConfig"))                         -- shared with the Lobby place
+local Roster = require(script.Parent:WaitForChild("MatchRoster"))          -- who plays on which team (from the lobby matchmaker)
+local Profiles = require(script.Parent:WaitForChild("ProfileStore"))       -- shared coins / wins
 local M, BOX = C.MAP, C.BOX
 local rnd = Random.new()
 
@@ -654,6 +657,18 @@ local function endRound(winner)
 	stateFolder:SetAttribute("Winner", winner or "")
 	setPhase("Result", C.RESULT_TIME)
 	if winner then notify(winner:upper() .. " WINS", TEAM_COLOR[winner]) end
+	if winner then -- rewards go into the shared profile (saved when the player leaves / returns to the lobby)
+		for _, p in Players:GetPlayers() do
+			local t = p.Team and p.Team.Name
+			if t and teamObjs[t] and t ~= "Lobby" then
+				if t == winner then
+					Profiles.Increment(p, "Coins", PC.COINS_WIN); Profiles.Increment(p, "Wins", 1)
+				else
+					Profiles.Increment(p, "Coins", PC.COINS_LOSS); Profiles.Increment(p, "Losses", 1)
+				end
+			end
+		end
+	end
 end
 
 local function respawn(p)
@@ -661,6 +676,13 @@ local function respawn(p)
 end
 
 local function assignTeams()
+	if Roster.Reserved then -- teams come from the lobby matchmaker, never random
+		for _, p in Players:GetPlayers() do
+			local t = Roster.TeamOf(p.UserId)
+			p.Team = (t and teamObjs[t]) or lobbyTeam
+		end
+		return
+	end
 	local list = Players:GetPlayers()
 	for i = #list, 2, -1 do
 		local j = rnd:NextInteger(1, i)
@@ -743,7 +765,10 @@ end
 local function onPlayer(player)
 	player:SetAttribute("Carrying", false)
 	player.Team = lobbyTeam
-	if phase == "Playing" then -- late joiner: fill the smaller team if there is room
+	if Roster.Reserved then -- rejoin: back on the roster team
+		local t = Roster.TeamOf(player.UserId)
+		if phase == "Playing" and t and teamObjs[t] then player.Team = teamObjs[t] end
+	elseif phase == "Playing" then -- late joiner: fill the smaller team if there is room
 		local a, b = #teamObjs[TEAM_A]:GetPlayers(), #teamObjs[TEAM_B]:GetPlayers()
 		local pick = a <= b and TEAM_A or TEAM_B
 		if math.min(a, b) < 3 then player.Team = teamObjs[pick] end
@@ -879,23 +904,32 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 end)
 
+local function enough()
+	if Roster.Reserved then return Roster.Ready() end
+	return #Players:GetPlayers() >= C.MIN_PLAYERS
+end
+
 task.spawn(function()
 	while true do
 		setPhase("Waiting", 0)
-		while #Players:GetPlayers() < C.MIN_PLAYERS do task.wait(0.5) end
+		while not enough() do task.wait(0.5) end
 		setPhase("Intermission", C.INTERMISSION)
 		local aborted, t0 = false, os.clock()
 		while os.clock() - t0 < C.INTERMISSION do
 			task.wait(0.25)
-			if #Players:GetPlayers() < C.MIN_PLAYERS then aborted = true break end
+			if not enough() then aborted = true break end
 		end
 		if not aborted then
 			startRound()
 			while phase == "Playing" do
 				task.wait(0.25)
-				if #Players:GetPlayers() < C.MIN_PLAYERS then endRound(nil) end
+				if not enough() then endRound(nil) end
 			end
 			task.wait(C.RESULT_TIME)
+		end
+		if Roster.Reserved then -- one match per reserved server: send everyone back to the lobby
+			Roster.ReturnAll()
+			return
 		end
 		resetToLobby()
 	end
