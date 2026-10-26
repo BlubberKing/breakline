@@ -1,4 +1,4 @@
--- GunClient v3: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
+-- GunClient v3.1: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
 -- Live weapon/sight switching via Player attributes "Weapon" / "Sight" (set by the server, see GunServer).
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -819,6 +819,9 @@ local function onRender(dt)
 			cfList[i] = ac and (gunCF * ac * g.Offset.Rotation) or OFFSCREEN
 		end
 		if cfg.Cycle == "Pump" and grab == 0 then handPos += Vector3.new(0, 0, cycleZ) end
+		-- v3.1: drop the whole left hand so it wraps UNDER the handguard instead of floating above it (tune HAND_DROP)
+		local HAND_DROP = 0.4
+		handPos += Vector3.new(0, -HAND_DROP, 0)
 		local leftCF = gunCF * CFrame.new(handPos) * CFrame.Angles(rad(-20 * grab), 0, rad(-35 * grab))
 		-- left arm: sleeve + cuff point from the hand to a fixed shoulder point below + behind the camera, so when the hand
 		-- goes up to cock the gun the arm tilts down off screen instead of its back end showing
