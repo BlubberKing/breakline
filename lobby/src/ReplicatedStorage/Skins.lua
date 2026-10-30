@@ -4,7 +4,9 @@
 --   Skins.Order / Skins.ById / Skins.Default / Skins.Get(id) / Skins.Is(id)
 --   Skins.Dress(character, skinId, accentColor)  -> server: dresses a real Roblox character (lobby + match)
 --   Skins.NewFigure(parent, skinId, opts)       -> client: a posed showcase figure built from parts (lobby menus / ViewportFrames)
---       opts = { weapon = "VX9" (optional, real gun model from GunModels), camPos = Vector3 (so the figure can glance at the camera) }
+--       opts = { weapon = "VX9" (optional, real gun model from GunModels), camPos = Vector3 (so the figure can glance at the camera),
+--                idle = true (v3.7: random idle moves - aim in, inspect, low ready, scan, turn, shift. OFF unless asked for: only the
+--                lobby squad stage turns it on), still = true (head fixed forward, smaller breathing: cutscenes) }
 --       figure:SetRoot(cframe), figure:Update(t, dt), figure:Destroy(), figure.HeadTop (studs above the root)
 --   Skins.Proportions / Skins.ApplyProportions(character) -> v3.2: every player is a bit TALLER and a lot SKINNIER than the stock rig
 -- Adding a skin: add an entry to Skins.List (colors + `card` color), then add its extra gear in DRESS[id] and FIGURE[id].
@@ -303,6 +305,16 @@ FIGURE.SALVAGER = function(add, P, c)
 	add("head", Vector3.new(1.5, 0.5, 1.45), CFrame.new(0, 0.12, 0), rgb(140, 70, 44)) -- scarf
 end
 
+-- v3.7: gun poses of the showcase figure (figure space: +X = the figure's LEFT, +Y up, +Z forward; rot = radians pitch / yaw / roll
+-- about the chest pivot, pos = studs). Tuned offline so the gun stays out of the torso in every pose (it used to sink into the body
+-- while inspecting and in low ready).
+S.GunPose = {
+	base = Vector3.new(-0.15, 0, 0.6),                                                -- resting carry: held a bit out in front of the chest
+	aim = { rot = Vector3.new(-0.17, -0.35, 0), pos = Vector3.new(0.3, 0.8, 0.6) },     -- up by the face, pushed out to the shoulder
+	inspect = { rot = Vector3.new(-0.35, 0.35, 0.9), pos = Vector3.new(0, 0.7, 0.3) }, -- lifted in front, canted so the side faces the eyes
+	low = { rot = Vector3.new(0.5, 0.2, 0.1), pos = Vector3.new(-0.2, -0.25, 0.2) },   -- muzzle down, away from the legs
+}
+
 local function getGunModels()
 	local m = RS:FindFirstChild("GunModels")
 	if not m then return nil end
@@ -366,8 +378,8 @@ function S.NewFigure(parent, skinId, opts)
 	add("body", Vector3.new(0.5, 0.3, 0.5), CFrame.new(0, 5.2, 0), c.Trim)
 	FIGURE[skin.id](add, P, c)
 
-	-- the gun, held across the chest pointing forward-left and a little down. It is big on purpose: a real rifle next to a slim body.
-	local GUN_S = 1.6
+	-- the gun, held across the chest pointing forward-left and a little down. v3.7: 1.6 -> 1.25 (read as oversized next to the body)
+	local GUN_S = 1.25
 	local A, Bp = Q(P(0.7, 4.5, 0.55)), Q(P(-0.5, 3.9, 3.9))
 	local rf = CFrame.lookAt(A, Bp) * CFrame.Angles(0, math.pi, 0) -- local +Z = toward the muzzle
 	local rHand = (rf * CFrame.new(0, -0.5, 0.4)).Position
@@ -413,6 +425,7 @@ function S.NewFigure(parent, skinId, opts)
 	local NECK = 5.25 * sy
 	local fig = { Model = model, HeadTop = NECK + 1.9 * hs, root = CFrame.new(),
 		still = opts.still == true, -- true: no idle events, head fixed forward (cutscenes)
+		idle = opts.idle == true,   -- true: random idle moves (lobby squad stage only)
 		run = 0,       -- 0..1 leg swing while running
 		runPhase = 0,  -- radians, advance it while running
 		sit = 0 }      -- 0..1 legs forward (sitting on a throne)
@@ -424,14 +437,16 @@ function S.NewFigure(parent, skinId, opts)
 	local pose = { aim = 0, inspect = 0, low = 0, shift = 0, turn = 0 }
 	local goal = { aim = 0, inspect = 0, low = 0, shift = 0, turn = 0 }
 	local evt, evtStart, evtEnd = nil, 0, 0
-	local nextEvt = rng:NextNumber(1.5, 4)
+	-- v3.7: rarer. First move after IDLE_FIRST s, then a quiet gap of IDLE_GAP s between moves.
+	local IDLE_FIRST, IDLE_GAP = { 5, 9 }, { 9, 16 }
+	local nextEvt = rng:NextNumber(IDLE_FIRST[1], IDLE_FIRST[2])
 	local EVENTS = {
-		{ name = "aim", w = 3, dur = { 2.4, 4.0 } },
-		{ name = "inspect", w = 2, dur = { 2.6, 3.6 } },
-		{ name = "low", w = 2, dur = { 3.0, 5.0 } },
+		{ name = "aim", w = 3, dur = { 2.4, 3.6 } },
+		{ name = "inspect", w = 2, dur = { 2.8, 3.6 } },
+		{ name = "low", w = 2, dur = { 3.0, 4.5 } },
 		{ name = "scan", w = 3, dur = { 3.0, 4.2 } },
-		{ name = "turn", w = 2, dur = { 3.0, 4.5 } },
-		{ name = "shift", w = 2, dur = { 2.4, 3.6 } },
+		{ name = "turn", w = 2, dur = { 3.0, 4.0 } },
+		{ name = "shift", w = 2, dur = { 2.4, 3.4 } },
 	}
 	local function pickEvent(last)
 		local total = 0
@@ -456,12 +471,12 @@ function S.NewFigure(parent, skinId, opts)
 	function fig:Update(t, dt)
 		dt = dt or 0
 		local still = self.still
-		-- ---- director
-		if not still then
+		-- ---- director (only figures created with opts.idle = true)
+		if self.idle and not still then
 			if evt and t >= evtEnd then
 				for k in goal do goal[k] = 0 end
 				lastEvt, evt = evt.name, nil
-				nextEvt = t + rng:NextNumber(2.5, 6)
+				nextEvt = t + rng:NextNumber(IDLE_GAP[1], IDLE_GAP[2])
 			elseif not evt and t >= nextEvt then
 				evt = pickEvent(lastEvt)
 				evtStart = t
@@ -473,6 +488,10 @@ function S.NewFigure(parent, skinId, opts)
 				elseif evt.name == "turn" then goal.turn = evtSign
 				elseif evt.name == "shift" then goal.shift = evtSign end
 			end
+		end
+		if evt and not (self.idle and not still) then -- idle switched off mid-move: settle back to neutral
+			for k in goal do goal[k] = 0 end
+			lastEvt, evt = evt.name, nil
 		end
 		local pk = 1 - math.exp(-3.2 * dt)
 		for k, v in pose do pose[k] = v + (goal[k] - v) * pk end
@@ -516,8 +535,10 @@ function S.NewFigure(parent, skinId, opts)
 
 		-- ---- gun pose: aim in (level, up by the face), inspect (lifted + canted), low ready (muzzle down)
 		local aim, ins, low = pose.aim, pose.inspect, pose.low
-		local rot = CFrame.Angles(-0.17 * aim - 0.5 * ins + 0.55 * low, -0.35 * aim - 0.2 * ins - 0.1 * low, 0.65 * ins)
-		local trn = Vector3.new(0.45 * aim + 0.5 * ins, 0.8 * aim + 0.9 * ins - 0.35 * low, 0.15 * aim - 0.1 * ins - 0.1 * low)
+		local GP = S.GunPose
+		local r = GP.aim.rot * aim + GP.inspect.rot * ins + GP.low.rot * low
+		local rot = CFrame.Angles(r.X, r.Y, r.Z)
+		local trn = GP.base + GP.aim.pos * aim + GP.inspect.pos * ins + GP.low.pos * low
 		local gT = CFrame.new(trn) * CFrame.new(PIV) * rot * CFrame.new(-PIV)
 
 		-- ---- legs
@@ -546,6 +567,7 @@ function S.NewFigure(parent, skinId, opts)
 		end
 	end
 	function fig:Destroy() model:Destroy() end
+	fig._pose, fig._list = pose, list -- debug / offline pose checks
 	fig:Update(0, 0)
 	return fig
 end
