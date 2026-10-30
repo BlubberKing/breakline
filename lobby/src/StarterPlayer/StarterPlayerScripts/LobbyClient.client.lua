@@ -1,10 +1,10 @@
 -- LobbyClient v5.1 "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
 -- Look: flat, sharp, dark, on-brand (black / white / Breakline red), built like a big-shooter front end.
--- Motion is kept small: buttons grow a few percent on hover (smooth Quint ease), the galaxy and the planet ring turn very slowly.
+-- Motion is kept small: buttons grow a few percent on hover (smooth Quint ease), the galaxy turns very slowly.
 -- Layout (1920x1080 canvas, scaled to the screen, 56 px outer margin):
 --   * home HUD (walking around the lobby): static BREAKLINE logo top left, souls top right,
 --       bottom right = (hanger) skins circle | PLAY block | (+) invite circle
---   * PLAY screen: black starry space with a slowly turning galaxy + a ringed planet, your squad on three stone pillars
+--   * PLAY screen: black starry space with a slowly turning galaxy, your squad on three stone pillars
 --       top bar   : logo | souls, ESC BACK | thin rule
 --       left      : GAME MODES tab. BREAKLINE on top (click = mode info), locked "coming soon" placeholder modes stacked under it
 --       bottom    : LOADOUT dock in the middle: [move]  [primary]  [gadget][gadget][gadget] | [reserve][reserve][reserve]
@@ -493,7 +493,7 @@ local STAGE_CX = math.floor((MID_X + RIGHT) / 2) -- 1122: the squad is centred i
 -- ----- background: a slowly turning galaxy behind the squad (2D, canvas space) -----
 local galaxy = new("Frame", { Size = UDim2.fromOffset(1920, 1080), BackgroundTransparency = 1, ZIndex = 0 }, stage)
 local galaxyDots = {}
-local GAL_C, GAL_TILT, GAL_SQUASH = Vector2.new(STAGE_CX, 430), math.rad(-13), 0.34
+local GAL_C, GAL_TILT, GAL_SQUASH = Vector2.new(STAGE_CX + 60, 440), math.rad(-14), 0.4
 do
 	-- soft elliptical glow: a horizontal fade inside a vertically faded CanvasGroup
 	local function glow(w, h, col, transp, dx, dy)
@@ -505,36 +505,40 @@ do
 		new("UIGradient", { Rotation = 0, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0),
 			NumberSequenceKeypoint.new(1, 1) }) }, f)
 	end
-	glow(1300, 420, rgb(70, 92, 150), 0.86)               -- wide cold disk
-	glow(820, 150, rgb(150, 34, 44), 0.9, 120, 20)        -- faint red dust lane (brand color, very low)
-	glow(520, 200, rgb(210, 220, 255), 0.8)               -- inner disk
-	glow(220, 110, rgb(255, 240, 226), 0.55)              -- bright core
+	glow(3100, 980, rgb(38, 50, 96), 0.9)                 -- huge faint halo: the glow reaches across the whole screen
+	glow(2300, 680, rgb(70, 92, 150), 0.84)               -- wide cold disk
+	glow(1500, 250, rgb(150, 34, 44), 0.9, 200, 30)       -- faint red dust lane (brand color, very low)
+	glow(940, 340, rgb(210, 220, 255), 0.78)              -- inner disk
+	glow(400, 180, rgb(255, 240, 226), 0.5)               -- bright core
 	local rng = Random.new(21)
 	local function dot(r, a, size, col, transp)
 		local f = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(size, size), BackgroundColor3 = col,
 			BackgroundTransparency = transp, BorderSizePixel = 0 }, galaxy)
 		-- inner stars orbit faster than outer ones (slow differential spin)
-		table.insert(galaxyDots, { f = f, r = r, a = a, w = 0.05 * (90 / (r + 90)) })
+		table.insert(galaxyDots, { f = f, r = r, a = a, w = 0.045 * (150 / (r + 150)) })
 	end
-	for _ = 1, 70 do -- core
-		local r = math.abs(rng:NextNumber() * rng:NextNumber()) * 90
+	for _ = 1, 100 do -- core
+		local r = math.abs(rng:NextNumber() * rng:NextNumber()) * 160
 		dot(r, rng:NextNumber(0, math.pi * 2), rng:NextInteger(1, 2), rgb(255, 238, 222), rng:NextNumber(0.1, 0.5))
 	end
 	for arm = 0, 1 do -- two spiral arms
-		for _ = 1, 170 do
+		for _ = 1, 260 do
 			local u = rng:NextNumber()
-			local r = 50 + u * 560
+			local r = 80 + u * 1000
 			local a = arm * math.pi + u * 3.6 + (rng:NextNumber() - 0.5) * (0.7 - u * 0.35)
-			r += (rng:NextNumber() - 0.5) * 50
+			r += (rng:NextNumber() - 0.5) * 90
 			local col = (rng:NextNumber() < 0.06) and C.red or rgb(200, 216, 255):Lerp(rgb(255, 240, 228), math.max(0, 0.6 - u))
 			dot(r, a, (rng:NextNumber() < 0.12) and 2 or 1, col, 0.2 + u * 0.55 + rng:NextNumber() * 0.2)
 		end
 	end
-	for _ = 1, 60 do -- loose halo stars
-		dot(rng:NextNumber(80, 640), rng:NextNumber(0, math.pi * 2), 1, rgb(190, 205, 240), rng:NextNumber(0.55, 0.85))
+	for _ = 1, 140 do -- loose halo stars
+		dot(rng:NextNumber(120, 1150), rng:NextNumber(0, math.pi * 2), 1, rgb(190, 205, 240), rng:NextNumber(0.55, 0.85))
 	end
 end
+local lastGal = -1
 local function updateGalaxy(t)
+	if t - lastGal < 0.05 then return end -- it turns so slowly that 20 updates a second look smooth (and it has a lot of stars now)
+	lastGal = t
 	local c, sn = math.cos(GAL_TILT), math.sin(GAL_TILT)
 	for _, d in galaxyDots do
 		local a = d.a + t * d.w
@@ -543,39 +547,6 @@ local function updateGalaxy(t)
 	end
 end
 updateGalaxy(0)
-
--- ----- a small ringed planet, top right, lit from the galaxy side; the ring and a moon drift slowly -----
-local planetVP = new("ViewportFrame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(1730, 262), Size = UDim2.fromOffset(320, 320),
-	BackgroundTransparency = 1, ZIndex = 1, Ambient = rgb(16, 18, 24), LightColor = rgb(255, 244, 236), LightDirection = Vector3.new(-1, -0.25, -0.55) }, stage)
-local planetRing, planetMoon
-do
-	local cam = new("Camera", { FieldOfView = 20, CFrame = CFrame.lookAt(Vector3.new(0, 0, 30), Vector3.zero) }, planetVP)
-	planetVP.CurrentCamera = cam
-	new("Part", { Anchored = true, Shape = Enum.PartType.Ball, Size = Vector3.new(3.4, 3.4, 3.4), Color = rgb(78, 84, 102),
-		Material = Enum.Material.SmoothPlastic, CastShadow = false }, planetVP)
-	new("Part", { Anchored = true, Shape = Enum.PartType.Ball, Size = Vector3.new(3.62, 3.62, 3.62), Color = rgb(120, 170, 235),
-		Material = Enum.Material.SmoothPlastic, Transparency = 0.86, CastShadow = false }, planetVP)
-	planetRing = new("Model", { Name = "Ring" }, planetVP)
-	local rng = Random.new(5)
-	for _ = 1, 110 do
-		local a, r = rng:NextNumber(0, math.pi * 2), rng:NextNumber(2.5, 3.5)
-		local sz = rng:NextNumber(0.05, 0.12)
-		new("Part", { Anchored = true, Shape = Enum.PartType.Ball, Size = Vector3.new(sz, sz, sz), CFrame = CFrame.new(math.cos(a) * r, 0, math.sin(a) * r),
-			Color = (rng:NextNumber() < 0.3) and rgb(150, 200, 240) or rgb(214, 216, 222), Material = Enum.Material.Neon,
-			Transparency = rng:NextNumber(0.1, 0.5), CastShadow = false }, planetRing)
-	end
-	new("Part", { Anchored = true, Size = Vector3.new(0.6, 0.6, 0.6), Transparency = 1, CanCollide = false, Name = "Pivot" }, planetRing)
-	planetRing.PrimaryPart = planetRing.Pivot
-	planetMoon = new("Part", { Anchored = true, Shape = Enum.PartType.Ball, Size = Vector3.new(0.42, 0.42, 0.42), Color = rgb(150, 150, 156),
-		Material = Enum.Material.SmoothPlastic, CastShadow = false }, planetVP)
-end
-local RING_TILT = CFrame.Angles(0, 0, math.rad(-16)) * CFrame.Angles(math.rad(14), 0, 0)
-local function updatePlanet(t)
-	planetRing:PivotTo(RING_TILT * CFrame.Angles(0, t * 0.06, 0))
-	local a = t * 0.11
-	planetMoon.CFrame = RING_TILT * CFrame.new(math.cos(a) * 4.6, math.sin(a) * 0.5, math.sin(a) * 4.6)
-end
-updatePlanet(0)
 
 -- ----- the stage: three pillars in space -----
 local VPW, VPH = 1920, 1080 -- the 3D view is shifted so the squad is centred in the middle area
@@ -1539,7 +1510,7 @@ UIS.InputBegan:Connect(function(input, gpe)
 	end
 end)
 
--- ================= render loop (idle figures + name positions + star breathing + galaxy / planet drift) =================
+-- ================= render loop (idle figures + name positions + star breathing + galaxy drift) =================
 local t0 = os.clock()
 RunService.RenderStepped:Connect(function(dt)
 	if not screenOpen then return end
@@ -1549,7 +1520,6 @@ RunService.RenderStepped:Connect(function(dt)
 		s.f.BackgroundTransparency = math.clamp(s.base + 0.35 * (0.5 + 0.5 * math.sin(t * s.spd + s.ph)), 0, 0.95)
 	end
 	updateGalaxy(t)
-	updatePlanet(t)
 	if view == "home" then
 		for _, s in squad do
 			s.fig:Update(t, dt)
