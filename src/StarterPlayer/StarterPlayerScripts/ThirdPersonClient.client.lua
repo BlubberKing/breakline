@@ -362,7 +362,9 @@ end)
 
 ------------------------------------------------------------------ shots from other players
 Shot.OnClientEvent:Connect(function(char)
-	if typeof(char) ~= "Instance" or char == player.Character or not char.Parent then return end
+	-- v3.8: in third person (the Lobby) you see your OWN muzzle flash + kick too; in locked first person GunClient owns that
+	if typeof(char) ~= "Instance" or not char.Parent then return end
+	if char == player.Character and isFirstPerson(char) then return end
 	local st = getState(char)
 	if st then st.kick = math.min(st.kick + 1, 2.5) end
 
@@ -408,6 +410,7 @@ RunService.RenderStepped:Connect(function()
 	end
 	local char = player.Character
 	if not char then return end
+	if char:GetAttribute("Revealing") == true then return end -- v3.8: RespawnReveal drives the transparency of your own body meanwhile
 	local fp = isFirstPerson(char)
 	local carryingNow = player:GetAttribute("Carrying") == true
 	for _, name in ipairs({ "Gear", "TPGun" }) do
