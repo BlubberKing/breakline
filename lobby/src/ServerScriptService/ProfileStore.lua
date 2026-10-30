@@ -5,7 +5,7 @@
 --   Profiles.Set(player, key, value)    -> marks the key to be saved
 --   Profiles.Increment(player, key, n)  -> number keys
 --   Profiles.Save(player)               -> save now (call before teleporting a player away)
--- Number/string keys are mirrored to Player attributes (Souls, Wins, Losses) so UI can read them.
+-- Number/string keys are mirrored to Player attributes (Souls, Wins, Losses, Skin) so UI + AvatarService can read them.
 -- Needs: Game Settings > Security > "Enable Studio Access to API Services" ON to save from Studio.
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
@@ -17,6 +17,8 @@ local DEFAULTS = {
 	Souls = 0, Wins = 0, Losses = 0,
 	Weapon = "", Sight = "",   -- last equipped loadout (to be wired into GunServer later)
 	Loadout = {},              -- lobby loadout: { Move, Weapon, Gadgets = {3}, Reserve = {3} } (item ids)
+	Skin = "OPERATOR",         -- equipped skin (ReplicatedStorage.Skins). New players start with the default skin.
+	SkinsOwned = {},           -- reserved: skins bought in the shop later (all 3 starter skins are free for now)
 	Cards = {}, Deck = {},     -- reserved for the card system
 }
 
@@ -64,6 +66,7 @@ function M.Load(player)
 	end
 	data = type(data) == "table" and data or {}
 	if data.Souls == nil and type(data.Coins) == "number" then data.Souls = data.Coins end -- old saves: Coins became Souls
+	if type(data.Skin) ~= "string" or data.Skin == "" then data.Skin = nil end -- empty/broken skin = default
 	for k, v in DEFAULTS do
 		if data[k] == nil then data[k] = copy(v) end
 	end
