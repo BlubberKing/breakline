@@ -4,12 +4,15 @@ local C = {}
 
 -- ===== match flow =====
 C.MIN_PLAYERS  = 1   -- players needed to start a round (raise to 2-6 for live games; 1 lets you test alone)
--- Flow: Waiting (loading screen) -> Pregame -> Warp (cutscene) -> Countdown -> Playing -> Result (winner cutscene) -> Summary (souls screen)
+-- Flow: Waiting (loading screen) -> Pregame -> Warp (cutscene) -> Countdown -> Playing -> SlowMo -> Result (winner cutscene) -> Summary (souls screen)
 C.READY_TIMEOUT  = 40  -- seconds to wait for slow clients to finish loading before starting without them
 C.PREGAME_TIME   = 20  -- pre-game screen (loadout + clock)
 C.WARP_TIME      = 9   -- soul flight + run-in cutscene (MatchFlow is timed to this: do not shorten below ~8)
 C.COUNTDOWN_TIME = 3   -- 3-2-1 on the map, everybody frozen
-C.RESULT_TIME    = 3.5 -- winner cutscene before the souls screen
+C.SLOWMO_TIME    = 2.6 -- the moment the round is decided everything slows down (movement, shooting, falling) for this long, then the winner cutscene
+C.SLOWMO_SCALE   = 0.1 -- how slow it gets (0.1 = ten times slower)
+C.SLOWMO_RAMP    = 0.5 -- seconds to ease from normal speed down to SLOWMO_SCALE
+C.RESULT_TIME    = 5   -- winner cutscene (winners sit on thrones) before the souls screen
 C.SUMMARY_MAX    = 60  -- the server never waits longer than this for players to press CONTINUE
 C.SUMMARY_AUTO   = 15  -- the client presses CONTINUE for you this many seconds after the soul count finished
 
