@@ -6,6 +6,7 @@
 --   Skins.NewFigure(parent, skinId, opts)       -> client: a posed showcase figure built from parts (lobby menus / ViewportFrames)
 --       opts = { weapon = "VX9" (optional, real gun model from GunModels), camPos = Vector3 (so the figure can glance at the camera) }
 --       figure:SetRoot(cframe), figure:Update(t, dt), figure:Destroy(), figure.HeadTop (studs above the root)
+--   Skins.Proportions / Skins.ApplyProportions(character) -> v3.2: every player is a bit TALLER and a lot SKINNIER than the stock rig
 -- Adding a skin: add an entry to Skins.List (colors + `card` color), then add its extra gear in DRESS[id] and FIGURE[id].
 local RS = game:GetService("ReplicatedStorage")
 
@@ -37,6 +38,61 @@ for _, s in S.List do
 end
 function S.Is(id) return type(id) == "string" and S.ById[id] ~= nil end
 function S.Get(id) return S.ById[id] or S.ById[S.Default] end
+
+-- =====================================================================================
+-- BODY PROPORTIONS (v3.2): taller + skinnier than the stock blocky R15 rig, head a touch smaller.
+-- Tune these four numbers (1 = stock). They scale the real character (Humanoid scale values) AND the lobby showcase figure.
+-- =====================================================================================
+S.Proportions = { Height = 1.12, Width = 0.84, Depth = 0.88, Head = 0.95 }
+
+-- S.Prepare(char): applies the proportions and WAITS until the rig has actually resized (server). Safe to call from several scripts:
+-- the first caller does the work, the others wait for the "Proportioned" attribute. Anything sized from body parts must call this first.
+function S.Prepare(char)
+	if char:GetAttribute("Proportioned") then return end
+	if char:GetAttribute("Proportioning") then
+		local t0 = os.clock()
+		while char.Parent and not char:GetAttribute("Proportioned") and os.clock() - t0 < 2.5 do task.wait() end
+		return
+	end
+	char:SetAttribute("Proportioning", true)
+	local torso = char:FindFirstChild("UpperTorso") or char:WaitForChild("UpperTorso", 5)
+	if torso and S.ApplyProportions(char) then
+		local before = torso.Size
+		local t0 = os.clock()
+		while char.Parent and os.clock() - t0 < 1.2 and (torso.Size - before).Magnitude < 0.01 do task.wait() end
+		task.wait(); task.wait()
+	end
+	char:SetAttribute("Proportioned", true)
+end
+
+-- adds / updates the Humanoid scale NumberValues. Returns true when something changed (the rig then needs a moment to resize).
+function S.ApplyProportions(char)
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.RigType ~= Enum.HumanoidRigType.R15 then return false end
+	hum.AutomaticScalingEnabled = true
+	local P = S.Proportions
+	local changed = false
+	local function setScale(name, value)
+		local v = hum:FindFirstChild(name)
+		if not v then
+			v = Instance.new("NumberValue")
+			v.Name = name
+			v.Value = value
+			v.Parent = hum
+			changed = true
+		elseif math.abs(v.Value - value) > 1e-4 then
+			v.Value = value
+			changed = true
+		end
+	end
+	setScale("BodyHeightScale", P.Height)
+	setScale("BodyWidthScale", P.Width)
+	setScale("BodyDepthScale", P.Depth)
+	setScale("HeadScale", P.Head)
+	setScale("BodyProportionScale", 0)
+	setScale("BodyTypeScale", 0)
+	return changed
+end
 
 -- =====================================================================================
 -- REAL CHARACTERS (server): weld gear parts onto the body parts. Front of a Roblox character = -Z.
@@ -144,6 +200,11 @@ function S.Dress(char, skinId, accent)
 	local head = char:WaitForChild("Head", 10)
 	local torso = char:FindFirstChild("UpperTorso") or char:WaitForChild("UpperTorso", 3) or char:FindFirstChild("Torso")
 	if not head or not torso or not char.Parent then return end
+
+	-- taller + skinnier body first, then build the gear on the resized parts (gear is sized from the body parts)
+	S.Prepare(char)
+	if not char.Parent then return end
+	torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or torso
 
 	local bc = char:FindFirstChildOfClass("BodyColors")
 	if bc then bc:Destroy() end
@@ -253,24 +314,39 @@ function S.NewFigure(parent, skinId, opts)
 	opts = opts or {}
 	local skin = S.Get(skinId)
 	local c = skin.colors
+	local PR = S.Proportions
+	local sx, sy, sz, hs = PR.Width, PR.Height, PR.Depth, PR.Head
 	local model = Instance.new("Model")
 	model.Name = "Figure_" .. skin.id
 	model.Parent = parent
 	local list = {}
 	local function P(r, y, f) return Vector3.new(-r, y, f) end
-	local function add(group, size, cf, color, neon, shape)
+	local function Q(v) return Vector3.new(v.X * sx, v.Y * sy, v.Z * sz) end -- body-space point -> taller / skinnier
+	-- add(group, size, cframe, color, neon, shape, raw). Everything is authored in the old chunky units and squeezed here
+	-- (body parts by width/height/depth, head parts uniformly). raw = true skips that (gun, hands, arms).
+	local function add(group, size, cf, color, neon, shape, raw)
 		local p = Instance.new("Part")
 		p.Anchored, p.CanCollide, p.CanTouch, p.CanQuery, p.CastShadow = true, false, false, false, false
 		if shape then p.Shape = shape end
-		p.Size, p.Color = size, color
+		local rel = cf
+		if raw then
+			p.Size = size
+		elseif group == "head" then
+			p.Size = size * hs
+			rel = CFrame.new(cf.Position * hs) * cf.Rotation
+		else
+			p.Size = Vector3.new(size.X * sx, size.Y * sy, size.Z * sz)
+			rel = CFrame.new(Q(cf.Position)) * cf.Rotation
+		end
+		p.Color = color
 		p.Material = neon and NEON or SP
 		p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
 		p.Parent = model
-		table.insert(list, { part = p, rel = cf, group = group })
+		table.insert(list, { part = p, rel = rel, group = group })
 		return p
 	end
 	local function bar(a, b, t, color)
-		add("body", Vector3.new(t, t, (b - a).Magnitude), CFrame.lookAt((a + b) / 2, b), color)
+		add("body", Vector3.new(t, t, (b - a).Magnitude), CFrame.lookAt((a + b) / 2, b), color, false, nil, true)
 	end
 
 	-- legs, hips, torso, shoulders (shared by every skin)
@@ -287,9 +363,10 @@ function S.NewFigure(parent, skinId, opts)
 	add("body", Vector3.new(0.5, 0.3, 0.5), CFrame.new(0, 5.2, 0), c.Trim)
 	FIGURE[skin.id](add, P, c)
 
-	-- the gun, held across the chest pointing forward-left and a little down
-	local A, B = P(0.7, 4.5, 0.55), P(-0.5, 3.9, 3.6)
-	local rf = CFrame.lookAt(A, B) * CFrame.Angles(0, math.pi, 0) -- local +Z = toward the muzzle
+	-- the gun, held across the chest pointing forward-left and a little down. It is big on purpose: a real rifle next to a slim body.
+	local GUN_S = 1.6
+	local A, Bp = Q(P(0.7, 4.5, 0.55)), Q(P(-0.5, 3.9, 3.9))
+	local rf = CFrame.lookAt(A, Bp) * CFrame.Angles(0, math.pi, 0) -- local +Z = toward the muzzle
 	local rHand = (rf * CFrame.new(0, -0.5, 0.4)).Position
 	local lHand = (rf * CFrame.new(0, -0.25, 2.0)).Position
 	local GM = opts.weapon and getGunModels()
@@ -299,18 +376,18 @@ function S.NewFigure(parent, skinId, opts)
 		desc = ok and d or nil
 	end
 	if desc and desc.Points and desc.Points.Grip and desc.Points.Fore then
-		local s = 1.45
-		local rot = CFrame.lookAt(Vector3.zero, (B - A).Unit) -- gun -Z (downrange) along the aim line
+		local s = GUN_S
+		local rot = CFrame.lookAt(Vector3.zero, (Bp - A).Unit) -- gun -Z (downrange) along the aim line
 		local gunCF = CFrame.new(rHand) * rot * CFrame.new(-desc.Points.Grip.Position * s)
 		for _, d in desc.Parts do
 			if not d.Reticle and d.Group ~= "aux" and (d.Transparency or 0) < 1 then
-				add("body", d.Size * s, gunCF * (CFrame.new(d.CF.Position * s) * d.CF.Rotation), d.Glow and c.Accent or d.Color, d.Glow or d.Material == NEON, d.Shape)
+				add("body", d.Size * s, gunCF * (CFrame.new(d.CF.Position * s) * d.CF.Rotation), d.Glow and c.Accent or d.Color, d.Glow or d.Material == NEON, d.Shape, true)
 			end
 		end
 		lHand = gunCF * (desc.Points.Fore.Position * s)
 		if (lHand - rHand).Magnitude < 0.9 then lHand = rHand + (lHand - rHand).Unit * 0.9 + Vector3.new(0, -0.15, 0) end -- pistols: hands together
 	else
-		local function rp(size, cf, color, neon) add("body", size, rf * cf, color, neon) end
+		local function rp(size, cf, color, neon) add("body", size, rf * cf, color, neon, nil, true) end
 		rp(Vector3.new(0.34, 0.5, 1.7), CFrame.new(0, 0, 0.95), rgb(36, 40, 52))
 		rp(Vector3.new(0.28, 0.55, 0.9), CFrame.new(0, -0.02, -0.4), c.Trim)
 		rp(Vector3.new(0.3, 0.36, 1.15), CFrame.new(0, -0.02, 2.35), c.Armor)
@@ -318,21 +395,23 @@ function S.NewFigure(parent, skinId, opts)
 		rp(Vector3.new(0.24, 0.85, 0.34), CFrame.new(0, -0.62, 1.15) * CFrame.Angles(math.rad(-10), 0, 0), c.Trim)
 		rp(Vector3.new(0.38, 0.06, 1.2), CFrame.new(0, 0.08, 1.0), c.Accent, true)
 	end
-	local SR, SL = P(1.55, 5.0, 0), P(-1.55, 5.0, 0)
-	local ER = (SR + rHand) / 2 + P(0.6, -0.5, -0.3)
-	local EL = (SL + lHand) / 2 + P(-0.7, -0.6, -0.1)
-	bar(SR, ER, 0.75, c.Suit); bar(ER, rHand, 0.7, c.Suit)
-	bar(SL, EL, 0.75, c.Suit); bar(EL, lHand, 0.7, c.Suit)
-	add("body", Vector3.new(0.6, 0.6, 0.6), CFrame.new(rHand), c.Trim)
-	add("body", Vector3.new(0.6, 0.6, 0.6), CFrame.new(lHand), c.Trim)
+	local SR, SL = Q(P(1.55, 5.0, 0)), Q(P(-1.55, 5.0, 0))
+	local ER = (SR + rHand) / 2 + Q(P(0.6, -0.5, -0.3))
+	local EL = (SL + lHand) / 2 + Q(P(-0.7, -0.6, -0.1))
+	bar(SR, ER, 0.62, c.Suit); bar(ER, rHand, 0.56, c.Suit)
+	bar(SL, EL, 0.62, c.Suit); bar(EL, lHand, 0.56, c.Suit)
+	add("body", Vector3.new(0.5, 0.5, 0.5), CFrame.new(rHand), c.Trim, false, nil, true)
+	add("body", Vector3.new(0.5, 0.5, 0.5), CFrame.new(lHand), c.Trim, false, nil, true)
 
-	local fig = { Model = model, HeadTop = 7.4, root = CFrame.new() }
+	local NECK = 5.25 * sy
+	local fig = { Model = model, HeadTop = NECK + 1.9 * hs, root = CFrame.new() }
 	local curYaw, curPitch, goYaw, goPitch, nextLook = 0, 0, 0, 0, 0
 	local rng = Random.new()
 	local phase = rng:NextNumber(0, 6)
 	function fig:SetRoot(cf) self.root = cf end
 	function fig:Update(t, dt)
-		local root = self.root * CFrame.new(0, math.sin(t * 1.7 + phase) * 0.04, 0) * CFrame.Angles(0, math.sin(t * 0.5 + phase) * 0.04, 0)
+		-- relaxed idle: slow breathing bob + a gentle sway
+		local root = self.root * CFrame.new(0, math.sin(t * 1.7 + phase) * 0.05, 0) * CFrame.Angles(0, math.sin(t * 0.5 + phase) * 0.05, math.sin(t * 0.9 + phase) * 0.012)
 		if t >= nextLook then
 			goYaw = math.rad(rng:NextNumber(-45, 45))
 			goPitch = math.rad(rng:NextNumber(-6, 10))
@@ -346,7 +425,7 @@ function S.NewFigure(parent, skinId, opts)
 		local k = 1 - math.exp(-4 * (dt or 0))
 		curYaw += (goYaw - curYaw) * k
 		curPitch += (goPitch - curPitch) * k
-		local headCF = root * CFrame.new(0, 5.25, 0) * CFrame.Angles(curPitch, curYaw, 0)
+		local headCF = root * CFrame.new(0, NECK, 0) * CFrame.Angles(curPitch, curYaw, 0)
 		for _, e in list do
 			e.part.CFrame = (e.group == "head" and headCF or root) * e.rel
 		end
