@@ -1,5 +1,7 @@
--- LoadingScreen v1 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
--- Minimal black screen: the big BREAKLINE logo in the middle (its slash explodes at both ends) and one line of text under it that
+-- LoadingScreen v2 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- v3.7: new slim logo (no explosions): BREAK flies in from the left, LINE from the right, they meet and the red slash draws in with
+-- light flowing through it; on exit the slash flares and the words fly apart before the screen fades.
+-- Minimal black screen: the big BREAKLINE logo in the middle and one line of text under it that
 -- tells the player what is happening ("LOADING", "LOADING MAP", "WAITING FOR PLAYERS  3 / 6", "ALL PLAYERS LOADED").
 -- When this client has finished loading it tells the server (MatchRemotes.ClientReady). The server starts the pre-game screen once everyone
 -- is ready; this screen then fades out and MatchFlow takes over.
@@ -39,8 +41,8 @@ for _ = 1, 30 do
 end
 local logoSize = math.clamp(math.floor(vh * 0.2), 64, 230)
 
-local fx = UI.new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 5 }, root) -- explosion sparks are drawn here
-local logo, stopLogo = UI.Logo(root, logoSize, fx, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, -math.floor(logoSize * 0.2)) })
+local logo, logoApi = UI.Logo(root, logoSize, { Position = UDim2.new(0.5, 0, 0.5, -math.floor(logoSize * 0.2)) }, "center")
+task.spawn(logoApi.intro, 1.2)
 
 local label = UI.new("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, math.floor(logoSize * 0.78)),
 	Size = UDim2.fromOffset(900, 36), BackgroundTransparency = 1, Text = "LOADING", TextSize = 22, FontFace = F.M, TextColor3 = C.dim }, root)
@@ -72,9 +74,13 @@ local function setStatus(text, withDots)
 end
 
 local function finish()
-	stopLogo()
-	TweenService:Create(root, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 1 }):Play()
-	task.wait(0.9)
+	TweenService:Create(label, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
+	TweenService:Create(bar, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
+	TweenService:Create(fill, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
+	logoApi.outro(0.6)
+	TweenService:Create(root, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 1 }):Play()
+	task.wait(0.55)
+	logoApi.stop()
 	gui:Destroy()
 end
 
