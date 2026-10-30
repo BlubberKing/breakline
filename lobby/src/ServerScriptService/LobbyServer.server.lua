@@ -82,7 +82,20 @@ SetLoadoutR.OnServerEvent:Connect(function(player, l)
 	Profiles.Set(player, "Weapon", clean.Weapon) -- what Breakline reads
 	publishLoadout(player, clean)
 end)
-Players.PlayerRemoving:Connect(function(p) lastLoadout[p] = nil end)
+-- ===== skins (Skins tab) =====
+-- Saved in the shared profile as "Skin" (ProfileStore mirrors it to the Player attribute "Skin"; AvatarService re-dresses the character).
+local Skins = require(RS:WaitForChild("Skins"))
+local SetSkinR = RS:WaitForChild("LobbyRemotes"):WaitForChild("SetSkin")
+local lastSkin = {}
+SetSkinR.OnServerEvent:Connect(function(player, id)
+	if os.clock() - (lastSkin[player] or 0) < 0.3 then return end
+	lastSkin[player] = os.clock()
+	if not Skins.Is(id) then return end
+	if not Profiles.Get(player, "Loadout") then return end -- profile not loaded yet
+	Profiles.Set(player, "Skin", id)
+end)
+
+Players.PlayerRemoving:Connect(function(p) lastLoadout[p] = nil lastSkin[p] = nil end)
 
 -- ===== queue remote =====
 QueueR.OnServerEvent:Connect(function(player, on)
