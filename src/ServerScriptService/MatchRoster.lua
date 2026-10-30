@@ -68,6 +68,12 @@ local function sendToLobby(list)
 	for _, p in list do if p.Parent then p:Kick("Match over. Rejoin the game to go back to the lobby.") end end
 end
 
+-- one player pressed CONTINUE on the souls screen (never teleports in Studio)
+function R.SendOne(player)
+	if RunService:IsStudio() then return end
+	task.defer(sendToLobby, { player })
+end
+
 -- Match finished: save profiles are handled by ProfileStore on leave; just send everyone home.
 function R.ReturnAll()
 	sendToLobby(Players:GetPlayers())
