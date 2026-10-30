@@ -1,4 +1,4 @@
--- MatchFlow v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
+-- MatchFlow v1.1 (v3.8: cursor fix on menu screens, XP bar on the summary) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
 -- Everything that happens around the match, driven by ReplicatedStorage.MatchState.Phase (set by MatchServer):
 --   Pregame   (20 s)  you + teammates stand side by side, loadout dock at the bottom (changeable), clock on top, big numbers flash for 5..1
 --   Warp      (9 s)   fade to black -> your soul lights up and flies to a small white door -> flash -> FIRST PERSON (v3.7): you sprint
@@ -21,6 +21,7 @@ local Skins = require(RS:WaitForChild("Skins"))
 local Catalog = require(RS:WaitForChild("LobbyCatalog"))
 local C = require(RS:WaitForChild("MatchConfig"))
 local TimeScale = require(RS:WaitForChild("TimeScale"))
+local Levels = require(RS:WaitForChild("Levels")) -- v3.8: XP bar on the summary screen
 local Sfx = require(RS:WaitForChild("Sfx"))
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
 local State = RS:WaitForChild("MatchState")
@@ -78,7 +79,12 @@ end)
 local phaseToken, lastPhase = 0, nil
 local function alive(token) return token == phaseToken end
 
-local function setModal(on) modal.Visible = on end
+-- v3.8: besides freeing the mouse, tell GunClient a menu is open (GunMenuOpen): it shows the cursor and ignores clicks.
+-- (Before, the cursor stayed hidden on the loadout + summary screens and every click fired your gun.)
+local function setModal(on)
+	modal.Visible = on
+	player:SetAttribute("GunMenuOpen", on or nil)
+end
 
 -- ---- world helpers used by the run-in shot ----
 local hiddenGuis, warpFolder = {}, nil
@@ -373,6 +379,9 @@ local function runPregame(token)
 		local it = id ~= "" and Catalog.ById[id] or nil
 		if it and it.kind == "weapon" then
 			gunPicture(t.content, it.id)
+		elseif it and it.kind == "move" then -- v3.8: drawn ability icon
+			local ic = UI.AbilityIcon(t.content, it.id, 46, it.color)
+			ic.AnchorPoint, ic.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.4)
 		elseif it then
 			label(t.content, it.glyph, 30, F.H, it.color, { Size = UDim2.new(1, 0, 0.7, 0) })
 		else
@@ -434,6 +443,10 @@ local function runPregame(token)
 			local st = new("UIStroke", { Color = (it and it.id == cur or (not it and cur == "")) and K.red or K.line, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
 			local art = new("Frame", { Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 0, 78), BackgroundTransparency = 1, ZIndex = 15 }, b)
 			if it and it.kind == "weapon" then gunPicture(art, it.id)
+			elseif it and it.kind == "move" then
+				local ic = UI.AbilityIcon(art, it.id, 52, it.color)
+				ic.AnchorPoint, ic.Position, ic.ZIndex = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), 15
+				for _, d in ic:GetDescendants() do if d:IsA("GuiObject") then d.ZIndex = 15 end end
 			elseif it then label(art, it.glyph, 34, F.H, it.color, { Size = UDim2.fromScale(1, 1), ZIndex = 15 })
 			else label(art, "NONE", 22, F.H, K.mute, { Size = UDim2.fromScale(1, 1), ZIndex = 15 }) end
 			label(b, it and string.upper(it.name) or "EMPTY", 16, F.H, K.text, { Position = UDim2.fromOffset(4, 92), Size = UDim2.new(1, -8, 0, 22), ZIndex = 15 })
@@ -1095,6 +1108,46 @@ local function runSummary(token)
 	local timerBg = new("Frame", { Position = UDim2.fromOffset(PX + 560, counterY + 132), Size = UDim2.fromOffset(240, 3), BackgroundColor3 = K.line, BorderSizePixel = 0, ZIndex = 9, Visible = false }, cv)
 	local timerFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = K.red, BorderSizePixel = 0, ZIndex = 10 }, timerBg)
 
+	-- ===== v3.8: XP bar (very bottom of the reward info). It fills up while the stat rows pop in. =====
+	local xpGain = math.max(0, math.floor(res.xp or 0))
+	local xpStart = math.max(0, math.floor(res.xpBefore or 0))
+	local xpY = counterY + 158
+	local xpHolder = new("Frame", { Position = UDim2.fromOffset(PX, xpY), Size = UDim2.fromOffset(PW, 74), BackgroundTransparency = 1, ZIndex = 9, Visible = xpGain > 0 }, cv)
+	local xpLevel = label(xpHolder, "LV 1", 30, F.H, K.text, { Size = UDim2.fromOffset(200, 34), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 10 })
+	local xpGainLbl = label(xpHolder, "+0 XP", 24, F.M, K.soul, { Position = UDim2.new(1, -300, 0, 4), Size = UDim2.fromOffset(300, 28), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 10 })
+	local xpBack = new("Frame", { Position = UDim2.fromOffset(0, 40), Size = UDim2.fromOffset(PW, 16), BackgroundColor3 = K.panel3, BorderSizePixel = 0, ZIndex = 10 }, xpHolder)
+	new("UIStroke", { Color = K.line2, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, xpBack)
+	local xpFill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = K.soul, BorderSizePixel = 0, ZIndex = 11 }, xpBack)
+	new("UIGradient", { Color = ColorSequence.new(K.soul, K.soulPale), Rotation = 0 }, xpFill)
+	local xpNums = label(xpHolder, "", 14, F.M, K.dim, { Position = UDim2.fromOffset(0, 58), Size = UDim2.fromOffset(PW, 16), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 10 })
+	local xpProgress, xpShown = 0, 0 -- progress 0..1 of this match's XP that is "earned" on screen so far
+	local lastLevel = (Levels.FromXp(xpStart))
+	local function paintXp()
+		local total = xpStart + xpGain * xpShown
+		local lvl, into, need = Levels.FromXp(math.floor(total + 0.0001))
+		if lvl > lastLevel then
+			lastLevel = lvl
+			sfx("RoundWin")
+			xpLevel.TextColor3 = K.gold
+			TweenService:Create(xpLevel, TweenInfo.new(0.9), { TextColor3 = K.text }):Play()
+		end
+		xpLevel.Text = (lvl > (Levels.FromXp(xpStart)) and "LEVEL UP!  LV " or "LV ") .. lvl
+		xpFill.Size = UDim2.fromScale(math.clamp(into / math.max(need, 1), 0, 1), 1)
+		xpGainLbl.Text = ("+%d XP"):format(math.floor(xpGain * xpShown + 0.5))
+		xpNums.Text = lvl >= Levels.MAX and "MAX LEVEL" or ("%d / %d"):format(into, need)
+	end
+	paintXp()
+	task.spawn(function()
+		while alive(token) do
+			local dt = task.wait()
+			if xpShown ~= xpProgress then
+				xpShown += (xpProgress - xpShown) * math.min(1, dt * 4.5)
+				if math.abs(xpProgress - xpShown) < 0.002 then xpShown = xpProgress end
+				paintXp()
+			end
+		end
+	end)
+
 	local function doContinue()
 		if sent then return end
 		sent = true
@@ -1110,15 +1163,17 @@ local function runSummary(token)
 	-- reveal sequence
 	task.spawn(function()
 		task.wait(0.8)
-		for _, pop in rowsOut do
+		for i, pop in rowsOut do
 			if not alive(token) then return end
 			pop()
+			xpProgress = i / (#rowsOut + 1) -- the XP bar climbs with every stat row
 			task.wait(0.46)
 		end
 		if not alive(token) then return end
 		task.wait(0.15)
 		sfx("Notify")
 		tween(totalUS, POP, { Scale = 1 })
+		xpProgress = 1
 		task.wait(0.6)
 		if not alive(token) then return end
 		iconHolder.Visible, numLabel.Visible = true, true
