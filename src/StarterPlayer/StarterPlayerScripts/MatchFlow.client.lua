@@ -1,7 +1,8 @@
 -- MatchFlow v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
 -- Everything that happens around the match, driven by ReplicatedStorage.MatchState.Phase (set by MatchServer):
 --   Pregame   (20 s)  you + teammates stand side by side, loadout dock at the bottom (changeable), clock on top, big numbers flash for 5..1
---   Warp      (9 s)   fade to black -> your soul lights up and flies to a small white door -> flash -> you + teammates run in to the spawn
+--   Warp      (9 s)   fade to black -> your soul lights up and flies to a small white door -> flash -> FIRST PERSON (v3.7): you sprint
+--                     onto your spawn spot facing the middle wall, teammates sprint in beside you
 --   Countdown (3 s)   3 - 2 - 1 on the real map, everybody frozen on their spawn
 --   Playing           "GO", then the normal match
 --   Result    (3.5 s) cutscene: the winning team celebrates in the middle of the screen
@@ -100,6 +101,8 @@ local function setOthersHidden(hide)
 end
 local warpActive = false
 local function restoreWorld()
+	pcall(function() RunService:UnbindFromRenderStep("BreaklineWarpCam") end) -- first-person run-in camera (v3.7)
+	if player:GetAttribute("CutsceneRun") ~= nil then player:SetAttribute("CutsceneRun", nil) end
 	if warpActive then
 		warpActive = false
 		setOthersHidden(false)
@@ -257,10 +260,31 @@ local function runPregame(token)
 	local root = track(new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(5, 6, 9), BorderSizePixel = 0, ZIndex = 1 }, gui))
 	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(12, 14, 22), rgb(3, 4, 6)) }, root)
 
-	-- huge flashing numbers behind the squad for the last 5 seconds
-	local bigNum = label(root, "", 700, F.H, myCol, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(1100, 800),
-		TextTransparency = 1, ZIndex = 2 })
+	-- v3.7: the last 5 seconds are LOUD. A layer over the squad (under the clock / dock / picker) darkens the scene and shows a huge
+	-- number that slams in every second (white 5-4, team color 3-2-1) with a shock ring and red edge pulses.
+	local cdLayer = makeCanvas(root, 5)
+	local cdDim = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(4000, 3000),
+		BackgroundColor3 = BLACK, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 1 }, cdLayer)
+	local cdTitle = label(cdLayer, "MATCH STARTS IN", 30, F.M, K.text, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 250),
+		Size = UDim2.fromOffset(800, 40), TextTransparency = 1, ZIndex = 4 })
+	local bigNum = label(cdLayer, "", 440, F.H, WHITE, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 500), Size = UDim2.fromOffset(900, 460),
+		TextTransparency = 1, ZIndex = 5 })
+	local bigStroke = new("UIStroke", { Color = BLACK, Thickness = 7, Transparency = 1 }, bigNum)
 	local bigScale = new("UIScale", { Scale = 1 }, bigNum)
+	local cdRing = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 500), Size = UDim2.fromOffset(300, 300),
+		BackgroundTransparency = 1, ZIndex = 3 }, cdLayer)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, cdRing)
+	local cdRingStroke = new("UIStroke", { Color = myCol, Thickness = 6, Transparency = 1 }, cdRing)
+	local edges = {}
+	for i, spec in { { 0, 0, 1, 0, 90 }, { 0, 1, 1, 0, 270 }, { 0, 0, 0, 1, 0 }, { 1, 0, 0, 1, 180 } } do
+		-- top, bottom, left, right glow strips (gradient fades toward the middle of the screen)
+		local horiz = spec[3] == 1
+		local e = new("Frame", { AnchorPoint = Vector2.new(spec[1], spec[2]), Position = UDim2.fromScale(spec[1], spec[2]),
+			Size = horiz and UDim2.new(1, 0, 0.22, 0) or UDim2.new(0.16, 0, 1, 0), BackgroundColor3 = K.red, BackgroundTransparency = 1,
+			BorderSizePixel = 0, ZIndex = 4 }, root)
+		new("UIGradient", { Rotation = spec[5], Transparency = NumberSequence.new(0, 1) }, e)
+		edges[i] = e
+	end
 
 	local scene = newScene(root, 3, true)
 	scene.cam.FieldOfView = 34
@@ -493,12 +517,35 @@ local function runPregame(token)
 				barFill.BackgroundColor3 = K.red
 				clockScale.Scale = 1.35
 				tween(clockScale, POP, { Scale = 1 })
-				-- flashing background number
+				-- the big countdown number slams in
+				local hot = left <= 3
+				local col = hot and myCol:Lerp(K.redHi, 0.25) or WHITE
+				local SLAM = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+				local SETTLE = TweenInfo.new(0.75, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 				bigNum.Text = tostring(left)
-				bigNum.TextTransparency = 0.62
-				bigScale.Scale = 1.18
-				tween(bigNum, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = 0.94 })
-				tween(bigScale, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 })
+				bigNum.TextColor3 = col
+				bigNum.TextTransparency, bigStroke.Transparency = 0, 0.2
+				bigScale.Scale = 1.9
+				tween(bigScale, SLAM, { Scale = 1 })
+				task.delay(0.3, function()
+					if bigNum.Parent and bigNum.Text == tostring(left) then
+						tween(bigNum, SETTLE, { TextTransparency = 0.35 })
+						tween(bigStroke, SETTLE, { Transparency = 0.7 })
+						tween(bigScale, SETTLE, { Scale = 0.9 })
+					end
+				end)
+				tween(cdDim, TweenInfo.new(0.3), { BackgroundTransparency = hot and 0.45 or 0.6 })
+				tween(cdTitle, TweenInfo.new(0.3), { TextTransparency = 0.15 })
+				-- shock ring
+				cdRing.Size = UDim2.fromOffset(300, 300)
+				cdRingStroke.Color, cdRingStroke.Transparency, cdRingStroke.Thickness = col, 0.1, hot and 10 or 6
+				tween(cdRing, TweenInfo.new(0.8, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = UDim2.fromOffset(820, 820) })
+				tween(cdRingStroke, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Transparency = 1, Thickness = 1 })
+				-- red edge pulse (stronger on 3-2-1)
+				for _, e in edges do
+					e.BackgroundTransparency = hot and 0.35 or 0.6
+					tween(e, TweenInfo.new(0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+				end
 				if left <= 3 then closePicker() end
 			end
 		end
@@ -614,9 +661,25 @@ local function runWarp(token)
 	local ignore = { warpFolder }
 	for _, p in Players:GetPlayers() do if p.Character then table.insert(ignore, p.Character) end end
 	floorParams.FilterDescendantsInstances = ignore
-	local RUN_LEN, RUN_TIME = 38, 2.1
-	-- everybody runs the SAME way: forward, from behind, side by side, towards the spot where they spawn.
-	-- "forward" = the way the squad spawns facing (average of the members, so all lanes are parallel)
+	-- v3.7: the run-in is FIRST PERSON. The camera is your eyes: you sprint from behind your finish line onto your spawn spot,
+	-- facing the middle wall, with your gun in the sprint pose (GunClient reads the CutsceneRun attribute). Teammates sprint in
+	-- their own lanes beside you (local figures, a step ahead so you can catch them at the edges of the screen).
+	local RUN_LEN, RUN_TIME, RUN0 = 30, 1.9, 4.65
+	local RUN_P0 = 0.62 -- share of the run at full speed, then an even slow-down onto the spot
+	local RUN_S = 1 / (RUN_P0 + (1 - RUN_P0) / 2)
+	local function runFrac(p) -- 0..1 time -> 0..1 distance (constant speed, then linear deceleration)
+		if p <= RUN_P0 then return RUN_S * p end
+		local q = p - RUN_P0
+		return RUN_S * (RUN_P0 + q - q * q / (2 * (1 - RUN_P0)))
+	end
+	local function runSpeed(p, len) -- studs per second at time fraction p
+		local v = RUN_S * len / RUN_TIME
+		if p <= 0 or p >= 1 then return 0 end
+		if p <= RUN_P0 then return v end
+		return v * (1 - (p - RUN_P0) / (1 - RUN_P0))
+	end
+	-- "forward" = from the spawn line toward the middle wall (read from the wall itself; spawn facing is only the fallback)
+	local wallPart = workspace:FindFirstChild("WallPush") and workspace.WallPush:FindFirstChild("Wall")
 	local entries, sumFwd = {}, Vector3.zero
 	for _, m in members do
 		local ch = m.Character
@@ -628,16 +691,53 @@ local function runWarp(token)
 		end
 	end
 	local commonFwd = sumFwd.Magnitude > 0.01 and sumFwd.Unit or Vector3.new(0, 0, -1)
+	if wallPart and #entries > 0 then
+		local axis = Vector3.new(wallPart.CFrame.LookVector.X, 0, wallPart.CFrame.LookVector.Z)
+		if axis.Magnitude > 0.01 then
+			axis = axis.Unit
+			local avg = Vector3.zero
+			for _, en in entries do avg += en.r.Position end
+			avg /= #entries
+			local toWall = wallPart.Position - avg
+			commonFwd = (toWall:Dot(axis) >= 0) and axis or -axis
+		end
+	end
+	-- keep the run inside the map: stop short of anything solid + visible behind the spawn line
+	local backParams = RaycastParams.new()
+	backParams.FilterType = Enum.RaycastFilterType.Exclude
+	backParams.FilterDescendantsInstances = ignore
+	local function runLength(fromPos)
+		local len = RUN_LEN
+		local o = fromPos + Vector3.new(0, 3, 0)
+		for _ = 1, 6 do
+			local hit = workspace:Raycast(o, -commonFwd * len, backParams)
+			if not hit then break end
+			if hit.Instance.Transparency < 0.9 and hit.Instance.CanCollide then
+				len = math.max(8, (hit.Position - o).Magnitude - 2.5)
+				break
+			end
+			o = hit.Position - commonFwd * 0.05 -- invisible part (boundary, MapBounds): look past it
+		end
+		return len
+	end
+	local me
 	for i, en in entries do
 		local r = en.r
 		local hit = workspace:Raycast(r.Position, Vector3.new(0, -14, 0), floorParams)
 		local floorY = hit and hit.Position.Y or (r.Position.Y - 4.4)
 		local endPos = Vector3.new(r.Position.X, floorY, r.Position.Z)
-		local fig = Skins.NewFigure(warpFolder, skinOf(en.m), { weapon = weaponOf(en.m), still = true })
-		table.insert(figs, { fig = fig, endPos = endPos, fwd = commonFwd, delay = (i - 1) * 0.06, landed = false })
+		local len = runLength(endPos)
+		if en.m == player then
+			local head = en.m.Character:FindFirstChild("Head")
+			local eyeH = head and math.clamp(head.Position.Y - floorY + 0.1, 4, 8) or 5.8
+			me = { endPos = endPos, eyeH = eyeH, len = len }
+		else
+			local fig = Skins.NewFigure(warpFolder, skinOf(en.m), { weapon = weaponOf(en.m), still = true })
+			table.insert(figs, { fig = fig, endPos = endPos, len = len, delay = -0.18 - (i - 1) * 0.04, landed = false })
+		end
 	end
-	if #figs == 0 then
-		-- no characters yet: just reveal the map
+	if not me then
+		-- our character is not there yet: just reveal the map
 		tween(flash, TweenInfo.new(0.5), { BackgroundTransparency = 1 })
 		waitUntil(C.WARP_TIME)
 		restoreWorld()
@@ -646,66 +746,66 @@ local function runWarp(token)
 	warpActive = true
 	hideGuis()
 	camera.CameraType = Enum.CameraType.Scriptable
-	local avgFwd = commonFwd
-	local RUN0 = 4.75
-	local function centroid(timeNow)
-		local c = Vector3.zero
-		for _, f in figs do
-			local p = math.clamp((timeNow - RUN0 - f.delay) / RUN_TIME, 0, 1)
-			local e = 1 - (1 - p) ^ 1.6
-			c += f.endPos - f.fwd * RUN_LEN * (1 - e)
-		end
-		return c / #figs
-	end
-	local c0 = centroid(RUN0)
-	local camP = c0 - avgFwd * 15 + Vector3.new(0, 7, 0)
 	local function landRing(pos)
 		local up = CFrame.Angles(0, 0, math.rad(90))
 		local ring = part(warpFolder, Vector3.new(0.25, 3, 3), CFrame.new(pos + Vector3.new(0, 0.2, 0)) * up, myCol, true, 0.1, Enum.PartType.Cylinder)
 		tween(ring, TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = Vector3.new(0.25, 26, 26), Transparency = 1 })
 		task.delay(0.6, function() ring:Destroy() end)
 	end
-	-- light beams where each figure arrives from
+	-- light beams where the teammates come from
 	for _, f in figs do
-		local sp = f.endPos - f.fwd * RUN_LEN
+		local sp = f.endPos - commonFwd * f.len
 		local beam = part(warpFolder, Vector3.new(3, 90, 3), CFrame.new(sp + Vector3.new(0, 45, 0)), WHITE, true, 0.1)
 		tween(beam, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Transparency = 1, Size = Vector3.new(0.4, 90, 0.4) })
 		task.delay(1, function() beam:Destroy() end)
 	end
 
-	local hideTimer = 0
+	local stepPhase, bobAmt, myLanded = 0, 0, false
+	local lookCF = CFrame.lookAt(Vector3.zero, commonFwd)
+	RunService:BindToRenderStep("BreaklineWarpCam", Enum.RenderPriority.Camera.Value, function(dt)
+		local t = T()
+		-- you
+		local p = math.clamp((t - RUN0) / RUN_TIME, 0, 1)
+		local speed = runSpeed(p, me.len)
+		local pos = me.endPos - commonFwd * me.len * (1 - runFrac(p))
+		player:SetAttribute("CutsceneRun", speed)
+		stepPhase += dt * speed * 0.62
+		bobAmt += (math.clamp(speed / 20, 0, 1.2) - bobAmt) * (1 - math.exp(-dt * 8))
+		local b = bobAmt
+		local bob = CFrame.new(math.sin(stepPhase) * 0.09 * b, -math.abs(math.cos(stepPhase)) * 0.22 * b + 0.1 * b, 0)
+			* CFrame.Angles(math.rad(-2.5 * b - math.abs(math.cos(stepPhase)) * 0.6 * b), 0, math.rad(math.sin(stepPhase) * 0.9 * b))
+		local breathe = CFrame.Angles(math.rad(math.sin(t * 1.6) * 0.35 * (1 - b)), math.rad(math.sin(t * 0.7) * 0.6 * (1 - b)), 0)
+		camera.CFrame = CFrame.new(pos + Vector3.new(0, me.eyeH, 0)) * lookCF * bob * breathe
+		if p >= 1 and not myLanded then
+			myLanded = true
+			landRing(me.endPos)
+		end
+	end)
 	renderFns.warp = function(dt)
 		local t = T()
-		hideTimer += dt
 		setOthersHidden(true)
 		for _, f in figs do
 			local p = math.clamp((t - RUN0 - f.delay) / RUN_TIME, 0, 1)
-			local e = 1 - (1 - p) ^ 1.6
-			local pos = f.endPos - f.fwd * RUN_LEN * (1 - e)
+			local pos = f.endPos - commonFwd * f.len * (1 - runFrac(p))
 			local running = p > 0 and p < 1
-			local bob = running and math.abs(math.sin((t - RUN0) * 15)) * 0.35 or 0
-			local lean = running and 0.26 * (1 - p ^ 3) or 0
-			f.fig.run = running and 1 or 0
+			local spd = runSpeed(p, f.len)
+			local bob = running and math.abs(math.sin((t - RUN0) * 15)) * 0.3 * math.clamp(spd / 18, 0, 1) or 0
+			local lean = running and 0.24 * math.clamp(spd / 18, 0, 1) or 0
+			f.fig.run = running and math.clamp(spd / 14, 0.3, 1) or 0
 			f.fig.runPhase = (t - RUN0) * 15
-			f.fig:SetRoot(faceDir(pos + Vector3.new(0, bob, 0), f.fwd) * CFrame.Angles(lean, 0, 0))
+			f.fig:SetRoot(faceDir(pos + Vector3.new(0, bob, 0), commonFwd) * CFrame.Angles(lean, 0, 0))
 			f.fig:Update(t, dt)
 			if p >= 1 and not f.landed then
 				f.landed = true
 				landRing(f.endPos)
 			end
 		end
-		local cNow = centroid(t)
-		local drift = math.clamp((t - (RUN0 + RUN_TIME)) / 1.5, 0, 1)
-		local target = cNow - avgFwd * (15 - 4 * drift) + Vector3.new(0, 7 - 2.2 * drift, 0)
-		camP = camP:Lerp(target, 1 - math.exp(-dt * 4))
-		camera.CFrame = CFrame.lookAt(camP, cNow + avgFwd * 12 + Vector3.new(0, 3.2, 0))
-		camera.FieldOfView = 68 - 8 * drift
 	end
 	tween(flash, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
 
-	-- 4) final flash cut back to the normal first-person view
-	if not waitUntil(C.WARP_TIME - 0.28) then return end
-	tween(flash, TweenInfo.new(0.2), { BackgroundTransparency = 0 })
+	-- 4) soft cut back to the normal first-person view (you are already standing on your spot, looking at the wall)
+	if not waitUntil(C.WARP_TIME - 0.3) then return end
+	tween(flash, TweenInfo.new(0.2), { BackgroundTransparency = 0.45 })
 	if not waitUntil(C.WARP_TIME - 0.05) then return end
 	renderFns.warp = nil
 	restoreWorld()
@@ -930,8 +1030,7 @@ local function runSummary(token)
 	renderFns.summary = function(dt)
 		local t = os.clock() - t0
 		scene.cam.CFrame = CFrame.lookAt(Vector3.new(0, 4.4, 17), Vector3.new(0, 4.1, 0))
-		local hop = won and math.abs(math.sin(t * 3)) * 0.9 or 0
-		fig:SetRoot(CFrame.new(0, hop, 0) * figBase)
+		fig:SetRoot(figBase) -- v3.7: stands still (no hopping), only breathes / glances around
 		fig:Update(t, dt)
 	end
 
