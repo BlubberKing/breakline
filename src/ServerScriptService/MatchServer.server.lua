@@ -254,6 +254,20 @@ local function setPhase(name, duration)
 	stateFolder:SetAttribute("Phase", name)
 end
 
+-- slow motion: gravity scales with the square of the time scale, so jumps and falls take 1/scale as long (clients slow walking + shooting)
+do
+	local TimeScale = require(RS:WaitForChild("TimeScale"))
+	local baseGravity = workspace.Gravity
+	game:GetService("RunService").Heartbeat:Connect(function()
+		if phase == "SlowMo" then
+			local s = TimeScale.Get()
+			workspace.Gravity = baseGravity * s * s
+		elseif workspace.Gravity ~= baseGravity then
+			workspace.Gravity = baseGravity
+		end
+	end)
+end
+
 local function notify(text, color)
 	NotifyRemote:FireAllClients(text, color or Color3.new(1, 1, 1))
 end
@@ -703,7 +717,7 @@ end
 local function endRound(winner)
 	if phase ~= "Playing" then return end
 	stateFolder:SetAttribute("Winner", winner or "")
-	setPhase("Result", C.RESULT_TIME)
+	setPhase("SlowMo", C.SLOWMO_TIME) -- the main loop moves on to "Result" when the slow motion is over
 	if winner then notify(winner:upper() .. " WINS", TEAM_COLOR[winner]) end
 	-- rewards go into the shared profile (saved when the player leaves / returns to the lobby)
 	table.clear(results)
@@ -1067,7 +1081,9 @@ task.spawn(function()
 				task.wait(0.25)
 				if not enough() then endRound(nil) end
 			end
-			task.wait(C.RESULT_TIME) -- winner cutscene
+			task.wait(C.SLOWMO_TIME) -- everything slows down...
+			setPhase("Result", C.RESULT_TIME)
+			task.wait(C.RESULT_TIME) -- ...then the winner cutscene
 			-- ===== Summary: souls screen, wait for CONTINUE (or the time limit) =====
 			setPhase("Summary", C.SUMMARY_MAX)
 			local s0 = os.clock()
