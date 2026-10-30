@@ -1,4 +1,6 @@
--- GunClient v3.2: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
+-- GunClient v3.3: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
+-- v3.3: never changes mouse sensitivity (your Roblox setting is used as-is, hip and aim); the old ammo panel is gone,
+--       ammo/weapon info is published as local Player attributes (HUDWeapon, HUDAmmo, HUDMag, HUDReload, HUDMode) for MatchHUD.
 -- Live weapon/sight switching via Player attributes "Weapon" / "Sight" (set by the server, see GunServer).
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -45,6 +47,7 @@ local rad = math.rad
 
 player.CameraMode = Enum.CameraMode.LockFirstPerson
 UIS.MouseIconEnabled = false
+UIS.MouseDeltaSensitivity = 1 -- never scaled: sensitivity = the player's own Roblox setting (also while aiming / scoped)
 
 -- ================= HUD =================
 local gui = Instance.new("ScreenGui")
@@ -191,6 +194,7 @@ panel.Size = UDim2.fromOffset(250, 84)
 panel.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
 panel.BackgroundTransparency = 0.35
 panel.BorderSizePixel = 0
+panel.Visible = false -- replaced by MatchHUD (bottom-right weapon block); kept so nothing else breaks
 panel.Parent = gui
 local stripe = Instance.new("Frame")
 stripe.Size = UDim2.new(0, 4, 1, 0); stripe.BackgroundColor3 = ACCENT; stripe.BorderSizePixel = 0; stripe.Parent = panel
@@ -288,6 +292,12 @@ local function updateHUD()
 		barFill.BackgroundColor3 = Color3.new(1, 1, 1)
 		barFill.Size = UDim2.fromScale(ammo / cfg.MagSize, 1)
 	end
+	-- local-only attributes (a client never replicates these) read by MatchHUD
+	player:SetAttribute("HUDWeapon", cfg.Name)
+	player:SetAttribute("HUDAmmo", ammo)
+	player:SetAttribute("HUDMag", cfg.MagSize)
+	player:SetAttribute("HUDReload", reloading)
+	player:SetAttribute("HUDMode", modeText() .. " / " .. string.upper(sight.Display or "Iron"))
 end
 
 local function enemyHumanoid(model)
@@ -651,7 +661,6 @@ local function onRender(dt)
 	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
 	mantleAlpha = approach(mantleAlpha, mantling and 1 or 0, dt, 0.1)
-	UIS.MouseDeltaSensitivity = 1 + (adsSens - 1) * aimAlpha
 
 	-- firing
 	local cycling = cfg.Cycle and cfg.Cycle ~= "Slide" and (now - cycleStart) < (cfg.CycleDelay + cfg.CycleTime)
@@ -670,6 +679,7 @@ local function onRender(dt)
 		end
 		barFill.BackgroundColor3 = ACCENT
 		barFill.Size = UDim2.fromScale(math.clamp(reloadU, 0, 1), 1)
+		player:SetAttribute("HUDReloadU", math.clamp(reloadU, 0, 1))
 		if t >= cfg.ReloadTime then
 			reloading = false
 			ammo = cfg.MagSize
