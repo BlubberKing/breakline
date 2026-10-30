@@ -22,6 +22,8 @@ local BoxModel = require(RS:WaitForChild("BoxModel"))
 local PC = require(RS:WaitForChild("PlaceConfig"))                         -- shared with the Lobby place
 local Roster = require(script.Parent:WaitForChild("MatchRoster"))          -- who plays on which team (from the lobby matchmaker)
 local Profiles = require(script.Parent:WaitForChild("ProfileStore"))       -- shared coins / wins
+local Catalog = require(RS:WaitForChild("LobbyCatalog"))                    -- valid loadout items (pre-game loadout changes)
+local HttpService = game:GetService("HttpService")
 local M, BOX = C.MAP, C.BOX
 local rnd = Random.new()
 
@@ -71,6 +73,8 @@ local function remote(name)
 end
 local ThrowRemote, DropRemote, NotifyRemote = remote("Throw"), remote("Drop"), remote("Notify")
 local BoxBreakRemote, SoulRemote = remote("BoxBreak"), remote("SoulFX") -- client-side effects: box destroyed / player died
+local ClientReadyRemote, PregameLoadoutRemote = remote("ClientReady"), remote("PregameLoadout") -- client -> server: finished loading / loadout change
+local ResultRemote, ContinueRemote = remote("MatchResult"), remote("Continue")                  -- server -> client: souls breakdown / client -> server: back to lobby
 remotes.Parent = RS
 
 local stateFolder = Instance.new("Folder")
@@ -82,6 +86,10 @@ stateFolder:SetAttribute("WallFrac", 0) -- -1 .. 1, positive = toward team B's f
 stateFolder:SetAttribute("WallZ", 0)
 stateFolder:SetAttribute("BoxesA", 0)
 stateFolder:SetAttribute("BoxesB", 0)
+stateFolder:SetAttribute("Expected", 0) -- loading screen: players we wait for / players here / players finished loading
+stateFolder:SetAttribute("Present", 0)
+stateFolder:SetAttribute("Ready", 0)
+stateFolder:SetAttribute("AllReady", false)
 stateFolder.Parent = RS
 
 -- gun damage on plugged boxes comes in through this event (fired by GunServer)
@@ -248,6 +256,17 @@ end
 
 local function notify(text, color)
 	NotifyRemote:FireAllClients(text, color or Color3.new(1, 1, 1))
+end
+
+-- per-round stats (read by the souls screen). GunServer adds kills + damage, this script adds boxes.
+local function addStat(player, key, n)
+	if player and player.Parent then player:SetAttribute(key, (player:GetAttribute(key) or 0) + n) end
+end
+local function resetStats()
+	for _, p in Players:GetPlayers() do
+		p:SetAttribute("StatKills", 0); p:SetAttribute("StatDamage", 0)
+		p:SetAttribute("StatPlugged", 0); p:SetAttribute("StatDestroyed", 0)
+	end
 end
 
 -- world CFrame of a hole's box position
@@ -461,7 +480,8 @@ local function leaveHole(rec)
 end
 
 -- the box floats into the hole (physics-driven so it is interpolated smoothly on every client), then locks in
-local function beginPlug(rec, team, i)
+local function beginPlug(rec, team, i, by)
+	if by then addStat(by, "StatPlugged", 1) end
 	local p = rec.part
 	p.AssemblyLinearVelocity, p.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
 	holes[team][i] = rec -- the hole is reserved right away
@@ -549,6 +569,7 @@ local function attach(player, rec)
 end
 
 local function destroyBox(rec, reason)
+	if reason == "shot" and rec.holeTeam then addStat(rec.lastShooter, "StatDestroyed", 1) end
 	if rec.carrier then release(rec.carrier, Vector3.zero, "Loose") end
 	local team = rec.holeTeam
 	local pos = rec.part.Position
@@ -619,6 +640,7 @@ BoxDamage.Event:Connect(function(part, dmg, shooter)
 	if typeof(dmg) ~= "number" or dmg ~= dmg or dmg <= 0 then return end
 	if not shooter or not shooter.Team or shooter.Team.Name == rec.holeTeam then return end
 	rec.hp -= dmg
+	rec.lastShooter = shooter
 	part:SetAttribute("Health", math.max(rec.hp, 0))
 	part:SetAttribute("LastHit", workspace:GetServerTimeNow()) -- makes the face look angry (BoxModel)
 	if rec.hp <= 0 then destroyBox(rec, "shot") end
@@ -652,21 +674,50 @@ DropRemote.OnServerEvent:Connect(function(player)
 end)
 
 -- ===================== round flow =====================
+-- souls for one player: base x (win/loss) x kills x plugged x destroyed x damage. Every row's multiplier is rounded to 2 decimals
+-- BEFORE it is multiplied in, so the numbers the player sees on the souls screen multiply to exactly the total.
+local results = {} -- player -> result table (also sent to the client)
+local function buildReward(p, outcome)
+	local R = C.REWARD
+	local kills = p:GetAttribute("StatKills") or 0
+	local dmg = p:GetAttribute("StatDamage") or 0
+	local plugged = p:GetAttribute("StatPlugged") or 0
+	local destroyed = p:GetAttribute("StatDestroyed") or 0
+	local rows, mult = {}, 1
+	local function add(label, detail, m)
+		m = math.floor(m * 100 + 0.5) / 100
+		mult *= m
+		table.insert(rows, { label = label, detail = detail, mult = m })
+	end
+	if outcome == "win" then add("VICTORY", nil, R.Win)
+	elseif outcome == "loss" then add("DEFEAT", nil, R.Loss)
+	else add("DRAW", nil, R.Draw) end
+	add("KILLS", tostring(kills), 1 + kills * R.PerKill)
+	add("BOXES PLUGGED", tostring(plugged), 1 + plugged * R.PerPlugged)
+	add("BOXES DESTROYED", tostring(destroyed), 1 + destroyed * R.PerDestroyed)
+	add("DAMAGE", tostring(math.floor(dmg)), 1 + math.floor(dmg / 1000) * R.PerThousandDamage)
+	return { outcome = outcome, base = R.Base, rows = rows, mult = math.floor(mult * 100 + 0.5) / 100,
+		souls = math.floor(R.Base * mult + 0.5), kills = kills, plugged = plugged, destroyed = destroyed, damage = math.floor(dmg) }
+end
+
 local function endRound(winner)
 	if phase ~= "Playing" then return end
 	stateFolder:SetAttribute("Winner", winner or "")
 	setPhase("Result", C.RESULT_TIME)
 	if winner then notify(winner:upper() .. " WINS", TEAM_COLOR[winner]) end
-	if winner then -- rewards go into the shared profile (saved when the player leaves / returns to the lobby)
-		for _, p in Players:GetPlayers() do
-			local t = p.Team and p.Team.Name
-			if t and teamObjs[t] and t ~= "Lobby" then
-				if t == winner then
-					Profiles.Increment(p, "Souls", PC.SOULS_WIN); Profiles.Increment(p, "Wins", 1)
-				else
-					Profiles.Increment(p, "Souls", PC.SOULS_LOSS); Profiles.Increment(p, "Losses", 1)
-				end
-			end
+	-- rewards go into the shared profile (saved when the player leaves / returns to the lobby)
+	table.clear(results)
+	for _, p in Players:GetPlayers() do
+		local t = p.Team and p.Team.Name
+		if t and teamObjs[t] and t ~= "Lobby" then
+			local outcome = (not winner and "draw") or (t == winner and "win") or "loss"
+			local r = buildReward(p, outcome)
+			results[p] = r
+			Profiles.Increment(p, "Souls", r.souls)
+			if outcome == "win" then Profiles.Increment(p, "Wins", 1) elseif outcome == "loss" then Profiles.Increment(p, "Losses", 1) end
+			ResultRemote:FireClient(p, r)
+		else
+			ResultRemote:FireClient(p, { outcome = "none", base = 0, rows = {}, mult = 1, souls = 0 })
 		end
 	end
 end
@@ -693,14 +744,26 @@ local function assignTeams()
 	end
 end
 
-local function startRound()
+-- Warp: teams are already set (Pregame). Everyone is respawned on their spawn pad and FROZEN (anchored) while the
+-- cutscene plays on the clients (MatchFlow), then the 3-2-1 countdown, then beginPlay releases them.
+local function setFrozen(on)
+	for _, p in Players:GetPlayers() do
+		local root = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+		if root then root.Anchored = on end
+	end
+end
+local function beginWarp()
 	clearBoxes()
 	wallZ = 0
 	moveWall()
-	assignTeams()
 	stateFolder:SetAttribute("Winner", "")
-	setPhase("Playing", 0)
+	resetStats()
+	setPhase("Warp", C.WARP_TIME)
 	for _, p in Players:GetPlayers() do respawn(p) end
+end
+local function beginPlay()
+	setFrozen(false)
+	setPhase("Playing", 0)
 	for _ = 1, BOX.StartPerSide do spawnPair() end
 	nextSpawnAt = os.clock() + BOX.SpawnInterval
 end
@@ -745,6 +808,7 @@ local function onCharacter(player, char)
 		if root and tn and teamObjs[tn] and tn ~= "Lobby" and char.Parent then
 			char:PivotTo(teamSpawnCF(player, tn))
 		end
+		if root and (phase == "Warp" or phase == "Countdown") then root.Anchored = true end -- frozen until the countdown ends
 	end
 	local function group(part)
 		if part:IsA("BasePart") then part.CollisionGroup = "WPPlayer" end
@@ -767,7 +831,7 @@ local function onPlayer(player)
 	player.Team = lobbyTeam
 	if Roster.Reserved then -- rejoin: back on the roster team
 		local t = Roster.TeamOf(player.UserId)
-		if phase == "Playing" and t and teamObjs[t] then player.Team = teamObjs[t] end
+		if (phase == "Playing" or phase == "Pregame" or phase == "Warp" or phase == "Countdown") and t and teamObjs[t] then player.Team = teamObjs[t] end
 	elseif phase == "Playing" then -- late joiner: fill the smaller team if there is room
 		local a, b = #teamObjs[TEAM_A]:GetPlayers(), #teamObjs[TEAM_B]:GetPlayers()
 		local pick = a <= b and TEAM_A or TEAM_B
@@ -840,7 +904,7 @@ RunService.Heartbeat:Connect(function(dt)
 			elseif st == "Thrown" then
 				local idx = nearestHoleFor(rec.team, pos)
 				if idx then
-					beginPlug(rec, rec.team, idx)
+					beginPlug(rec, rec.team, idx, rec.thrower)
 				else
 					local caught = false
 					for _, pl in Players:GetPlayers() do
@@ -877,7 +941,7 @@ RunService.Heartbeat:Connect(function(dt)
 			local idx = nearestHoleFor(team, (root.CFrame * CARRY_OFFSET).Position)
 			if idx then
 				release(pl, Vector3.zero, "Loose")
-				beginPlug(rec, team, idx)
+				beginPlug(rec, team, idx, pl)
 			end
 		end
 	end
@@ -909,23 +973,110 @@ local function enough()
 	return #Players:GetPlayers() >= C.MIN_PLAYERS
 end
 
+-- ===================== loading + pre-game + summary handlers =====================
+local readyPlayers, continued = {}, {}
+ClientReadyRemote.OnServerEvent:Connect(function(player) readyPlayers[player] = true end)
+Players.PlayerRemoving:Connect(function(p) readyPlayers[p], continued[p], results[p] = nil, nil, nil end)
+
+local function readyCount()
+	local n = 0
+	for _, p in Players:GetPlayers() do if readyPlayers[p] then n += 1 end end
+	return n
+end
+
+-- same rules as the lobby's SetLoadout (LobbyServer.cleanLoadout)
+local function cleanLoadout(l)
+	l = type(l) == "table" and l or {}
+	local out = { Gadgets = {}, Reserve = {} }
+	out.Weapon = Catalog.Is(l.Weapon, "weapon") and l.Weapon or Catalog.DefaultWeapon
+	out.Move = Catalog.Is(l.Move, "move") and l.Move or ""
+	for i = 1, 3 do
+		out.Gadgets[i] = Catalog.Is(type(l.Gadgets) == "table" and l.Gadgets[i], "gadget") and l.Gadgets[i] or ""
+		local r = type(l.Reserve) == "table" and l.Reserve[i]
+		out.Reserve[i] = (Catalog.Is(r, "gadget") or Catalog.Is(r, "weapon")) and r or ""
+	end
+	return out
+end
+local lastLoadoutAt = {}
+PregameLoadoutRemote.OnServerEvent:Connect(function(player, l)
+	if phase ~= "Pregame" then return end -- loadout is locked once the cutscene starts
+	if os.clock() - (lastLoadoutAt[player] or 0) < 0.12 then return end
+	lastLoadoutAt[player] = os.clock()
+	if type(l) ~= "table" or not Profiles.Get(player, "Loadout") then return end
+	local clean = cleanLoadout(l)
+	Profiles.Set(player, "Loadout", clean)
+	Profiles.Set(player, "Weapon", clean.Weapon)
+	player:SetAttribute("LoadoutJson", HttpService:JSONEncode(clean))
+	-- GunServer reads the Weapon attribute: switch the equipped gun
+	local WeaponCfg = require(RS:WaitForChild("WeaponConfig"))
+	if WeaponCfg.Weapons[clean.Weapon] then
+		player:SetAttribute("Sight", WeaponCfg.Get(clean.Weapon).DefaultSight)
+		player:SetAttribute("Weapon", clean.Weapon)
+	end
+end)
+
+ContinueRemote.OnServerEvent:Connect(function(player)
+	if phase ~= "Summary" or continued[player] then return end
+	continued[player] = true
+	Profiles.Save(player) -- souls earned are written before the teleport
+	Roster.SendOne(player)
+end)
+
+local function publishLoad()
+	stateFolder:SetAttribute("Present", #Players:GetPlayers())
+	stateFolder:SetAttribute("Ready", readyCount())
+	stateFolder:SetAttribute("Expected", Roster.Reserved and math.max(Roster.Total, #Players:GetPlayers()) or math.max(C.MIN_PLAYERS, #Players:GetPlayers()))
+end
+
 task.spawn(function()
 	while true do
+		-- ===== Waiting: the loading screen =====
+		stateFolder:SetAttribute("AllReady", false)
 		setPhase("Waiting", 0)
-		while not enough() do task.wait(0.5) end
-		setPhase("Intermission", C.INTERMISSION)
+		local waitStart = os.clock()
+		while true do
+			publishLoad()
+			if enough() then
+				local all = readyCount() >= #Players:GetPlayers()
+				if all or os.clock() - waitStart > C.READY_TIMEOUT + (Roster.Reserved and PC.ROSTER_WAIT or 0) then break end
+			end
+			task.wait(0.25)
+		end
+		publishLoad()
+		stateFolder:SetAttribute("AllReady", true)
+		task.wait(1.2) -- the loading screen says "ALL PLAYERS LOADED" for a moment
+
+		-- ===== Pregame: teams are set, everybody can change their loadout =====
+		assignTeams()
+		resetStats()
+		table.clear(continued)
+		setPhase("Pregame", C.PREGAME_TIME)
 		local aborted, t0 = false, os.clock()
-		while os.clock() - t0 < C.INTERMISSION do
+		while os.clock() - t0 < C.PREGAME_TIME do
 			task.wait(0.25)
 			if not enough() then aborted = true break end
 		end
 		if not aborted then
-			startRound()
+			-- ===== Warp cutscene (everyone respawned + frozen) =====
+			beginWarp()
+			task.wait(C.WARP_TIME)
+			setPhase("Countdown", C.COUNTDOWN_TIME)
+			task.wait(C.COUNTDOWN_TIME)
+			beginPlay()
 			while phase == "Playing" do
 				task.wait(0.25)
 				if not enough() then endRound(nil) end
 			end
-			task.wait(C.RESULT_TIME)
+			task.wait(C.RESULT_TIME) -- winner cutscene
+			-- ===== Summary: souls screen, wait for CONTINUE (or the time limit) =====
+			setPhase("Summary", C.SUMMARY_MAX)
+			local s0 = os.clock()
+			while os.clock() - s0 < C.SUMMARY_MAX do
+				task.wait(0.5)
+				local waiting = false
+				for _, p in Players:GetPlayers() do if not continued[p] then waiting = true break end end
+				if not waiting then break end
+			end
 		end
 		if Roster.Reserved then -- one match per reserved server: send everyone back to the lobby
 			Roster.ReturnAll()
