@@ -136,20 +136,29 @@ function K.Logo(parent, size, props, mode)
 
 	local api = { slash = slash, glow = glow, holder = holder, left = left, right = right }
 	local alive, fadeA, flare = true, 0, 0
-	local PERIOD = 2.4 -- seconds per pass of light down the slash
+	-- v3.8: the light goes DOWN the slash, then comes back UP the same way (smooth both ways), then rests for a moment at the top.
+	-- (It used to run down, stall at the bottom and jump back to the top, which looked choppy.)
+	local TRAVEL, REST = 1.05, 0.9
+	local PERIOD = TRAVEL * 2 + REST
 	local t0 = os.clock()
 	local conn
 	conn = RunService.RenderStepped:Connect(function()
 		if not alive or not holder.Parent then conn:Disconnect() return end
 		local t = (os.clock() - t0) % PERIOD
-		local u = math.clamp(t / (PERIOD * 0.62), 0, 1) -- the light runs, then a short rest
-		local e = u < 0.5 and 4 * u ^ 3 or 1 - (-2 * u + 2) ^ 3 / 2 -- ease in-out
+		local function ease(x) return x < 0.5 and 2 * x * x or 1 - (-2 * x + 2) ^ 2 / 2 end -- smooth in-out
+		local e, vis = 0, 0 -- e: 0 = top of the slash, 1 = bottom
+		if t < TRAVEL then
+			local u = t / TRAVEL
+			e, vis = ease(u), math.sin(u * math.pi)
+		elseif t < TRAVEL * 2 then
+			local u = (t - TRAVEL) / TRAVEL
+			e, vis = 1 - ease(u), math.sin(u * math.pi)
+		end
 		flowGrad.Offset = Vector2.new(0, -0.62 + 1.24 * e)
 		local len = slash.AbsoluteSize.Y / math.max(holder.AbsoluteSize.Y / h, 1e-3) -- current slash length in holder units
 		local along = (-0.5 + e) * len
 		local a = math.rad(K.LOGO_ANGLE)
 		spark.Position = UDim2.new(0.5, math.sin(a) * -along, 0.5, math.cos(a) * along)
-		local vis = (u > 0 and u < 1) and math.sin(u * math.pi) or 0
 		spark.BackgroundTransparency = math.clamp(1 - (1 - fadeA) * 0.85 * vis * (len > 2 and 1 or 0), 0, 1)
 		glow.BackgroundTransparency = math.clamp(fadeA + (0.25 - 0.25 * vis) - flare * 0.6, 0, 1)
 	end)
@@ -181,7 +190,7 @@ function K.Logo(parent, size, props, mode)
 		flare = 1
 		tw(slash, dur * 0.35, { Size = UDim2.fromOffset(slashW, slashH) })
 		tw(glow, dur * 0.35, { Size = UDim2.fromOffset(slashW * 7, slashH) })
-		t0 = os.clock() - PERIOD * 0.02 -- start a light pass right away
+		t0 = os.clock() - 0.02 -- start a light pass right away
 		task.spawn(function()
 			local s = os.clock()
 			while os.clock() - s < 0.6 do flare = 1 - (os.clock() - s) / 0.6 task.wait() end
@@ -202,6 +211,46 @@ function K.Logo(parent, size, props, mode)
 		task.wait(dur)
 	end
 	return holder, api
+end
+
+-- ===== ability icons (v3.8): small drawn graphics for the 4 movement abilities =====
+-- K.AbilityIcon(parent, id, size, color) -> Frame (size x size). id = "DJUMP" | "MJUMP" | "WRUN" | "WCLIMB".
+-- Built from thin rotated bars so they stay crisp at any size. Color defaults to white.
+local function ibar(parent, size, x1, y1, x2, y2, th, col)
+	local dx, dy = (x2 - x1) * size, (y2 - y1) * size
+	local len = math.sqrt(dx * dx + dy * dy)
+	return new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromOffset((x1 + x2) / 2 * size, (y1 + y2) / 2 * size),
+		Size = UDim2.fromOffset(len + th * 0.6, th), Rotation = math.deg(math.atan2(dy, dx)),
+		BackgroundColor3 = col, BorderSizePixel = 0 }, parent)
+end
+function K.AbilityIcon(parent, id, size, color)
+	color = color or Color3.new(1, 1, 1)
+	local h = new("Frame", { Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1 }, parent)
+	local th = math.max(2, math.floor(size * 0.09))
+	local function B(x1, y1, x2, y2, c, t) return ibar(h, size, x1, y1, x2, y2, t or th, c or color) end
+	local function chevronUp(cx, cy, w, c) B(cx - w, cy + w * 0.7, cx, cy, c); B(cx + w, cy + w * 0.7, cx, cy, c) end
+	if id == "DJUMP" then -- two stacked chevrons
+		chevronUp(0.5, 0.32, 0.26)
+		chevronUp(0.5, 0.64, 0.26, color:Lerp(Color3.new(0, 0, 0), 0.35))
+	elseif id == "MJUMP" then -- big arrow over a coiled base
+		B(0.5, 0.78, 0.5, 0.2)
+		chevronUp(0.5, 0.2, 0.24)
+		B(0.26, 0.9, 0.74, 0.9)
+		B(0.32, 0.8, 0.68, 0.8, color:Lerp(Color3.new(0, 0, 0), 0.4), math.max(1, th - 1))
+	elseif id == "WRUN" then -- wall on the left, runner dashes along it
+		B(0.18, 0.1, 0.18, 0.9, color:Lerp(Color3.new(0, 0, 0), 0.25), th + 1)
+		B(0.38, 0.3, 0.86, 0.3)
+		B(0.3, 0.52, 0.86, 0.52)
+		B(0.38, 0.74, 0.86, 0.74)
+		B(0.86, 0.52, 0.7, 0.4); B(0.86, 0.52, 0.7, 0.64)
+	elseif id == "WCLIMB" then -- wall + ceiling corner, arrow climbing
+		B(0.14, 0.12, 0.14, 0.9, color:Lerp(Color3.new(0, 0, 0), 0.25), th + 1)
+		B(0.14, 0.12, 0.9, 0.12, color:Lerp(Color3.new(0, 0, 0), 0.25), th + 1)
+		B(0.5, 0.82, 0.5, 0.36)
+		chevronUp(0.5, 0.36, 0.2)
+	end
+	return h
 end
 
 return K
