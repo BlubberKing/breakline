@@ -190,11 +190,16 @@ local function viewerTarget(pos)
 	local plr = game:GetService("Players").LocalPlayer
 	local root = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
 	if not root then return nil end
-	if (root.Position - pos).Magnitude < 8 then -- it is your own death: fly at the lens
-		return function() return cam.CFrame.Position + cam.CFrame.LookVector * 1.2 end, true
-	end
 	if (root.Position - pos).Magnitude > 140 then return nil end
-	return function() return root.Position + Vector3.new(0, 1.5, 0) end, false
+	-- souls never fly through the middle of the screen: they swing out wide to the LEFT or RIGHT of the view and slip in past
+	-- the screen edge, ending just beside / behind the camera. side = -1 (left) or 1 (right).
+	local function aim(side)
+		local c = cam.CFrame
+		local end_ = c.Position + c.RightVector * side * 2.4 - c.LookVector * 1.2 - c.UpVector * 0.7
+		local mid = c.Position + c.RightVector * side * 10 + c.LookVector * 3 - c.UpVector * 1.5
+		return end_, mid
+	end
+	return aim, (root.Position - pos).Magnitude < 8
 end
 
 local function absorbPulse(at)
@@ -225,7 +230,7 @@ function DeathFX.Play(pos)
 		local swirl = dir:Cross(Vector3.yAxis)
 		if swirl.Magnitude < 0.1 then swirl = Vector3.xAxis end
 		swirl = swirl.Unit * rng:NextNumber(-3, 3)
-		table.insert(souls, { part = s, out = out, swirl = swirl, toYou = getTarget ~= nil and i <= T.SoulsToYou, wob = rng:NextNumber(0, 6) })
+		table.insert(souls, { part = s, out = out, swirl = swirl, toYou = getTarget ~= nil and i <= T.SoulsToYou, side = (i % 2 == 0) and 1 or -1, wob = rng:NextNumber(0, 6) })
 	end
 
 	-- glow + sparks at the body
@@ -259,13 +264,12 @@ function DeathFX.Play(pos)
 				while true do
 					local a = (os.clock() - t1) / flyT
 					if a >= 1 then break end
-					local tgt = getTarget()
+					local tgt, mid = getTarget(s.side)
 					a = a * a * (3 - 2 * a)
-					local mid = from:Lerp(tgt, 0.5) + Vector3.new(math.sin(s.wob) * 2, 1.5, math.cos(s.wob) * 2)
 					s.part.CFrame = CFrame.new(bez(from, mid, tgt, a))
 					RunService.Heartbeat:Wait()
 				end
-				local final = getTarget()
+				local final = getTarget(s.side)
 				s.part:Destroy()
 				if not ownDeath then absorbPulse(final)
 				elseif not selfAbsorbPlayed then selfAbsorbPlayed = true; Sfx.Play("SoulAbsorbSelf") end
