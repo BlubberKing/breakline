@@ -1,5 +1,6 @@
 -- GunServer v2: server-authoritative ammo, fire rate and damage for every weapon in WeaponConfig.
--- Also owns the equipped weapon: Player attributes "Weapon" + "Sight" (changed through SetLoadout).
+-- Also owns the equipped weapon: Player attributes "Weapon" + "Sight". v2.1: the weapon is ONLY the one picked in the lobby loadout
+-- (the temporary G picker + its open SetLoadout remote are gone). The whole lobby loadout is published as "LoadoutJson" for MatchHUD.
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local Weapons = require(RS:WaitForChild("WeaponConfig"))
@@ -16,7 +17,6 @@ local function remote(name)
 end
 local FireRemote, ReloadRemote = remote("Fire"), remote("Reload")
 local HitConfirm, ShotFX, Damaged = remote("HitConfirm"), remote("ShotFX"), remote("Damaged")
-local SetLoadout = remote("SetLoadout")
 remotes.Parent = RS
 
 local state = {}
@@ -44,6 +44,9 @@ local function onPlayer(p)
 	-- the gun picked in the lobby loadout
 	task.spawn(function()
 		local d = Profiles.WaitFor(p)
+		if d and type(d.Loadout) == "table" then
+			pcall(function() p:SetAttribute("LoadoutJson", game:GetService("HttpService"):JSONEncode(d.Loadout)) end)
+		end
 		local w = d and d.Weapon
 		if type(w) == "string" and Weapons.Weapons[w] then
 			state[p] = nil
@@ -55,20 +58,6 @@ end
 Players.PlayerAdded:Connect(onPlayer)
 for _, p in Players:GetPlayers() do onPlayer(p) end
 Players.PlayerRemoving:Connect(function(p) state[p] = nil end)
-
--- TEMP test picker (later: lobby loadout). Validates the weapon + sight and swaps instantly.
-local lastSwap = {}
-SetLoadout.OnServerEvent:Connect(function(player, weapon, sight)
-	if type(weapon) ~= "string" or not Weapons.Weapons[weapon] then return end
-	local cfg = Weapons.Get(weapon)
-	if type(sight) ~= "string" or not Weapons.HasSight(cfg, sight) then sight = cfg.DefaultSight end
-	local now = os.clock()
-	if now - (lastSwap[player] or 0) < 0.25 then return end
-	lastSwap[player] = now
-	state[player] = nil
-	player:SetAttribute("Sight", sight)
-	player:SetAttribute("Weapon", weapon)
-end)
 
 ReloadRemote.OnServerEvent:Connect(function(player, weapon)
 	if weapon ~= player:GetAttribute("Weapon") or player:GetAttribute("Carrying") then return end
