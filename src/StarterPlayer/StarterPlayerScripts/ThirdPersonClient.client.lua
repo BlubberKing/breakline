@@ -1,4 +1,5 @@
--- ThirdPersonClient v4: IK hands on the gun, aim-driven gun joint, poses, recoil, reload, slide/crouch/mantle poses,
+-- ThirdPersonClient v5 (slim body): poses retuned for the taller / skinnier character, bigger gun, stride sway.
+-- (v4): IK hands on the gun, aim-driven gun joint, poses, recoil, reload, slide/crouch/mantle poses,
 -- + Wall Push: while carrying a box the gun is hidden and BOTH hands hold the box (two-handed carry pose)
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -19,23 +20,24 @@ local CFG = {
 	SPRINT_SPEED_ABOVE = 20,
 	TORSO_SHARE = 0.45, -- share of aim pitch taken by the upper torso (rest goes to the gun)
 	NECK_SHARE = 0.5,
-	SHOULDER = V3(0.45, 0.55, -0.3), -- gun pitch pivot (UpperTorso space)
+	SHOULDER = V3(0.38, 0.55, -0.3), -- gun pitch pivot (UpperTorso space)
 	-- Gun poses in UpperTorso space: grip position, rotation in degrees (pitch, yaw, roll)
 	POSES = {
-		Hip    = { V3(0.42, 0.05, -1.2),   V3(0, 5, 0) },
-		ADS    = { V3(0.2, 0.8, -1.0),     V3(0, 1, 0) },
-		Sprint = { V3(0.25, -0.15, -0.95), V3(-38, 35, 25) },
-		Reload = { V3(0.28, 0.0, -1.05),   V3(15, 20, -35) },
-		Slide  = { V3(0.4, 0.15, -1.1),    V3(2, 6, -8) },
-		Mantle = { V3(0.3, -0.25, -0.8),   V3(-55, 40, 30) },
+		Hip    = { V3(0.36, 0.0, -1.35),   V3(0, 4, 0) },
+		ADS    = { V3(0.17, 0.78, -1.15),  V3(0, 1, 0) },
+		Sprint = { V3(0.2, -0.2, -1.1),    V3(-38, 35, 25) },
+		Reload = { V3(0.24, -0.05, -1.2),  V3(15, 20, -35) },
+		Slide  = { V3(0.34, 0.1, -1.25),   V3(2, 6, -8) },
+		Mantle = { V3(0.26, -0.3, -0.95),  V3(-55, 40, 30) },
 	},
-	RIGHT_POLE = V3(1.8, -1.2, 0.2),
-	LEFT_POLE  = V3(-1.2, -1.8, -0.6),
-	CARRY_LEFT_POLE = V3(-1.8, -1.2, 0.2), -- elbow position of the left arm while carrying a box (mirrors the right)
+	RIGHT_POLE = V3(1.5, -1.3, 0.2),
+	LEFT_POLE  = V3(-1.0, -1.9, -0.6),
+	CARRY_LEFT_POLE = V3(-1.5, -1.3, 0.2), -- elbow position of the left arm while carrying a box (mirrors the right)
 	CARRY_TORSO_SHARE = 0.25,              -- how much of the aim pitch the torso takes while carrying
 	POUCH      = V3(-0.6, -0.05, -0.55), -- LowerTorso space
 	KICK_BACK = 0.14, KICK_UP_DEG = 4, KICK_TORSO_DEG = 1.2,
-	BOB = 0.035,
+	BOB = 0.03,
+	STRIDE_TWIST_DEG = 3.2, -- slim body: a little hip/shoulder counter-twist while running (reads as a longer stride)
 	TURN_LAG_DEG = 1.2, TURN_LAG_MAX = 7,
 	SLIDE_LEAN = 25,
 	CROUCH_LEAN = 10,
@@ -233,7 +235,9 @@ local function update(st, dt, t, isLocal)
 	local torsoPitch = st.pitch * torsoShare * (1 - 0.5 * lowered) + rad(CFG.KICK_TORSO_DEG * st.kick) * (1 - st.carry) - rad(12) * st.slide
 	st.waist.C0 = st.waistC0 * CFrame.Angles(torsoPitch, 0, 0)
 	st.neck.C0 = st.neckC0 * CFrame.Angles(st.pitch * CFG.NECK_SHARE - rad(14) * st.slide, 0, 0)
-	st.rootJ.C0 = st.rootC0 * CFrame.Angles(rad(CFG.SLIDE_LEAN) * st.slide - rad(CFG.CROUCH_LEAN) * st.crouch, 0, 0)
+	local twist = sin(st.bobT * 0.5) * rad(CFG.STRIDE_TWIST_DEG) * clamp(hs / 20, 0, 1) * (onGround and 1 or 0) * (1 - st.slide) * (1 - st.crouch * 0.6)
+	st.rootJ.C0 = st.rootC0 * CFrame.Angles(rad(CFG.SLIDE_LEAN) * st.slide - rad(CFG.CROUCH_LEAN) * st.crouch, twist, 0)
+	st.waist.C0 = st.waist.C0 * CFrame.Angles(0, -twist * 1.4, 0)
 
 	-- left hand: foregrip, or reload sequence (mag -> pouch -> mag -> foregrip)
 	local target, smooth = st.lFore, 0
