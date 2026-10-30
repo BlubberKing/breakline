@@ -1,4 +1,4 @@
--- LobbyLoading v1 (LocalScript in ReplicatedFirst) - LOBBY place only. NEW in GDD v3.7.
+-- LobbyLoading v1.1 (v3.9: smooth, fully faded exit - no black sliver) (LocalScript in ReplicatedFirst) - LOBBY place only. NEW in GDD v3.7.
 -- Loading screen shown when you join the lobby (first join or coming back from a match):
 --   * black screen; BREAK flies in from the left, LINE from the right, they meet in the middle and the red slash draws in
 --     between them with light flowing down it (UIKit.Logo, same logo as Breakline's loading screen + the lobby top-left logo)
@@ -206,13 +206,23 @@ TweenService:Create(fill, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Pl
 local scale = math.max(logo.AbsoluteSize.Y / math.floor(logoSize * 1.2), 1e-3)
 task.spawn(logoApi.outro, 0.55, diag * 1.3 / scale) -- the slash stretches into a full-screen seam
 task.wait(0.4)
--- doors slide apart along the seam's normal
-local OPEN = TweenInfo.new(0.85, Enum.EasingStyle.Quart, Enum.EasingDirection.InOut)
-local extra = diag * 0.75
+-- doors slide apart along the seam's normal.
+-- v3.9 fix: the old Quart in-out ease crawled through its last few percent, leaving a thin sliver of black on screen that then
+-- vanished in one frame. Now: a gentler ease, the doors travel well past the screen edge, AND they fade out over the last stretch,
+-- so there is never a visible leftover to pop away. The GUI is destroyed only when the tweens are done.
+local OPEN_T = 0.85
+local OPEN = TweenInfo.new(OPEN_T, Enum.EasingStyle.Cubic, Enum.EasingDirection.InOut)
+local extra = diag * 1.05
 local cL = seam - N * (PW / 2 + extra)
 local cR = seam + N * (PW / 2 + extra)
 TweenService:Create(doorL, OPEN, { Position = UDim2.new(0.5, cL.X, 0.5, cL.Y) }):Play()
 TweenService:Create(doorR, OPEN, { Position = UDim2.new(0.5, cR.X, 0.5, cR.Y) }):Play()
+-- fade the doors away during the last 45% of the slide (starts after 55% of the time)
+task.delay(OPEN_T * 0.55, function()
+	local FADE = TweenInfo.new(OPEN_T * 0.45, Enum.EasingStyle.Sine, Enum.EasingDirection.In)
+	TweenService:Create(doorL, FADE, { BackgroundTransparency = 1 }):Play()
+	TweenService:Create(doorR, FADE, { BackgroundTransparency = 1 }):Play()
+end)
 -- the seam light fades as the doors open
 task.delay(0.15, function()
 	local s = os.clock()
@@ -222,6 +232,6 @@ task.delay(0.15, function()
 	end
 	if gui.Parent then logoApi.setTransparency(1) end
 end)
-task.wait(0.9)
+task.wait(OPEN_T + 0.1)
 logoApi.stop()
 gui:Destroy()
