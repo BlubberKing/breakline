@@ -4,8 +4,24 @@ local C = {}
 
 -- ===== match flow =====
 C.MIN_PLAYERS  = 1   -- players needed to start a round (raise to 2-6 for live games; 1 lets you test alone)
-C.INTERMISSION = 8   -- seconds before each round
-C.RESULT_TIME  = 7   -- seconds the winner is shown
+-- Flow: Waiting (loading screen) -> Pregame -> Warp (cutscene) -> Countdown -> Playing -> Result (winner cutscene) -> Summary (souls screen)
+C.READY_TIMEOUT  = 40  -- seconds to wait for slow clients to finish loading before starting without them
+C.PREGAME_TIME   = 20  -- pre-game screen (loadout + clock)
+C.WARP_TIME      = 9   -- soul flight + run-in cutscene (MatchFlow is timed to this: do not shorten below ~8)
+C.COUNTDOWN_TIME = 3   -- 3-2-1 on the map, everybody frozen
+C.RESULT_TIME    = 3.5 -- winner cutscene before the souls screen
+C.SUMMARY_MAX    = 60  -- the server never waits longer than this for players to press CONTINUE
+C.SUMMARY_AUTO   = 15  -- the client presses CONTINUE for you this many seconds after the soul count finished
+
+-- ===== souls earned per match (multipliers stack on the base) =====
+C.REWARD = {
+	Base = 50,
+	Win = 1.5, Loss = 0.75, Draw = 1.0,   -- set multiplier for how the match ended
+	PerKill = 0.10,                       -- + this per kill
+	PerPlugged = 0.05,                    -- + this per box you plugged into a hole
+	PerDestroyed = 0.08,                  -- + this per enemy box you destroyed
+	PerThousandDamage = 0.02,             -- + this per 1000 damage dealt to players (tiny)
+}
 C.RESPAWN_TIME = 5   -- PROPOSAL (GDD: 5-7s)
 
 -- Team 1 (Red) defends one end of the map, team 2 (Blue) the other. See MAP.SwapEnds.
