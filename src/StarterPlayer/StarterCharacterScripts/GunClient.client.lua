@@ -26,7 +26,11 @@ local Remotes = RS:WaitForChild("GunRemotes")
 local FireRemote, ReloadRemote = Remotes:WaitForChild("Fire"), Remotes:WaitForChild("Reload")
 local HitConfirm, ShotFX, DamagedRemote = Remotes:WaitForChild("HitConfirm"), Remotes:WaitForChild("ShotFX"), Remotes:WaitForChild("Damaged")
 
-local VM_SCALE = 0.85 -- viewmodel gun size
+local VM_SCALE = 0.78 -- viewmodel gun size (v3.7: 0.85 -> 0.78, guns read too big)
+-- v3.7 ADS fit: the sight now sits closer to your eye and the gun is pulled in tight, so you look DOWN the gun instead of seeing
+-- its whole length out in front of you. ADS_EYE_MULT scales the eye distance of irons / red dot / holo (zoom scopes keep theirs);
+-- lower = gun closer to your face. ADS_EYE_MIN keeps it out of the camera's near plane.
+local ADS_EYE_MULT, ADS_EYE_MIN = 0.7, 0.22
 local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 82, 7
 local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
 local MatchCfg = require(RS:WaitForChild("MatchConfig"))
@@ -392,7 +396,9 @@ local function equip(id, sightId)
 	local sr = v.SprintRot or Vector3.new(-18, 48, 18)
 	SPRINT = CFrame.new((v.X or 0.6) - 0.2, (v.Y or -1.0) - 0.15, (v.Z or -1.15) + 0.25) * CFrame.Angles(rad(sr.X), rad(sr.Y), rad(sr.Z))
 	-- puts the sight's aim point exactly at screen center, Eye studs in front of the camera
-	AIM = CFrame.new(0, 0, -built.Eye) * built.Points.Aim:Inverse()
+	local eye = built.Eye or 0.45
+	if not sight.Mag then eye = math.max(ADS_EYE_MIN, eye * ADS_EYE_MULT) end
+	AIM = CFrame.new(0, 0, -eye) * built.Points.Aim:Inverse()
 
 	adsFov = sight.Mag and magFov(sight.Mag) or cfg.ADSFov
 	adsSens = cfg.ADSSensitivity * (sight.Mag and math.tan(rad(adsFov / 2)) / math.tan(rad(cfg.ADSFov / 2)) or 1)
@@ -637,6 +643,12 @@ local function onRender(dt)
 	local vel = root.AssemblyLinearVelocity
 	local flatSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
 	local moving = humanoid.MoveDirection.Magnitude > 0.1
+	-- v3.7: first-person run-in at match start (MatchFlow). The real character is frozen, so MatchFlow tells us how fast the
+	-- camera is running and the viewmodel plays the sprint pose + bob as if you were really running.
+	local cutRun = player:GetAttribute("CutsceneRun")
+	if type(cutRun) == "number" then
+		flatSpeed, grounded, moving = cutRun, true, cutRun > 1
+	end
 	local sliding = character:GetAttribute("Sliding") == true
 	local mantling = character:GetAttribute("Mantling") == true
 	local crouching = character:GetAttribute("Crouching") == true
@@ -656,7 +668,7 @@ local function onRender(dt)
 	if carryingBox then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
 	local aiming = aimHeld and not reloading and alive and not mantling and not carryingBox
 	local wantsSprint = (shiftHeld or sprintToggle) and moving and not aiming and not triggerDown and not crouching
-	local sprinting = wantsSprint and not sliding and not mantling
+	local sprinting = (wantsSprint and not sliding and not mantling) or (type(cutRun) == "number" and cutRun > 10)
 	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
 	humanoid.WalkSpeed = baseSpeed * (carryingBox and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed) * TimeScale.Get() -- slow motion at the end of a round
 	aimAlpha = approach(aimAlpha, aiming and 1 or 0, dt, cfg.ADSTime)
@@ -816,7 +828,9 @@ local function onRender(dt)
 		scoped = wantScope
 		scope.Visible = scoped
 	end
-	local vmParent = (not scoped and not carryingBox) and camera or nil -- gun is put away while carrying a box
+	-- gun is put away while carrying a box, and during scripted camera shots (except the first-person run-in)
+	local cutscene = camera.CameraType == Enum.CameraType.Scriptable and type(cutRun) ~= "number"
+	local vmParent = (not scoped and not carryingBox and not cutscene) and camera or nil
 	if built.Model.Parent ~= vmParent then built.Model.Parent = vmParent end
 
 	if not scoped then
