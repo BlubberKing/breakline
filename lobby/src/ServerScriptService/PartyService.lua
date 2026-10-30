@@ -24,7 +24,9 @@ local function remote(name)
 	return r
 end
 local InviteR, RespondR, LeaveR, KickR, NoticeR = remote("Invite"), remote("Respond"), remote("Leave"), remote("Kick"), remote("Notice")
+local PromoteR = remote("Promote")
 remote("Queue")
+remote("SetLoadout")
 
 local M = {}
 local invites = {}   -- [targetUserId][partyId] = true (kept on the target's server)
@@ -120,14 +122,20 @@ end
 
 -- ===== remotes =====
 InviteR.OnServerEvent:Connect(function(player, name)
-	if type(name) ~= "string" or #name < 3 or #name > 20 then return end
+	local byId = type(name) == "number" and name % 1 == 0 and name > 0
+	if not byId and (type(name) ~= "string" or #name < 3 or #name > 20) then return end
 	if os.clock() - (lastInvite[player] or 0) < 2 then return end
 	lastInvite[player] = os.clock()
 	local party, id = M.Get(player)
 	if party and party.leader ~= player.UserId then notice(player, "Only the party leader can invite.") return end
 	if party and #party.members >= PC.MAX_PARTY then notice(player, "Your party is full.") return end
-	local ok, uid = pcall(function() return Players:GetUserIdFromNameAsync(name) end)
-	if not ok or not uid then notice(player, "Player '" .. name .. "' was not found.") return end
+	local ok, uid = true, name
+	if not byId then ok, uid = pcall(function() return Players:GetUserIdFromNameAsync(name) end) end
+	if not ok or not uid then notice(player, "Player '" .. tostring(name) .. "' was not found.") return end
+	if byId then
+		local okN, n = pcall(function() return Players:GetNameFromUserIdAsync(uid) end)
+		name = okN and n or "player"
+	end
 	if uid == player.UserId then return end
 	if party and isMember(party, uid) then notice(player, name .. " is already in your party.") return end
 	if not party then party, id = create(player) end
@@ -171,6 +179,21 @@ KickR.OnServerEvent:Connect(function(player, targetId)
 	if not party or party.leader ~= player.UserId or targetId == player.UserId then return end
 	if not isMember(party, targetId) then return end
 	leave(targetId, id)
+end)
+
+PromoteR.OnServerEvent:Connect(function(player, targetId)
+	if type(targetId) ~= "number" then return end
+	local party, id = M.Get(player)
+	if not party or party.leader ~= player.UserId or targetId == player.UserId then return end
+	if not isMember(party, targetId) then return end
+	pcall(function()
+		parties:UpdateAsync(id, function(old)
+			if old and old.leader == player.UserId and isMember(old, targetId) then old.leader = targetId return old end
+			return nil
+		end, TTL)
+	end)
+	publish("PartyUpdate", { id = id })
+	refresh(id)
 end)
 
 -- ===== messages from other servers =====
