@@ -41,12 +41,12 @@ local function label(parent, size, pos, text, ts, color)
 	l.AnchorPoint = Vector2.new(0.5, 0.5)
 	l.Size, l.Position = size, pos
 	l.BackgroundTransparency = 1
-	l.Font = Enum.Font.GothamBlack
+	l.FontFace = Font.fromEnum(Enum.Font.FredokaOne)
 	l.TextSize = ts
 	l.TextColor3 = color or Color3.new(1, 1, 1)
 	l.Text = text
 	local st = Instance.new("UIStroke")
-	st.Thickness = 2; st.Transparency = 0.3
+	st.Thickness = 2.5; st.Transparency = 0.25; st.Color = Color3.fromRGB(20, 12, 30)
 	st.Parent = l
 	l.Parent = parent
 	return l
@@ -55,9 +55,15 @@ end
 local top = Instance.new("Frame")
 top.AnchorPoint = Vector2.new(0.5, 0)
 top.Position = UDim2.new(0.5, 0, 0, 10)
-top.Size = UDim2.fromOffset(460, 76)
-top.BackgroundTransparency = 1
+top.Size = UDim2.fromOffset(460, 84)
+top.BackgroundColor3 = Color3.fromRGB(22, 16, 34) -- v3.2: soft rounded plate so the top bar matches the lobby / HUD
+top.BackgroundTransparency = 0.45
+top.BorderSizePixel = 0
 top.Parent = gui
+do
+	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 26); c.Parent = top
+	local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255, 255, 255); st.Transparency = 0.8; st.Thickness = 2; st.Parent = top
+end
 
 local scoreA = label(top, UDim2.fromOffset(110, 36), UDim2.fromOffset(60, 20), "0", 30, COL_A)
 local scoreB = label(top, UDim2.fromOffset(110, 36), UDim2.fromOffset(400, 20), "0", 30, COL_B)
@@ -68,29 +74,38 @@ local nameB = label(top, UDim2.fromOffset(110, 16), UDim2.fromOffset(400, 44), N
 -- wall progress: bar spans finish line (team A end, left) to finish line (team B end, right); the marker is the wall
 local bar = Instance.new("Frame")
 bar.AnchorPoint = Vector2.new(0.5, 0)
-bar.Position = UDim2.fromOffset(230, 58)
-bar.Size = UDim2.fromOffset(440, 10)
+bar.Position = UDim2.fromOffset(230, 62)
+bar.Size = UDim2.fromOffset(420, 12)
 bar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
 bar.BackgroundTransparency = 0.2
 bar.BorderSizePixel = 0
 bar.Parent = top
+do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Parent = bar end
+local track = Instance.new("Frame") -- clips the two team halves to the rounded bar; the marker lives outside it
+track.Size = UDim2.fromScale(1, 1)
+track.BackgroundTransparency = 1
+track.ClipsDescendants = true
+track.Parent = bar
+do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Parent = track end
 local halfA = Instance.new("Frame")
 halfA.Size = UDim2.fromScale(0.5, 1)
 halfA.BackgroundColor3 = COL_A
 halfA.BackgroundTransparency = 0.45
 halfA.BorderSizePixel = 0
-halfA.Parent = bar
+halfA.Parent = track
 local halfB = halfA:Clone()
 halfB.Position = UDim2.fromScale(0.5, 0)
 halfB.BackgroundColor3 = COL_B
-halfB.Parent = bar
+halfB.Parent = track
 local marker = Instance.new("Frame")
 marker.AnchorPoint = Vector2.new(0.5, 0.5)
-marker.Size = UDim2.new(0, 6, 1, 10)
+marker.Size = UDim2.fromOffset(8, 20)
 marker.Position = UDim2.fromScale(0.5, 0.5)
 marker.BackgroundColor3 = Color3.new(1, 1, 1)
 marker.BorderSizePixel = 0
+marker.ZIndex = 3
 marker.Parent = bar
+do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Parent = marker; local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(20, 12, 30); st.Thickness = 2; st.Parent = marker end
 
 local banner = label(gui, UDim2.fromOffset(700, 60), UDim2.new(0.5, 0, 0.22, 0), "", 40)
 banner.TextTransparency = 1
