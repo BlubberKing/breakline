@@ -1,10 +1,11 @@
--- ThirdPersonServer v3: world gun (any weapon, rebuilt on swap) on a torso joint, aim/state replication, shot + reload broadcast
+-- ThirdPersonServer v4: world gun (any weapon, rebuilt on swap) on a torso joint, aim/state replication, shot + reload broadcast
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local GunModels = require(RS:WaitForChild("GunModels"))
 local Weapons = require(RS:WaitForChild("WeaponConfig"))
+local Skins = require(RS:WaitForChild("Skins"))
 
-local GUN_SCALE = 0.55 -- world rifle size relative to the character
+local GUN_SCALE = 0.9 -- world rifle size relative to the character (v4: was 0.55, looked tiny; first-person gun is 0.85)
 
 local folder = RS:FindFirstChild("TPRemotes")
 if not folder then
@@ -32,6 +33,8 @@ end
 local function attachGun(player, char)
 	local torso = char:WaitForChild("UpperTorso", 10)
 	if not torso or not char.Parent then return end
+	Skins.Prepare(char) -- slim body must have its final size before the gun joint + IK are sized from it
+	if not char.Parent then return end
 	local old = char:FindFirstChild("TPGun")
 	if old then old:Destroy() end
 	local oldJoint = torso:FindFirstChild("GunJoint")
