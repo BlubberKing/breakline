@@ -1,4 +1,4 @@
--- LobbyClient v5.2 "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
+-- LobbyClient v5.3 (v3.8/v3.9: play-block queue indicator, static skin poses, LobbyMenuOpen flag, ability icons, no souls bullet) "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
 -- v5.2 (GDD v3.7): new slim logo from UIKit (flowing red slash), idle moves only on the squad stage, invite popup no longer
 -- peeks in at the top of the screen on non-16:9 windows (it is hidden, not just parked above the canvas).
 -- Look: flat, sharp, dark, on-brand (black / white / Breakline red), built like a big-shooter front end.
@@ -296,6 +296,12 @@ local function itemPicture(parent, item, glyphSize)
 		gunPicture(parent, item.id)
 		return
 	end
+	if item.kind == "move" and item.icon then -- v3.8: drawn ability graphic
+		local sz = math.floor(glyphSize * 3.2)
+		local ic = UI.AbilityIcon(parent, item.icon, sz, item.color)
+		ic.AnchorPoint, ic.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5)
+		return
+	end
 	local tone = item.color:Lerp(rgb(150, 150, 150), 0.4)
 	local t = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(glyphSize * 2.4, glyphSize * 2.4),
 		BackgroundColor3 = C.panel3, BorderSizePixel = 0 }, parent)
@@ -310,7 +316,7 @@ local MODES = {
 	{
 		id = "breakline", name = "BREAKLINE", tag = "3V3  //  WALL PUSH",
 		desc = "Two teams, one moving wall. Carry boxes to your side's holes and plug them in: the team with more plugged boxes pushes the wall toward the enemy. Shoot enemy boxes to break them. Push the wall onto their finish line to win.",
-		facts = { "Red vs Blue, 3 players per team", "Carry boxes: hold E, plug them into your holes", "Break the other team's boxes with your gun", "Wall reaches a finish line = round over", "Win +100 souls, loss +40 souls" },
+		facts = { "Red vs Blue, 3 players per team", "Carry boxes: hold E, plug them into your holes", "Break the other team's boxes with your gun", "Wall reaches a finish line = round over" },
 	},
 }
 local selectedMode = "breakline"
@@ -439,13 +445,23 @@ local CL_W, CIRCLE, CL_GAP = 480, 72, 16                    -- cluster width, ci
 local CL_X = RIGHT - CL_W                                   -- 1384
 local BY, BH = 932, 96                                      -- bottom row top + height
 local PLAY_X, PLAY_W = CL_X + CIRCLE + CL_GAP, CL_W - 2 * (CIRCLE + CL_GAP)
-local homePlay, _, _, homePaint = actionBlock(hudC, PLAY_X, BY, PLAY_W, BH, "PLAY", "BREAKLINE  //  3V3")
+local homePlay, homeMain, homeSub, homePaint = actionBlock(hudC, PLAY_X, BY, PLAY_W, BH, "PLAY", "BREAKLINE  //  3V3")
 homePaint("go")
+-- v3.9: queue indicator on the home PLAY block (the block still just opens the play screen, so it cannot say CANCEL):
+-- while you search it turns white with a red edge, shows SEARCHING + the timer, and a thin red light runs along its bottom edge.
+local homeQueueBar = frame(homePlay, 0, BH - 4, PLAY_W, 4, C.red, 0)
+homeQueueBar.ZIndex = 5
+homeQueueBar.Visible = false
+local homeQueueSweep = frame(homeQueueBar, 0, 0, 120, 4, WHITE, 0)
+homeQueueSweep.ZIndex = 6
+fade(homeQueueSweep, 0, 1, 0)
+local homeQueueEdge = border(homePlay, C.red, 3, 1)
 local homeSkins = circleButton(hudC, CL_X + CIRCLE / 2, BY + BH / 2, CIRCLE)
 hangerIcon(homeSkins, C.text)
 local homePlus = circleButton(hudC, RIGHT - CIRCLE / 2, BY + BH / 2, CIRCLE)
 plusIcon(homePlus, 24, C.text)
-local hudStatus = lbl(hudC, "", 16, 1064, BY - 40, 800, 24, C.text, "HM", Enum.TextXAlignment.Right)
+-- v3.9: the searching text sits right ABOVE the PLAY block, centred on it (it used to float too far right of the button)
+local hudStatus = lbl(hudC, "", 16, PLAY_X - 60, BY - 40, PLAY_W + 120, 24, C.text, "HM", Enum.TextXAlignment.Center)
 
 -- ================= play screen =================
 local screen = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.void, BorderSizePixel = 0, Visible = false,
@@ -721,7 +737,7 @@ local function skinPreview(parent, skinId)
 	local cam = new("Camera", { FieldOfView = 30 }, fv)
 	cam.CFrame = CFrame.lookAt(Vector3.new(1.4, 5.7, 7.5), Vector3.new(0, 4.9, 0))
 	fv.CurrentCamera = cam
-	local fig = Skins.NewFigure(fv, skinId, { camPos = cam.CFrame.Position })
+	local fig = Skins.NewFigure(fv, skinId, { camPos = cam.CFrame.Position, static = true })
 	fig:SetRoot(CFrame.Angles(0, math.rad(12), 0))
 	fig:Update(0, 0)
 	return fv
@@ -961,9 +977,10 @@ function buildPick()
 			local cam = new("Camera", { FieldOfView = 30 }, fv)
 			cam.CFrame = CFrame.lookAt(Vector3.new(0, 4.3, 19), Vector3.new(0, 3.8, 0))
 			fv.CurrentCamera = cam
-			local fig = Skins.NewFigure(fv, sk.id, { weapon = loadout.Weapon, camPos = Vector3.new(0, 4.3, 19) })
+			local fig = Skins.NewFigure(fv, sk.id, { weapon = "VX9", camPos = Vector3.new(0, 4.3, 19), static = true }) -- v3.8: plain pose holding the M4A1, no movement
 			fig:SetRoot(CFrame.Angles(0, math.rad(28), 0))
 			table.insert(skinFigs, fig)
+			fig:Update(0, 0)
 			lbl(b, sk.name, 30, 18, 372, 330, 38, C.text, "H")
 			lbl(b, string.upper(sk.sub), 11, 19, 410, 330, 14, on and C.redHi or C.dim, "M")
 			local ds = lbl(b, sk.desc, 13, 18, 432, 324, 56, C.dim, "B")
@@ -1395,6 +1412,20 @@ local function refreshQueue()
 		startPaint("go")
 	end
 	hudStatus.Text = tp and "JOINING MATCH..." or (q and ("SEARCHING FOR PLAYERS  " .. fmtTime(math.max(0, os.time() - (player:GetAttribute("QueuedAt") or os.time())))) or "")
+	-- v3.9: the home PLAY block shows the queue state too
+	if tp then
+		homeMain.Text, homeSub.Text = "DEPLOYING", "JOINING MATCH..."
+		homePaint("wait")
+		homeQueueBar.Visible, homeQueueEdge.Transparency = false, 1
+	elseif q then
+		homeMain.Text, homeSub.Text = "SEARCHING", fmtTime(math.max(0, os.time() - (player:GetAttribute("QueuedAt") or os.time()))) .. "  //  CLICK FOR LOADOUT"
+		homePaint("cancel")
+		homeQueueBar.Visible, homeQueueEdge.Transparency = true, 0
+	else
+		homeMain.Text, homeSub.Text = "PLAY", "BREAKLINE  //  3V3"
+		homePaint("go")
+		homeQueueBar.Visible, homeQueueEdge.Transparency = false, 1
+	end
 end
 startBtn.MouseButton1Click:Connect(function()
 	if player:GetAttribute("Teleporting") then return end
@@ -1455,6 +1486,7 @@ local cover = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.
 function openScreen(startView)
 	if not screenOpen then
 		screenOpen = true
+		player:SetAttribute("LobbyMenuOpen", true)
 		screen.Visible = true
 		hud.Visible = false
 		-- cut in from black
@@ -1470,9 +1502,11 @@ end
 local function closeScreen()
 	if not screenOpen then return end
 	screenOpen = false
+	player:SetAttribute("LobbyMenuOpen", nil)
 	setView("home")
 	screen.Visible = false
 	hud.Visible = true
+	refreshQueue()
 end
 local function openSkins()
 	if not screenOpen then openScreen("home") end
@@ -1519,6 +1553,13 @@ RunService.RenderStepped:Connect(function(dt)
 	elseif view == "pick" then
 		for _, f in skinFigs do f:Update(t, dt) end
 	end
+end)
+
+-- v3.9: the light that runs along the bottom of the PLAY block while searching (runs on the home HUD only)
+RunService.RenderStepped:Connect(function()
+	if not homeQueueBar.Visible or not hud.Visible then return end
+	local u = (os.clock() % 1.6) / 1.6
+	homeQueueSweep.Position = UDim2.fromOffset(math.floor((PLAY_W + 120) * u - 120), 0)
 end)
 
 -- ================= invite popup + notices =================
