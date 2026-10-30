@@ -1,6 +1,6 @@
 -- LobbyCatalog (ModuleScript in ReplicatedStorage) - LOBBY place only. Used by LobbyClient (UI) and LobbyServer (validation).
 -- Every item you can put in a loadout slot. Weapon ids match WeaponConfig in Breakline (VX9 = M4A1, KR47 = AK-47, ...).
--- Gadgets and movement abilities are PLACEHOLDERS until they exist in Breakline: add / rename them here.
+-- Gadgets are PLACEHOLDERS until they exist in Breakline. Movement abilities (v3.8) are real: AbilityClient.
 -- The icons are placeholder tiles (color + short glyph); swap drawItem in LobbyClient for real images later.
 local K = {}
 
@@ -35,13 +35,12 @@ add(K.Gadgets, "gadget", "SCANNER", "Scanner", "Gadget", "SC", W(120, 120, 255))
 add(K.Gadgets, "gadget", "MINE", "Prox. Mine", "Gadget", "PM", W(255, 130, 60))
 add(K.Gadgets, "gadget", "SHIELD", "Shield", "Gadget", "SH", W(100, 220, 230))
 
--- special movement abilities (placeholders, names from the GDD)
-add(K.Moves, "move", "PHASE", "Phase Shift", "Movement", "PS", W(170, 110, 255))
-add(K.Moves, "move", "DJUMP", "Double Jump", "Movement", "DJ", W(90, 210, 255))
-add(K.Moves, "move", "MJUMP", "Mega Jump", "Movement", "MJ", W(255, 200, 60))
-add(K.Moves, "move", "WRUN", "Wall Runner", "Movement", "WR", W(255, 120, 90))
-add(K.Moves, "move", "GLIDE", "Glider", "Movement", "GL", W(110, 230, 190))
-add(K.Moves, "move", "PEEK", "Wall Peek", "Movement", "WP", W(220, 220, 255))
+-- special movement abilities (v3.8: REAL, built in AbilityClient). `icon` = UIKit.AbilityIcon id (small drawn graphic).
+add(K.Moves, "move", "DJUMP", "Double Jump", "Air jump", "DJ", W(90, 210, 255))
+add(K.Moves, "move", "MJUMP", "Mega Jump", "Charge jump", "MJ", W(255, 200, 60))
+add(K.Moves, "move", "WRUN", "Wall Run", "Run on walls", "WR", W(255, 120, 90))
+add(K.Moves, "move", "WCLIMB", "Wall Climb", "Walls + ceilings", "WC", W(120, 230, 150))
+for _, m in K.Moves do m.icon = m.id end
 
 K.DefaultWeapon = "VX9"
 
