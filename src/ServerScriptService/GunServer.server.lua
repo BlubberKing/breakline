@@ -7,6 +7,7 @@ local GunMath = require(RS:WaitForChild("GunMath"))
 local ServerStorage = game:GetService("ServerStorage")
 local MatchCfg = require(RS:WaitForChild("MatchConfig"))
 local BoxDamage = ServerStorage:WaitForChild("BoxDamage", 30) -- BindableEvent made by MatchServer
+local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
 
 local remotes = Instance.new("Folder")
 remotes.Name = "GunRemotes"
@@ -32,6 +33,24 @@ local function onPlayer(p)
 	p:SetAttribute("Weapon", Weapons.Default)
 	p:SetAttribute("Sight", Weapons.Get(Weapons.Default).DefaultSight)
 	p.CharacterAdded:Connect(function() state[p] = nil end)
+	-- safety net: the Weapon attribute can never be empty / unknown (the server rejects shots that do not match it)
+	p:GetAttributeChangedSignal("Weapon"):Connect(function()
+		local w = p:GetAttribute("Weapon")
+		if type(w) ~= "string" or not Weapons.Weapons[w] then
+			p:SetAttribute("Weapon", Weapons.Default)
+			p:SetAttribute("Sight", Weapons.Get(Weapons.Default).DefaultSight)
+		end
+	end)
+	-- the gun picked in the lobby loadout
+	task.spawn(function()
+		local d = Profiles.WaitFor(p)
+		local w = d and d.Weapon
+		if type(w) == "string" and Weapons.Weapons[w] then
+			state[p] = nil
+			p:SetAttribute("Sight", Weapons.Get(w).DefaultSight)
+			p:SetAttribute("Weapon", w)
+		end
+	end)
 end
 Players.PlayerAdded:Connect(onPlayer)
 for _, p in Players:GetPlayers() do onPlayer(p) end
