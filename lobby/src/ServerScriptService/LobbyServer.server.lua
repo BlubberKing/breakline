@@ -38,6 +38,52 @@ local function setQueued(ids, on, key)
 	end
 end
 
+-- ===== loadout (Move, Weapon, Gadgets x3, Reserve x3) =====
+-- Saved in the shared profile. The chosen Weapon is what Breakline's GunServer equips when the match starts.
+local Catalog = require(RS:WaitForChild("LobbyCatalog"))
+local HttpService = game:GetService("HttpService")
+local SetLoadoutR = RS:WaitForChild("LobbyRemotes"):WaitForChild("SetLoadout")
+local lastLoadout = {}
+
+local function cleanLoadout(l)
+	l = type(l) == "table" and l or {}
+	local out = { Gadgets = {}, Reserve = {} }
+	out.Weapon = Catalog.Is(l.Weapon, "weapon") and l.Weapon or Catalog.DefaultWeapon
+	out.Move = Catalog.Is(l.Move, "move") and l.Move or ""
+	for i = 1, 3 do
+		out.Gadgets[i] = Catalog.Is(type(l.Gadgets) == "table" and l.Gadgets[i], "gadget") and l.Gadgets[i] or ""
+		local r = type(l.Reserve) == "table" and l.Reserve[i]
+		out.Reserve[i] = (Catalog.Is(r, "gadget") or Catalog.Is(r, "weapon")) and r or ""
+	end
+	return out
+end
+
+local function publishLoadout(p, l)
+	p:SetAttribute("LoadoutJson", HttpService:JSONEncode(l))
+end
+
+Players.PlayerAdded:Connect(function(p)
+	task.spawn(function()
+		local d = Profiles.WaitFor(p)
+		if not d then return end
+		local l = cleanLoadout(d.Loadout)
+		if type(d.Weapon) == "string" and Catalog.Is(d.Weapon, "weapon") and (type(d.Loadout) ~= "table" or d.Loadout.Weapon == nil) then l.Weapon = d.Weapon end
+		publishLoadout(p, l)
+	end)
+end)
+
+SetLoadoutR.OnServerEvent:Connect(function(player, l)
+	if os.clock() - (lastLoadout[player] or 0) < 0.15 then return end
+	lastLoadout[player] = os.clock()
+	if type(l) ~= "table" then return end
+	local clean = cleanLoadout(l)
+	if not Profiles.Get(player, "Loadout") then return end -- profile not loaded yet
+	Profiles.Set(player, "Loadout", clean)
+	Profiles.Set(player, "Weapon", clean.Weapon) -- what Breakline reads
+	publishLoadout(player, clean)
+end)
+Players.PlayerRemoving:Connect(function(p) lastLoadout[p] = nil end)
+
 -- ===== queue remote =====
 QueueR.OnServerEvent:Connect(function(player, on)
 	if os.clock() - (lastQueue[player] or 0) < 1 then return end
