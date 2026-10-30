@@ -1,11 +1,11 @@
--- ThirdPersonServer v4: world gun (any weapon, rebuilt on swap) on a torso joint, aim/state replication, shot + reload broadcast
+-- ThirdPersonServer v4.1 (v3.7: smaller world gun): world gun (any weapon, rebuilt on swap) on a torso joint, aim/state replication, shot + reload broadcast
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local GunModels = require(RS:WaitForChild("GunModels"))
 local Weapons = require(RS:WaitForChild("WeaponConfig"))
 local Skins = require(RS:WaitForChild("Skins"))
 
-local GUN_SCALE = 0.9 -- world rifle size relative to the character (v4: was 0.55, looked tiny; first-person gun is 0.85)
+local GUN_SCALE = 0.8 -- world rifle size relative to the character (v3.7: 0.9 -> 0.8, read as oversized; v4: was 0.55, looked tiny; first-person gun is 0.78)
 
 local folder = RS:FindFirstChild("TPRemotes")
 if not folder then
