@@ -346,14 +346,17 @@ function S.NewFigure(parent, skinId, opts)
 		return p
 	end
 	local function bar(a, b, t, color)
-		add("body", Vector3.new(t, t, (b - a).Magnitude), CFrame.lookAt((a + b) / 2, b), color, false, nil, true)
+		return add("arm", Vector3.new(t, t, (b - a).Magnitude), CFrame.lookAt((a + b) / 2, b), color, false, nil, true)
 	end
 
 	-- legs, hips, torso, shoulders (shared by every skin)
+	local hips = {} -- leg group -> hip pivot (legs swing from here when running / sitting)
 	for _, s in { -1, 1 } do
-		add("body", Vector3.new(0.95, 2.7, 1.0), CFrame.new(P(0.65 * s, 1.35, s == 1 and 0.4 or -0.25)), c.Under)
-		add("body", Vector3.new(0.9, 0.7, 0.2), CFrame.new(P(0.65 * s, 1.6, s == 1 and 0.95 or 0.3)), c.Armor)
-		add("body", Vector3.new(1.0, 0.4, 1.5), CFrame.new(P(0.65 * s, 0.2, s == 1 and 0.65 or 0)), c.Trim)
+		local lg = s == 1 and "legA" or "legB"
+		hips[lg] = CFrame.new(Q(P(0.65 * s, 2.7, 0)))
+		add(lg, Vector3.new(0.95, 2.7, 1.0), CFrame.new(P(0.65 * s, 1.35, s == 1 and 0.4 or -0.25)), c.Under)
+		add(lg, Vector3.new(0.9, 0.7, 0.2), CFrame.new(P(0.65 * s, 1.6, s == 1 and 0.95 or 0.3)), c.Armor)
+		add(lg, Vector3.new(1.0, 0.4, 1.5), CFrame.new(P(0.65 * s, 0.2, s == 1 and 0.65 or 0)), c.Trim)
 	end
 	add("body", Vector3.new(2.2, 0.6, 1.2), CFrame.new(0, 2.85, 0), c.Trim)
 	add("body", Vector3.new(2.3, 2.0, 1.3), CFrame.new(0, 4.05, 0), c.Suit)
@@ -381,13 +384,13 @@ function S.NewFigure(parent, skinId, opts)
 		local gunCF = CFrame.new(rHand) * rot * CFrame.new(-desc.Points.Grip.Position * s)
 		for _, d in desc.Parts do
 			if not d.Reticle and d.Group ~= "aux" and (d.Transparency or 0) < 1 then
-				add("body", d.Size * s, gunCF * (CFrame.new(d.CF.Position * s) * d.CF.Rotation), d.Glow and c.Accent or d.Color, d.Glow or d.Material == NEON, d.Shape, true)
+				add("gun", d.Size * s, gunCF * (CFrame.new(d.CF.Position * s) * d.CF.Rotation), d.Glow and c.Accent or d.Color, d.Glow or d.Material == NEON, d.Shape, true)
 			end
 		end
 		lHand = gunCF * (desc.Points.Fore.Position * s)
 		if (lHand - rHand).Magnitude < 0.9 then lHand = rHand + (lHand - rHand).Unit * 0.9 + Vector3.new(0, -0.15, 0) end -- pistols: hands together
 	else
-		local function rp(size, cf, color, neon) add("body", size, rf * cf, color, neon, nil, true) end
+		local function rp(size, cf, color, neon) add("gun", size, rf * cf, color, neon, nil, true) end
 		rp(Vector3.new(0.34, 0.5, 1.7), CFrame.new(0, 0, 0.95), rgb(36, 40, 52))
 		rp(Vector3.new(0.28, 0.55, 0.9), CFrame.new(0, -0.02, -0.4), c.Trim)
 		rp(Vector3.new(0.3, 0.36, 1.15), CFrame.new(0, -0.02, 2.35), c.Armor)
@@ -396,23 +399,107 @@ function S.NewFigure(parent, skinId, opts)
 		rp(Vector3.new(0.38, 0.06, 1.2), CFrame.new(0, 0.08, 1.0), c.Accent, true)
 	end
 	local SR, SL = Q(P(1.55, 5.0, 0)), Q(P(-1.55, 5.0, 0))
-	local ER = (SR + rHand) / 2 + Q(P(0.6, -0.5, -0.3))
-	local EL = (SL + lHand) / 2 + Q(P(-0.7, -0.6, -0.1))
-	bar(SR, ER, 0.62, c.Suit); bar(ER, rHand, 0.56, c.Suit)
-	bar(SL, EL, 0.62, c.Suit); bar(EL, lHand, 0.56, c.Suit)
-	add("body", Vector3.new(0.5, 0.5, 0.5), CFrame.new(rHand), c.Trim, false, nil, true)
-	add("body", Vector3.new(0.5, 0.5, 0.5), CFrame.new(lHand), c.Trim, false, nil, true)
+	local offR, offL = Q(P(0.6, -0.5, -0.3)), Q(P(-0.7, -0.6, -0.1))
+	local ER = (SR + rHand) / 2 + offR
+	local EL = (SL + lHand) / 2 + offL
+	-- arms are rebuilt every frame from the shoulder to wherever the gun hand is, so the gun can move (aim, inspect, lower)
+	local arms = {
+		{ sr = SR, hand = rHand, off = offR, up = bar(SR, ER, 0.62, c.Suit), lo = bar(ER, rHand, 0.56, c.Suit),
+			hp = add("arm", Vector3.new(0.5, 0.5, 0.5), CFrame.new(rHand), c.Trim, false, nil, true) },
+		{ sr = SL, hand = lHand, off = offL, up = bar(SL, EL, 0.62, c.Suit), lo = bar(EL, lHand, 0.56, c.Suit),
+			hp = add("arm", Vector3.new(0.5, 0.5, 0.5), CFrame.new(lHand), c.Trim, false, nil, true) },
+	}
 
 	local NECK = 5.25 * sy
-	local fig = { Model = model, HeadTop = NECK + 1.9 * hs, root = CFrame.new() }
-	local curYaw, curPitch, goYaw, goPitch, nextLook = 0, 0, 0, 0, 0
+	local fig = { Model = model, HeadTop = NECK + 1.9 * hs, root = CFrame.new(),
+		still = opts.still == true, -- true: no idle events, head fixed forward (cutscenes)
+		run = 0,       -- 0..1 leg swing while running
+		runPhase = 0,  -- radians, advance it while running
+		sit = 0 }      -- 0..1 legs forward (sitting on a throne)
 	local rng = Random.new()
 	local phase = rng:NextNumber(0, 6)
+	local curYaw, curPitch, goYaw, goPitch, nextLook = 0, 0, 0, 0, 0
+
+	-- ===== idle director: every few seconds the figure does something (aims in, checks the gun, lowers it, scans around, turns, shifts weight)
+	local pose = { aim = 0, inspect = 0, low = 0, shift = 0, turn = 0 }
+	local goal = { aim = 0, inspect = 0, low = 0, shift = 0, turn = 0 }
+	local evt, evtStart, evtEnd = nil, 0, 0
+	local nextEvt = rng:NextNumber(1.5, 4)
+	local EVENTS = {
+		{ name = "aim", w = 3, dur = { 2.4, 4.0 } },
+		{ name = "inspect", w = 2, dur = { 2.6, 3.6 } },
+		{ name = "low", w = 2, dur = { 3.0, 5.0 } },
+		{ name = "scan", w = 3, dur = { 3.0, 4.2 } },
+		{ name = "turn", w = 2, dur = { 3.0, 4.5 } },
+		{ name = "shift", w = 2, dur = { 2.4, 3.6 } },
+	}
+	local function pickEvent(last)
+		local total = 0
+		for _, e in EVENTS do if e.name ~= last then total += e.w end end
+		local r = rng:NextNumber(0, total)
+		for _, e in EVENTS do
+			if e.name ~= last then
+				r -= e.w
+				if r <= 0 then return e end
+			end
+		end
+		return EVENTS[1]
+	end
+	local evtSign, lastEvt = 1, nil
+	local PIV = Q(Vector3.new(0, 4.6, 0.4)) -- the gun swings about the chest
+
 	function fig:SetRoot(cf) self.root = cf end
+	local function setBar(part, a, b, base)
+		part.Size = Vector3.new(part.Size.X, part.Size.Y, math.max((b - a).Magnitude, 0.05))
+		part.CFrame = base * CFrame.lookAt((a + b) / 2, b)
+	end
 	function fig:Update(t, dt)
-		-- relaxed idle: slow breathing bob + a gentle sway
-		local root = self.root * CFrame.new(0, math.sin(t * 1.7 + phase) * 0.05, 0) * CFrame.Angles(0, math.sin(t * 0.5 + phase) * 0.05, math.sin(t * 0.9 + phase) * 0.012)
-		if t >= nextLook then
+		dt = dt or 0
+		local still = self.still
+		-- ---- director
+		if not still then
+			if evt and t >= evtEnd then
+				for k in goal do goal[k] = 0 end
+				lastEvt, evt = evt.name, nil
+				nextEvt = t + rng:NextNumber(2.5, 6)
+			elseif not evt and t >= nextEvt then
+				evt = pickEvent(lastEvt)
+				evtStart = t
+				evtEnd = t + rng:NextNumber(evt.dur[1], evt.dur[2])
+				evtSign = rng:NextInteger(0, 1) == 0 and -1 or 1
+				if evt.name == "aim" then goal.aim = 1
+				elseif evt.name == "inspect" then goal.inspect = 1
+				elseif evt.name == "low" then goal.low = 1
+				elseif evt.name == "turn" then goal.turn = evtSign
+				elseif evt.name == "shift" then goal.shift = evtSign end
+			end
+		end
+		local pk = 1 - math.exp(-3.2 * dt)
+		for k, v in pose do pose[k] = v + (goal[k] - v) * pk end
+
+		-- ---- body: slow breathing (deeper now and then), sway, weight shift, turning
+		local br = math.sin(t * 1.7 + phase)
+		local deep = 0.5 + 0.5 * math.sin(t * 0.37 + phase * 1.7)
+		local still0 = still and 0.5 or 1
+		local root = self.root
+			* CFrame.new(0, (br * (0.05 + 0.03 * deep) + pose.aim * math.sin(t * 6) * 0.004) * still0, 0)
+			* CFrame.Angles(0, math.sin(t * 0.5 + phase) * 0.05 * still0 + pose.turn * 0.55 + pose.shift * 0.12,
+				math.sin(t * 0.9 + phase) * 0.012 + pose.shift * 0.045)
+			* CFrame.Angles(pose.aim * 0.04 + pose.inspect * 0.05, 0, 0)
+
+		-- ---- head
+		if still then
+			goYaw, goPitch = 0, 0
+		elseif evt and evt.name == "aim" then
+			goYaw, goPitch = -pose.turn * 0.5, 0.05
+		elseif evt and evt.name == "inspect" then
+			goYaw, goPitch = 0.12 * evtSign, 0.28
+		elseif evt and evt.name == "scan" then
+			goYaw = math.sin((t - evtStart) * 1.25) * math.rad(70)
+			goPitch = math.rad(2) + math.sin((t - evtStart) * 0.8) * 0.05
+		elseif evt and evt.name == "turn" then
+			goYaw, goPitch = -evtSign * 0.5, 0.02 -- the head leads, the body follows
+		elseif t >= nextLook then
 			goYaw = math.rad(rng:NextNumber(-45, 45))
 			goPitch = math.rad(rng:NextNumber(-6, 10))
 			if opts.camPos and rng:NextInteger(1, 3) == 1 then -- sometimes looks at the camera
@@ -422,12 +509,40 @@ function S.NewFigure(parent, skinId, opts)
 			end
 			nextLook = t + rng:NextNumber(2.2, 4.8)
 		end
-		local k = 1 - math.exp(-4 * (dt or 0))
+		local k = 1 - math.exp(-4 * dt)
 		curYaw += (goYaw - curYaw) * k
 		curPitch += (goPitch - curPitch) * k
 		local headCF = root * CFrame.new(0, NECK, 0) * CFrame.Angles(curPitch, curYaw, 0)
+
+		-- ---- gun pose: aim in (level, up by the face), inspect (lifted + canted), low ready (muzzle down)
+		local aim, ins, low = pose.aim, pose.inspect, pose.low
+		local rot = CFrame.Angles(-0.17 * aim - 0.5 * ins + 0.55 * low, -0.35 * aim - 0.2 * ins - 0.1 * low, 0.65 * ins)
+		local trn = Vector3.new(0.45 * aim + 0.5 * ins, 0.8 * aim + 0.9 * ins - 0.35 * low, 0.15 * aim - 0.1 * ins - 0.1 * low)
+		local gT = CFrame.new(trn) * CFrame.new(PIV) * rot * CFrame.new(-PIV)
+
+		-- ---- legs
+		local sitA, runA, rp = self.sit, self.run, self.runPhase
+
 		for _, e in list do
-			e.part.CFrame = (e.group == "head" and headCF or root) * e.rel
+			local g = e.group
+			if g == "head" then
+				e.part.CFrame = headCF * e.rel
+			elseif g == "gun" then
+				e.part.CFrame = root * gT * e.rel
+			elseif g == "legA" or g == "legB" then
+				local ang = -sitA * 1.45 + runA * math.sin(rp + (g == "legA" and 0 or math.pi)) * 0.85
+				local hp = hips[g]
+				e.part.CFrame = root * (hp * CFrame.Angles(ang, 0, 0) * hp:Inverse()) * e.rel
+			elseif g == "body" then
+				e.part.CFrame = root * e.rel
+			end
+		end
+		for _, a in arms do
+			local hand = gT:PointToWorldSpace(a.hand)
+			local el = (a.sr + hand) / 2 + a.off
+			setBar(a.up, a.sr, el, root)
+			setBar(a.lo, el, hand, root)
+			a.hp.CFrame = root * CFrame.new(hand)
 		end
 	end
 	function fig:Destroy() model:Destroy() end
