@@ -710,7 +710,11 @@ local function buildReward(p, outcome)
 	add("BOXES PLUGGED", tostring(plugged), 1 + plugged * R.PerPlugged)
 	add("BOXES DESTROYED", tostring(destroyed), 1 + destroyed * R.PerDestroyed)
 	add("DAMAGE", tostring(math.floor(dmg)), 1 + math.floor(dmg / 1000) * R.PerThousandDamage)
-	return { outcome = outcome, base = R.Base, rows = rows, mult = math.floor(mult * 100 + 0.5) / 100,
+	-- v3.8: XP (player level). One number; the summary screen fills the XP bar with it while the stat rows are revealed.
+	local X = C.XP
+	local xp = X.Base + (outcome == "win" and X.Win or (outcome == "draw" and X.Draw or X.Loss))
+		+ kills * X.PerKill + plugged * X.PerPlugged + destroyed * X.PerDestroyed + math.floor(dmg / 100) * X.PerHundredDamage
+	return { outcome = outcome, base = R.Base, rows = rows, mult = math.floor(mult * 100 + 0.5) / 100, xp = xp,
 		souls = math.floor(R.Base * mult + 0.5), kills = kills, plugged = plugged, destroyed = destroyed, damage = math.floor(dmg) }
 end
 
@@ -727,7 +731,9 @@ local function endRound(winner)
 			local outcome = (not winner and "draw") or (t == winner and "win") or "loss"
 			local r = buildReward(p, outcome)
 			results[p] = r
+			r.xpBefore = Profiles.Get(p, "XP") or 0 -- the summary screen needs the XP you had BEFORE this match
 			Profiles.Increment(p, "Souls", r.souls)
+			Profiles.Increment(p, "XP", r.xp)
 			if outcome == "win" then Profiles.Increment(p, "Wins", 1) elseif outcome == "loss" then Profiles.Increment(p, "Losses", 1) end
 			ResultRemote:FireClient(p, r)
 		else
@@ -823,6 +829,22 @@ local function onCharacter(player, char)
 			char:PivotTo(teamSpawnCF(player, tn))
 		end
 		if root and (phase == "Warp" or phase == "Countdown") then root.Anchored = true end -- frozen until the countdown ends
+		-- v3.8: respawning in the middle of a round: you are frozen + untouchable while souls reveal your body bottom-up (RespawnReveal client)
+		if root and char.Parent and phase == "Playing" then
+			local ff = Instance.new("ForceField")
+			ff.Visible = false
+			ff.Parent = char
+			root.Anchored = true
+			char:SetAttribute("RevealStart", workspace:GetServerTimeNow())
+			char:SetAttribute("Revealing", true)
+			task.delay(C.REVEAL_TIME, function()
+				if ff.Parent then ff:Destroy() end
+				if not char.Parent then return end
+				char:SetAttribute("Revealing", false)
+				local still = phase == "Warp" or phase == "Countdown" or phase == "Pregame" -- a new round started meanwhile: the round code owns the freeze
+				if root.Parent and not still then root.Anchored = false end
+			end)
+		end
 	end
 	local function group(part)
 		if part:IsA("BasePart") then part.CollisionGroup = "WPPlayer" end
