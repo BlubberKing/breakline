@@ -143,8 +143,14 @@ local function refresh()
 
 	if phase == "Waiting" then
 		timerLabel.Text = "WAITING FOR PLAYERS"
-	elseif phase == "Intermission" then
-		timerLabel.Text = ("STARTING IN %d"):format(math.max(0, math.ceil(ends - workspace:GetServerTimeNow())))
+	elseif phase == "Pregame" then
+		timerLabel.Text = "PREPARING"
+	elseif phase == "Warp" then
+		timerLabel.Text = "DEPLOYING"
+	elseif phase == "Countdown" then
+		timerLabel.Text = "GET READY"
+	elseif phase == "Summary" then
+		timerLabel.Text = "MATCH OVER"
 	elseif phase == "Playing" then
 		local t = player.Team and player.Team.Name
 		timerLabel.Text = t and t:upper() or "SPECTATING"
@@ -155,12 +161,6 @@ local function refresh()
 		timerLabel.TextColor3 = (w == NAME_A and COL_A) or (w == NAME_B and COL_B) or Color3.new(1, 1, 1)
 	end
 	if phase ~= "Playing" and phase ~= "Result" then timerLabel.TextColor3 = Color3.new(1, 1, 1) end
-
-	-- countdown ticks (last 5 seconds of the intermission)
-	if phase == "Intermission" then
-		local left = math.ceil(ends - workspace:GetServerTimeNow())
-		if left ~= lastTick and left >= 1 and left <= 5 then lastTick = left; Sfx.Play("Countdown") end
-	end
 
 	if phase ~= lastPhase then
 		lastPhase = phase
