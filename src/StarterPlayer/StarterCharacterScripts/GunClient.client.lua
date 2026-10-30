@@ -20,6 +20,7 @@ local GunMath = require(RS:WaitForChild("GunMath"))
 local Spring = require(RS:WaitForChild("Spring"))
 local GunModels = require(RS:WaitForChild("GunModels"))
 local Sfx = require(RS:WaitForChild("Sfx"))
+local TimeScale = require(RS:WaitForChild("TimeScale"))
 local HitFX = require(RS:WaitForChild("HitFX"))
 local Remotes = RS:WaitForChild("GunRemotes")
 local FireRemote, ReloadRemote = Remotes:WaitForChild("Fire"), Remotes:WaitForChild("Reload")
@@ -596,10 +597,11 @@ local function fireControl(now, canFire)
 	end
 	if cfg.FireMode == "Auto" then
 		if triggerDown then
-			if nextFireTime < now - INTERVAL then nextFireTime = now end
+			local iv = INTERVAL / TimeScale.Get() -- slow motion: fewer shots per second
+			if nextFireTime < now - iv then nextFireTime = now end
 			while nextFireTime <= now and ammo > 0 do
 				fire()
-				nextFireTime += INTERVAL
+				nextFireTime += iv
 			end
 		end
 	elseif cfg.FireMode == "Semi" then
@@ -607,7 +609,7 @@ local function fireControl(now, canFire)
 		if semiPending and now >= nextFireTime then
 			semiPending = nil
 			fire()
-			nextFireTime = now + INTERVAL
+			nextFireTime = now + INTERVAL / TimeScale.Get()
 		end
 	else -- Burst (holding keeps bursting)
 		if burstQueue == 0 and (triggerDown or semiPending) and now >= nextFireTime then
@@ -618,7 +620,7 @@ local function fireControl(now, canFire)
 		while burstQueue > 0 and nextFireTime <= now and ammo > 0 do
 			fire()
 			burstQueue -= 1
-			nextFireTime += burstQueue > 0 and 60 / cfg.BurstRPM or cfg.BurstDelay
+			nextFireTime += (burstQueue > 0 and 60 / cfg.BurstRPM or cfg.BurstDelay) / TimeScale.Get()
 		end
 		if ammo <= 0 then burstQueue = 0 end
 	end
@@ -656,7 +658,7 @@ local function onRender(dt)
 	local wantsSprint = (shiftHeld or sprintToggle) and moving and not aiming and not triggerDown and not crouching
 	local sprinting = wantsSprint and not sliding and not mantling
 	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
-	humanoid.WalkSpeed = baseSpeed * (carryingBox and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed)
+	humanoid.WalkSpeed = baseSpeed * (carryingBox and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed) * TimeScale.Get() -- slow motion at the end of a round
 	aimAlpha = approach(aimAlpha, aiming and 1 or 0, dt, cfg.ADSTime)
 	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
