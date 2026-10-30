@@ -5,7 +5,7 @@
 --   Profiles.Set(player, key, value)    -> marks the key to be saved
 --   Profiles.Increment(player, key, n)  -> number keys
 --   Profiles.Save(player)               -> save now (call before teleporting a player away)
--- Number/string keys are mirrored to Player attributes (Coins, Wins, Losses, Weapon, Sight) so UI can read them.
+-- Number/string keys are mirrored to Player attributes (Souls, Wins, Losses) so UI can read them.
 -- Needs: Game Settings > Security > "Enable Studio Access to API Services" ON to save from Studio.
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
@@ -14,8 +14,9 @@ local RunService = game:GetService("RunService")
 local store = DataStoreService:GetDataStore("BreaklineProfile_v1")
 
 local DEFAULTS = {
-	Coins = 0, Wins = 0, Losses = 0,
+	Souls = 0, Wins = 0, Losses = 0,
 	Weapon = "", Sight = "",   -- last equipped loadout (to be wired into GunServer later)
+	Loadout = {},              -- lobby loadout: { Move, Weapon, Gadgets = {3}, Reserve = {3} } (item ids)
 	Cards = {}, Deck = {},     -- reserved for the card system
 }
 
@@ -41,6 +42,8 @@ local function retry(fn)
 end
 
 local function mirror(player, k, v)
+	-- Weapon / Sight are NOT mirrored: GunServer owns those attributes in the match (mirroring "" used to wipe your gun = no damage)
+	if k == "Weapon" or k == "Sight" then return end
 	if type(v) == "number" or type(v) == "string" or type(v) == "boolean" then player:SetAttribute(k, v) end
 end
 
@@ -60,6 +63,7 @@ function M.Load(player)
 		end
 	end
 	data = type(data) == "table" and data or {}
+	if data.Souls == nil and type(data.Coins) == "number" then data.Souls = data.Coins end -- old saves: Coins became Souls
 	for k, v in DEFAULTS do
 		if data[k] == nil then data[k] = copy(v) end
 	end
