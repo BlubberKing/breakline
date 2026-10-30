@@ -25,7 +25,16 @@ C.REWARD = {
 	PerDestroyed = 0.08,                  -- + this per enemy box you destroyed
 	PerThousandDamage = 0.02,             -- + this per 1000 damage dealt to players (tiny)
 }
+-- v3.8: player XP earned per match (one number on the summary screen, the bar fills while the stat rows are revealed).
+-- XP = Base + outcome + kills + boxes plugged + boxes destroyed + damage. Level curve lives in ReplicatedStorage.Levels.
+C.XP = {
+	Base = 40,
+	Win = 60, Draw = 30, Loss = 20,
+	PerKill = 12, PerPlugged = 8, PerDestroyed = 10,
+	PerHundredDamage = 2,
+}
 C.RESPAWN_TIME = 5   -- PROPOSAL (GDD: 5-7s)
+C.REVEAL_TIME = 1.4  -- v3.8: after a respawn your body is revealed bottom-up by souls; you cannot move / shoot / be hurt until it is done
 
 -- Team 1 (Red) defends one end of the map, team 2 (Blue) the other. See MAP.SwapEnds.
 C.Teams = {
