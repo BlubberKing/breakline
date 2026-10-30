@@ -1,4 +1,4 @@
--- Movement v3: crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
+-- Movement v3.1 (v3.8: stands down while AbilityMode is set): crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
 -- momentum slide (keeps speed on flat, gains downhill, loses a little uphill), slide-out blend, mantle,
 -- momentum jumps (low + snappy, keep your run speed in the air, limited air steering).
 local Players = game:GetService("Players")
@@ -451,6 +451,18 @@ end)
 ------------------------------------------------------------------ main loop
 local stepConn = RunService.Stepped:Connect(function(_, dt)
 	if hum.Health <= 0 then return end
+	-- v3.8: AbilityClient owns the character while it wall-runs / wall-climbs: let go of everything and stand down
+	if char:GetAttribute("AbilityMode") ~= nil then
+		if mode ~= "none" then
+			if mode == "slide" then endSlide(false) end
+			release()
+			mode = "none"
+			char:SetAttribute("Mantling", false)
+		end
+		fallForce.Enabled = false
+		crouchHeld = false
+		return
+	end
 	local now = os.clock()
 	local g = grounded()
 	if now - slideQueuedAt < CFG.SLIDE_BUFFER and canSlide() then startSlide() end
