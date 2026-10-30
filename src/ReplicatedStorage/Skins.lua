@@ -6,7 +6,8 @@
 --   Skins.NewFigure(parent, skinId, opts)       -> client: a posed showcase figure built from parts (lobby menus / ViewportFrames)
 --       opts = { weapon = "VX9" (optional, real gun model from GunModels), camPos = Vector3 (so the figure can glance at the camera),
 --                idle = true (v3.7: random idle moves - aim in, inspect, low ready, scan, turn, shift. OFF unless asked for: only the
---                lobby squad stage turns it on), still = true (head fixed forward, smaller breathing: cutscenes) }
+--                lobby squad stage turns it on), still = true (head fixed forward, smaller breathing: cutscenes),
+--                static = true (v3.8: no movement at all, just holding the gun: skin picker) }
 --       figure:SetRoot(cframe), figure:Update(t, dt), figure:Destroy(), figure.HeadTop (studs above the root)
 --   Skins.Proportions / Skins.ApplyProportions(character) -> v3.2: every player is a bit TALLER and a lot SKINNIER than the stock rig
 -- Adding a skin: add an entry to Skins.List (colors + `card` color), then add its extra gear in DRESS[id] and FIGURE[id].
@@ -424,7 +425,8 @@ function S.NewFigure(parent, skinId, opts)
 
 	local NECK = 5.25 * sy
 	local fig = { Model = model, HeadTop = NECK + 1.9 * hs, root = CFrame.new(),
-		still = opts.still == true, -- true: no idle events, head fixed forward (cutscenes)
+		still = opts.still == true or opts.static == true, -- true: no idle events, head fixed forward (cutscenes)
+		static = opts.static == true, -- v3.8: true: no breathing / sway at all, a plain pose holding the gun (skin picker)
 		idle = opts.idle == true,   -- true: random idle moves (lobby squad stage only)
 		run = 0,       -- 0..1 leg swing while running
 		runPhase = 0,  -- radians, advance it while running
@@ -499,11 +501,11 @@ function S.NewFigure(parent, skinId, opts)
 		-- ---- body: slow breathing (deeper now and then), sway, weight shift, turning
 		local br = math.sin(t * 1.7 + phase)
 		local deep = 0.5 + 0.5 * math.sin(t * 0.37 + phase * 1.7)
-		local still0 = still and 0.5 or 1
+		local still0 = self.static and 0 or (still and 0.5 or 1)
 		local root = self.root
-			* CFrame.new(0, (br * (0.05 + 0.03 * deep) + pose.aim * math.sin(t * 6) * 0.004) * still0, 0)
+			* CFrame.new(0, (br * (0.034 + 0.019 * deep) + pose.aim * math.sin(t * 6) * 0.004) * still0, 0)
 			* CFrame.Angles(0, math.sin(t * 0.5 + phase) * 0.05 * still0 + pose.turn * 0.55 + pose.shift * 0.12,
-				math.sin(t * 0.9 + phase) * 0.012 + pose.shift * 0.045)
+				math.sin(t * 0.9 + phase) * 0.012 * (self.static and 0 or 1) + pose.shift * 0.045)
 			* CFrame.Angles(pose.aim * 0.04 + pose.inspect * 0.05, 0, 0)
 
 		-- ---- head
