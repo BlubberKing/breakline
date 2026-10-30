@@ -1,4 +1,6 @@
--- LobbyClient v5.1 "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
+-- LobbyClient v5.2 "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
+-- v5.2 (GDD v3.7): new slim logo from UIKit (flowing red slash), idle moves only on the squad stage, invite popup no longer
+-- peeks in at the top of the screen on non-16:9 windows (it is hidden, not just parked above the canvas).
 -- Look: flat, sharp, dark, on-brand (black / white / Breakline red), built like a big-shooter front end.
 -- Motion is kept small: buttons grow a few percent on hover (smooth Quint ease), the galaxy turns very slowly.
 -- Layout (1920x1080 canvas, scaled to the screen, 56 px outer margin):
@@ -27,6 +29,7 @@ local PromoteR, SetLoadoutR, SetSkinR = remotes:WaitForChild("Promote"), remotes
 local Catalog = require(RS:WaitForChild("LobbyCatalog"))
 local Skins = require(RS:WaitForChild("Skins"))
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
+local UI = require(RS:WaitForChild("UIKit")) -- v5.2: shared logo (copy of Breakline's UIKit)
 
 -- ================= theme =================
 local rgb = Color3.fromRGB
@@ -225,23 +228,10 @@ local function circleButton(parent, cx, cy, d)
 	return b, st, function(on) active = on paint() end
 end
 
--- ================= logo: BREAK / LINE, static =================
--- Hard condensed type, a slim red slash between the words. Nothing moves.
+-- ================= logo: BREAK / LINE (v5.2: UIKit logo) =================
+-- Slim, spaced condensed type; the red slash between the words has a light flowing down it. Same logo as the loading screens.
 local function makeLogo(parent, x, y, size)
-	local h = math.floor(size * 1.15)
-	local holder = new("Frame", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(0, h), AutomaticSize = Enum.AutomaticSize.X,
-		BackgroundTransparency = 1 }, parent)
-	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
-		SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, math.floor(size * 0.05)) }, holder)
-	local function word(text, order)
-		return new("TextLabel", { BackgroundTransparency = 1, Text = text, TextSize = size, FontFace = FONTS.H, TextColor3 = C.text,
-			AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, h), LayoutOrder = order }, holder)
-	end
-	word("BREAK", 1)
-	local gap = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(math.floor(size * 0.34), h), LayoutOrder = 2 }, holder)
-	new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.fromOffset(math.max(3, math.floor(size * 0.1)), math.floor(size * 0.98)),
-		Rotation = 20, BackgroundColor3 = C.red, BorderSizePixel = 0 }, gap)
-	word("LINE", 3)
+	local holder = UI.Logo(parent, math.floor(size * 0.9), { Position = UDim2.fromOffset(x, y) }, "left")
 	return holder
 end
 
@@ -662,7 +652,7 @@ local function rebuildSquad()
 	table.clear(squad)
 	for i, look in looks do
 		local slot = SLOTS[i]
-		local fig = Skins.NewFigure(vp, look.skin, { weapon = look.weapon, camPos = CAM_POS })
+		local fig = Skins.NewFigure(vp, look.skin, { weapon = look.weapon, camPos = CAM_POS, idle = true }) -- idle moves: this stage only
 		local root = CFrame.new(slot.pos) * CFrame.Angles(0, math.rad(slot.yaw), 0)
 		fig:SetRoot(root)
 		local tag = nameTag(string.upper(look.name), look.leader)
@@ -1542,9 +1532,21 @@ local popText = lbl(pop_, "", 24, 22, 30, popW - 44, 32, C.text, "H")
 popText.TextTruncate = Enum.TextTruncate.AtEnd
 local yes = button(pop_, "ACCEPT", 22, 72, 202, 40, "primary", 17)
 local no = button(pop_, "DECLINE", 236, 72, 202, 40, "ghost", 17)
+-- v5.2: the popup is HIDDEN while it is not in use. It used to just sit at y = -150 of the 1920x1080 canvas, which is still on
+-- screen when the window is taller than 16:9 (the canvas is letterboxed), so a blank invite box showed at the top all the time.
+pop_.Visible = false
 local current
+local popToken = 0
 local function showPop(on)
-	tween(pop_, EASE, { Position = UDim2.fromOffset((1920 - popW) / 2, on and 24 or -150) })
+	popToken += 1
+	local my = popToken
+	if on then
+		pop_.Visible = true
+		tween(pop_, EASE, { Position = UDim2.fromOffset((1920 - popW) / 2, 24) })
+	else
+		tween(pop_, EASE, { Position = UDim2.fromOffset((1920 - popW) / 2, -150) })
+		task.delay(0.25, function() if my == popToken then pop_.Visible = false end end)
+	end
 end
 yes.MouseButton1Click:Connect(function() if current then RespondR:FireServer(current, true) current = nil showPop(false) end end)
 no.MouseButton1Click:Connect(function() if current then RespondR:FireServer(current, false) current = nil showPop(false) end end)
@@ -1554,6 +1556,8 @@ NoticeR.OnClientEvent:Connect(function(d)
 	if d.kind == "msg" then
 		if screenOpen then say(tostring(d.text)) else hudStatus.Text = string.upper(tostring(d.text)) task.delay(4, refreshQueue) end
 	elseif d.kind == "invite" then
+		if type(d.id) ~= "string" or d.id == "" or d.fromName == nil then return end
+		if d.id == current then return end -- same invite again (another server relayed it): keep the popup as it is
 		current = d.id
 		popText.Text = string.upper(tostring(d.fromName)) .. " INVITED YOU"
 		showPop(true)
