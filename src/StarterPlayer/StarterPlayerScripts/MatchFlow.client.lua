@@ -19,6 +19,7 @@ local UI = require(RS:WaitForChild("UIKit"))
 local Skins = require(RS:WaitForChild("Skins"))
 local Catalog = require(RS:WaitForChild("LobbyCatalog"))
 local C = require(RS:WaitForChild("MatchConfig"))
+local TimeScale = require(RS:WaitForChild("TimeScale"))
 local Sfx = require(RS:WaitForChild("Sfx"))
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
 local State = RS:WaitForChild("MatchState")
@@ -442,6 +443,7 @@ local function runPregame(token)
 		btn.MouseButton1Click:Connect(function() openPicker(t) end)
 		groupX[d.group] = groupX[d.group] or { x, x }
 		groupX[d.group][2] = x + SQ
+		x += SQ -- next tile starts after this one (this was missing: every tile used to land on the same spot)
 	end
 	local CAPTIONS = { "MOVEMENT", "WEAPON", "GADGETS", "RESERVE" }
 	for g, r in groupX do
@@ -612,19 +614,27 @@ local function runWarp(token)
 	local ignore = { warpFolder }
 	for _, p in Players:GetPlayers() do if p.Character then table.insert(ignore, p.Character) end end
 	floorParams.FilterDescendantsInstances = ignore
-	local RUN_LEN, RUN_TIME = 36, 1.7
-	for i, m in members do
+	local RUN_LEN, RUN_TIME = 38, 2.1
+	-- everybody runs the SAME way: forward, from behind, side by side, towards the spot where they spawn.
+	-- "forward" = the way the squad spawns facing (average of the members, so all lanes are parallel)
+	local entries, sumFwd = {}, Vector3.zero
+	for _, m in members do
 		local ch = m.Character
 		local r = ch and ch:FindFirstChild("HumanoidRootPart")
 		if r then
-			local hit = workspace:Raycast(r.Position, Vector3.new(0, -14, 0), floorParams)
-			local floorY = hit and hit.Position.Y or (r.Position.Y - 4.4)
-			local endPos = Vector3.new(r.Position.X, floorY, r.Position.Z)
-			local fwd = Vector3.new(r.CFrame.LookVector.X, 0, r.CFrame.LookVector.Z)
-			fwd = fwd.Magnitude > 0.01 and fwd.Unit or Vector3.new(0, 0, -1)
-			local fig = Skins.NewFigure(warpFolder, skinOf(m), { weapon = weaponOf(m) })
-			table.insert(figs, { fig = fig, endPos = endPos, fwd = fwd, delay = (i - 1) * 0.13, landed = false })
+			local lv = Vector3.new(r.CFrame.LookVector.X, 0, r.CFrame.LookVector.Z)
+			if lv.Magnitude > 0.01 then sumFwd += lv.Unit end
+			table.insert(entries, { m = m, r = r })
 		end
+	end
+	local commonFwd = sumFwd.Magnitude > 0.01 and sumFwd.Unit or Vector3.new(0, 0, -1)
+	for i, en in entries do
+		local r = en.r
+		local hit = workspace:Raycast(r.Position, Vector3.new(0, -14, 0), floorParams)
+		local floorY = hit and hit.Position.Y or (r.Position.Y - 4.4)
+		local endPos = Vector3.new(r.Position.X, floorY, r.Position.Z)
+		local fig = Skins.NewFigure(warpFolder, skinOf(en.m), { weapon = weaponOf(en.m), still = true })
+		table.insert(figs, { fig = fig, endPos = endPos, fwd = commonFwd, delay = (i - 1) * 0.06, landed = false })
 	end
 	if #figs == 0 then
 		-- no characters yet: just reveal the map
@@ -636,15 +646,13 @@ local function runWarp(token)
 	warpActive = true
 	hideGuis()
 	camera.CameraType = Enum.CameraType.Scriptable
-	local avgFwd = Vector3.zero
-	for _, f in figs do avgFwd += f.fwd end
-	avgFwd = avgFwd.Magnitude > 0.01 and avgFwd.Unit or Vector3.new(0, 0, -1)
+	local avgFwd = commonFwd
 	local RUN0 = 4.75
 	local function centroid(timeNow)
 		local c = Vector3.zero
 		for _, f in figs do
 			local p = math.clamp((timeNow - RUN0 - f.delay) / RUN_TIME, 0, 1)
-			local e = 1 - (1 - p) ^ 2.2
+			local e = 1 - (1 - p) ^ 1.6
 			c += f.endPos - f.fwd * RUN_LEN * (1 - e)
 		end
 		return c / #figs
@@ -672,11 +680,13 @@ local function runWarp(token)
 		setOthersHidden(true)
 		for _, f in figs do
 			local p = math.clamp((t - RUN0 - f.delay) / RUN_TIME, 0, 1)
-			local e = 1 - (1 - p) ^ 2.2
+			local e = 1 - (1 - p) ^ 1.6
 			local pos = f.endPos - f.fwd * RUN_LEN * (1 - e)
 			local running = p > 0 and p < 1
-			local bob = running and math.abs(math.sin((t - RUN0) * 16)) * 0.5 or 0
-			local lean = running and 0.24 * (1 - p ^ 3) or 0
+			local bob = running and math.abs(math.sin((t - RUN0) * 15)) * 0.35 or 0
+			local lean = running and 0.26 * (1 - p ^ 3) or 0
+			f.fig.run = running and 1 or 0
+			f.fig.runPhase = (t - RUN0) * 15
 			f.fig:SetRoot(faceDir(pos + Vector3.new(0, bob, 0), f.fwd) * CFrame.Angles(lean, 0, 0))
 			f.fig:Update(t, dt)
 			if p >= 1 and not f.landed then
@@ -725,11 +735,80 @@ local function runGo(token)
 end
 
 -- ======================================================================================
--- RESULT: the winners celebrate
+-- SLOW MOTION: the round was just decided. Everything (movement, shooting, falling) runs at a crawl for C.SLOWMO_TIME.
+-- The slowing itself is done by TimeScale (Movement, GunClient, MatchServer gravity); this only dresses the screen.
 -- ======================================================================================
+local slowFx
+local function stopSlowFx()
+	renderFns.slowmo = nil
+	if slowFx then slowFx:Destroy() slowFx = nil end
+end
+local function runSlowMo(token)
+	stopSlowFx()
+	slowFx = Instance.new("ColorCorrectionEffect")
+	slowFx.Name = "SlowMoFX"
+	slowFx.Parent = game:GetService("Lighting")
+	-- cinematic bars slide in
+	local root = track(new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 5 }, gui))
+	local top = new("Frame", { Size = UDim2.new(1, 0, 0.11, 0), Position = UDim2.fromScale(0, -0.11), BackgroundColor3 = BLACK, BorderSizePixel = 0, ZIndex = 5 }, root)
+	local bot = new("Frame", { Size = UDim2.new(1, 0, 0.11, 0), Position = UDim2.fromScale(0, 1), BackgroundColor3 = BLACK, BorderSizePixel = 0, ZIndex = 5 }, root)
+	local slide = TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+	tween(top, slide, { Position = UDim2.fromScale(0, 0) })
+	tween(bot, slide, { Position = UDim2.fromScale(0, 0.89) })
+	-- a short white "hit" at the moment of impact
+	flash.BackgroundTransparency = 0.55
+	tween(flash, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+	sfx("Notify")
+	renderFns.slowmo = function()
+		if not alive(token) then return end
+		local ts = TimeScale.Get()
+		local k = math.clamp((1 - ts) / (1 - C.SLOWMO_SCALE), 0, 1) -- 0 normal .. 1 full slow motion
+		slowFx.Saturation = -0.75 * k
+		slowFx.Contrast = 0.18 * k
+		slowFx.Brightness = -0.05 * k
+		slowFx.TintColor = Color3.new(1, 1, 1):Lerp(rgb(200, 215, 255), k)
+	end
+end
+
+-- ======================================================================================
+-- RESULT: the winning team sits on thrones (5 s, no confetti)
+-- ======================================================================================
+local function buildThrone(world, pos, col, big)
+	local stone, dark = rgb(34, 36, 44), rgb(18, 19, 24)
+	local w = big and 1.12 or 1
+	local top = big and 1.0 or 0 -- the middle throne sits on a higher step
+	local function P(size, cf, color, neon, transp) return part(world, size, cf, color, neon, transp) end
+	-- dais
+	P(Vector3.new(9.6 * w, 0.6, 9.6), CFrame.new(pos + Vector3.new(0, 0.3 - 0.6, 0.6)), dark)
+	P(Vector3.new(9.8 * w, 0.12, 9.8), CFrame.new(pos + Vector3.new(0, -0.3, 0.6)), col, true, 0.15)
+	if top > 0 then
+		P(Vector3.new(8.2 * w, top, 8.4), CFrame.new(pos + Vector3.new(0, top / 2, 0.6)), stone)
+		P(Vector3.new(8.4 * w, 0.1, 8.6), CFrame.new(pos + Vector3.new(0, top, 0.6)), col, true, 0.2)
+	end
+	local y0 = pos.Y + top -- top of the dais
+	-- seat block (top of the seat = y0 + 1.9)
+	P(Vector3.new(5.2, 1.9, 3.6), CFrame.new(pos + Vector3.new(0, y0 + 0.95 - pos.Y, -0.2)), stone)
+	P(Vector3.new(5.3, 0.14, 3.7), CFrame.new(pos + Vector3.new(0, y0 + 1.9 - pos.Y, -0.2)), col, true, 0.25)
+	-- tall back + crest
+	P(Vector3.new(5.4, 8.2, 0.9), CFrame.new(pos + Vector3.new(0, y0 + 1.9 + 4.1 - pos.Y, -2.2)), stone)
+	P(Vector3.new(6.0, 0.5, 1.2), CFrame.new(pos + Vector3.new(0, y0 + 1.9 + 8.4 - pos.Y, -2.2)), col, true, 0.05)
+	P(Vector3.new(0.5, 6.2, 0.2), CFrame.new(pos + Vector3.new(0, y0 + 1.9 + 4.4 - pos.Y, -1.7)), col, true, 0.1)
+	P(Vector3.new(3.4, 0.25, 0.2), CFrame.new(pos + Vector3.new(0, y0 + 1.9 + 7.2 - pos.Y, -1.7)), col, true, 0.1)
+	-- wings: two slanted panels flanking the back
+	for _, sx in { -1, 1 } do
+		P(Vector3.new(0.45, 7.2, 3.2), CFrame.new(pos + Vector3.new(3.5 * sx, y0 + 1.9 + 3.4 - pos.Y, -1.2)) * CFrame.Angles(0, math.rad(-24 * sx), 0), stone)
+		P(Vector3.new(0.15, 7.0, 0.3), CFrame.new(pos + Vector3.new(3.75 * sx, y0 + 1.9 + 3.4 - pos.Y, 0.05)) * CFrame.Angles(0, math.rad(-24 * sx), 0), col, true, 0.1)
+		-- arm rests
+		P(Vector3.new(0.9, 1.1, 3.2), CFrame.new(pos + Vector3.new(2.85 * sx, y0 + 1.9 + 0.55 - pos.Y, -0.2)), stone)
+		P(Vector3.new(0.92, 0.1, 3.22), CFrame.new(pos + Vector3.new(2.85 * sx, y0 + 1.9 + 1.12 - pos.Y, -0.2)), col, true, 0.2)
+	end
+	return y0 + 1.9 -- seat height
+end
+
 local function runResultCut(token)
 	killScreens()
 	setModal(false)
+	stopSlowFx()
 	local winner = State:GetAttribute("Winner") or ""
 	local winners = {}
 	if winner ~= "" then
@@ -752,27 +831,26 @@ local function runResultCut(token)
 	local scene = newScene(root, 3, true)
 	local cam = scene.cam
 	cam.FieldOfView = 38
-	addStars(scene.world, 120, 50, Vector3.new(0, 6, -25), 30)
+	addStars(scene.world, 140, 70, Vector3.new(0, 8, -40), 30)
 
+	-- thrones: the player list is ordered so the middle throne is the first winner (the tallest dais)
+	local n = math.max(1, #winners)
+	local TX = { [1] = { 0 }, [2] = { -6.6, 6.6 }, [3] = { 0, -11.6, 11.6 } }
+	local xs = TX[n]
 	local figs = {}
-	local xs = SLOT_X[math.max(1, #winners)]
-	for i, p in winners do
-		local pos = Vector3.new(xs[i], 0, i == 1 and 0.8 or -0.4)
-		discUnder(scene.world, pos, col, 2.7)
-		-- light column behind each winner
-		part(scene.world, Vector3.new(3.6, 60, 3.6), CFrame.new(pos + Vector3.new(0, 30, -3)), col, true, 0.82)
-		local fig = Skins.NewFigure(scene.world, skinOf(p), { weapon = weaponOf(p) })
-		table.insert(figs, { fig = fig, pos = pos, phase = (i - 1) * 0.5 })
-	end
-	-- confetti
-	local confetti = {}
-	if #winners > 0 then
-		local cols = { col, WHITE, K.gold, col:Lerp(WHITE, 0.5) }
-		for _ = 1, 90 do
-			local s = rng:NextNumber(0.18, 0.4)
-			local p = part(scene.world, Vector3.new(s, s * 0.35, s * 0.7), CFrame.new(), cols[rng:NextInteger(1, #cols)], true)
-			table.insert(confetti, { p = p, pos = Vector3.new(rng:NextNumber(-12, 12), rng:NextNumber(2, 22), rng:NextNumber(-6, 6)),
-				vel = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-7, -3), 0), spin = Vector3.new(rng:NextNumber(-6, 6), rng:NextNumber(-6, 6), rng:NextNumber(-6, 6)), rot = Vector3.zero })
+	for i = 1, n do
+		local big = (n == 1) or (n == 3 and i == 1) -- single winner or the middle of three: raised
+		local pos = Vector3.new(xs[i], 0, 0)
+		local seatY = buildThrone(scene.world, pos, col, big)
+		-- light column behind each throne
+		part(scene.world, Vector3.new(4.4, 70, 4.4), CFrame.new(pos + Vector3.new(0, 35, -5)), col, true, 0.86)
+		local p = winners[i]
+		if p then
+			local fig = Skins.NewFigure(scene.world, skinOf(p), { weapon = weaponOf(p), still = true })
+			fig.sit = 1
+			-- hips (2.7 * body height up the leg) sit on the cushion; the thighs are about half a stud thick
+			local rootY = seatY + 0.45 - 2.7 * Skins.Proportions.Height
+			table.insert(figs, { fig = fig, base = CFrame.new(xs[i], rootY, -0.15), phase = (i - 1) * 0.7 })
 		end
 	end
 
@@ -793,24 +871,15 @@ local function runResultCut(token)
 	tween(fade, TweenInfo.new(0.35), { BackgroundTransparency = 1 })
 
 	local t0 = os.clock()
+	local total = math.max(1, C.RESULT_TIME)
 	renderFns.result = function(dt)
 		local t = os.clock() - t0
-		local k = math.clamp(t / 3.5, 0, 1)
-		cam.CFrame = CFrame.lookAt(Vector3.new(0, 2.6, 21 - 5 * k), Vector3.new(0, 4.4, 0))
-		for i, f in figs do
-			-- everybody hops together, with a small twist in the air
-			local s = t * 3.4 + f.phase
-			local hop = math.abs(math.sin(s)) * 2.1
-			local air = math.sin(s) > 0 and math.sin(s) or 0
-			local yaw = math.rad(math.sin(t * 1.6 + i) * 18) + (air > 0.2 and math.rad(math.sin(s * 0.5) * 35) or 0)
-			f.fig:SetRoot(CFrame.new(f.pos + Vector3.new(0, hop, 0)) * CFrame.Angles(0, yaw, 0))
-			f.fig:Update(t, dt)
-		end
-		for _, c in confetti do
-			c.pos += c.vel * dt
-			c.rot += c.spin * dt
-			if c.pos.Y < -1 then c.pos = Vector3.new(rng:NextNumber(-12, 12), 22, rng:NextNumber(-6, 6)) end
-			c.p.CFrame = CFrame.new(c.pos) * CFrame.Angles(c.rot.X, c.rot.Y, c.rot.Z)
+		local k = math.clamp(t / total, 0, 1)
+		-- slow push-in on the thrones
+		cam.CFrame = CFrame.lookAt(Vector3.new(0, 5.2 - 0.6 * k, 33 - 4 * k), Vector3.new(0, 6.6, 0))
+		for _, f in figs do
+			f.fig:SetRoot(f.base)
+			f.fig:Update(t + f.phase, dt)
 		end
 	end
 end
@@ -997,6 +1066,7 @@ local function onPhase()
 	if ph ~= "Pregame" and ph ~= "Warp" then renderFns.pregame = nil end
 	if ph ~= "Warp" then renderFns.warp = nil end
 	if ph ~= "Result" then renderFns.result = nil end
+	if ph ~= "SlowMo" and ph ~= "Result" then stopSlowFx() end
 	if ph ~= "Summary" then renderFns.summary = nil end
 	if ph ~= "Warp" then restoreWorld() end
 	if ph ~= "Pregame" and ph ~= "Summary" then setModal(false) end
@@ -1013,6 +1083,7 @@ local function onPhase()
 		fade.BackgroundTransparency = 1
 		flash.BackgroundTransparency = 1
 		task.spawn(runGo, token)
+	elseif ph == "SlowMo" then task.spawn(runSlowMo, token)
 	elseif ph == "Result" then task.spawn(runResultCut, token)
 	elseif ph == "Summary" then task.spawn(runSummary, token)
 	else
