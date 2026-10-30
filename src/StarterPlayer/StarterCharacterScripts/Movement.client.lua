@@ -204,7 +204,7 @@ local crouchHeld, crouching = false, false
 local exitV, exitT = Vector3.zero, 0
 
 local function sprintKeyDown() -- Shift, or the mobile / gamepad sprint toggle (set by GunClient)
-	return UIS:IsKeyDown(Enum.KeyCode.LeftShift) or char:GetAttribute("SprintToggle") == true
+	return UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift) or char:GetAttribute("SprintToggle") == true
 end
 -- something above our head would block standing back up from the current (lowered) height
 local function ceilingBlocked()
