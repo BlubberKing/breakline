@@ -661,16 +661,19 @@ local function onRender(dt)
 		stillTime = moving and 0 or stillTime + dt
 		if stillTime > 0.3 or not alive then setSprintToggle(false) end
 	end
-	if alive then hideBody() end
+	if alive and not character:GetAttribute("Revealing") then hideBody() end -- (RespawnReveal shows your body during the reveal)
 
 	-- states
-	local carryingBox = isCarrying()
+	-- v3.8: wall-climbing (and the respawn reveal) put the gun away too, exactly like carrying a box
+	local abilityMode = character:GetAttribute("AbilityMode")
+	local revealing = character:GetAttribute("Revealing") == true
+	local carryingBox = isCarrying() or abilityMode == "climb" or revealing
 	if carryingBox then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
 	local aiming = aimHeld and not reloading and alive and not mantling and not carryingBox
 	local wantsSprint = (shiftHeld or sprintToggle) and moving and not aiming and not triggerDown and not crouching
 	local sprinting = (wantsSprint and not sliding and not mantling) or (type(cutRun) == "number" and cutRun > 10)
 	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
-	humanoid.WalkSpeed = baseSpeed * (carryingBox and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed) * TimeScale.Get() -- slow motion at the end of a round
+	humanoid.WalkSpeed = baseSpeed * ((isCarrying()) and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed) * TimeScale.Get() * (character:GetAttribute("AbilitySlow") or 1) -- slow motion at the end of a round
 	aimAlpha = approach(aimAlpha, aiming and 1 or 0, dt, cfg.ADSTime)
 	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
@@ -893,7 +896,9 @@ local function onRender(dt)
 		c.f.BackgroundTransparency = hide
 		c.s.Transparency = 0.55 + 0.45 * hide
 	end
-	if not menuOpen() and UIS.MouseIconEnabled then UIS.MouseIconEnabled = false end
+	if menuOpen() then -- v3.8: a menu (pregame loadout, summary...) is up: the cursor must be visible
+		if not UIS.MouseIconEnabled then UIS.MouseIconEnabled = true end
+	elseif UIS.MouseIconEnabled then UIS.MouseIconEnabled = false end
 
 	-- speed lines + wind
 	local fwdSpeed = math.max(-localVel.Z, 0) * 0.6 + flatSpeed * 0.4 -- mostly forward motion
