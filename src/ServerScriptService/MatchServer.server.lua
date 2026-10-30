@@ -733,7 +733,7 @@ local function teamSpawnCF(player, teamName)
 	for _, pl in Players:GetPlayers() do if pl.Character then table.insert(ignore, pl.Character) end end
 	rp.FilterDescendantsInstances = ignore
 	local hit = workspace:Raycast(from, Vector3.new(0, -(MAP_H + 60), 0), rp)
-	local pos = hit and (hit.Position + Vector3.new(0, 3.5, 0)) or (origin * Vector3.new(x, 4, z))
+	local pos = hit and (hit.Position + Vector3.new(0, 4.4, 0)) or (origin * Vector3.new(x, 4, z))
 	return CFrame.lookAt(pos, Vector3.new(origin:PointToWorldSpace(Vector3.new(x, 0, 0)).X, pos.Y, origin:PointToWorldSpace(Vector3.new(x, 0, 0)).Z))
 end
 
