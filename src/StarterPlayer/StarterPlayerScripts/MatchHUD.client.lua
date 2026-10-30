@@ -1,4 +1,8 @@
--- MatchHUD (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v3.1.
+-- MatchHUD v3.2 (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
+-- v3.2 polish: rounded health segments with a white 'damage trail' that drains behind the real value, low-health pulse, team-colored
+-- name tick, soft corner shading so white text reads on any map, rounded selected gun slot, ammo that pops on change, reload bar that
+-- glows. Same Finals layout + same attributes as v3.1.
+-- (v3.1)
 -- In-match HUD styled after THE FINALS: no boxes or panels, white condensed text with a soft shadow, segmented health bars.
 --   * bottom-left: your squad. YOU are always at the bottom and big (name, segmented health, "HP / MAX");
 --     teammates are stacked above you, smaller (name + small health pips). Dead teammates go grey with a skull mark.
@@ -56,33 +60,75 @@ end
 rescale()
 if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale) end
 
+-- soft dark corners so the white text is readable on bright maps (very light, never a box)
+do
+	local function shade(x, y, w, h, rot)
+		local f = rect(root, x, y, w, h, Color3.new(0, 0, 0), 0)
+		f.ZIndex = 0
+		new("UIGradient", { Rotation = rot, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 1) }) }, f)
+	end
+	shade(0, 1080 - 420, 760, 420, -45)       -- bottom-left
+	shade(1920 - 760, 1080 - 330, 760, 330, 225) -- bottom-right
+end
+local TWEEN = game:GetService("TweenService")
+local function teamColor3()
+	return (player.Team and not player.Neutral) and player.TeamColor.Color or WHITE
+end
+
 -- ================= bottom-left: squad =================
 local squad = new("Frame", { Position = UDim2.fromOffset(48, 0), Size = UDim2.fromOffset(460, 1080 - 44), BackgroundTransparency = 1 }, root)
 
--- segmented bar: n segments, fills left to right
+-- segmented bar: n segments, fills left to right. Each segment has a faint white "ghost" that drains slowly behind the real fill
+-- (shows how much you just lost). Returns set(frac, color) and tick(dt) which must be called every frame.
 local function segBar(parent, x, y, n, segW, segH, gap)
 	local segs = {}
+	local ghostFrac, targetFrac = 1, 1
 	for i = 1, n do
-		local back = rect(parent, x + (i - 1) * (segW + gap), y, segW, segH, Color3.new(0, 0, 0), 0.55)
+		local back = rect(parent, x + (i - 1) * (segW + gap), y, segW, segH, Color3.new(0, 0, 0), 0.5)
+		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, back)
+		local ghost = rect(back, 0, 0, segW, segH, WHITE, 0.55)
+		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, ghost)
 		local fill = rect(back, 0, 0, segW, segH, WHITE, 0)
-		segs[i] = { back = back, fill = fill, w = segW }
+		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, fill)
+		segs[i] = { back = back, ghost = ghost, fill = fill, w = segW }
 	end
-	local function set(frac, color)
-		frac = math.clamp(frac, 0, 1)
-		for i, s in segs do
+	local function paint(frac, color)
+		for i, sg in segs do
 			local f = math.clamp(frac * n - (i - 1), 0, 1)
-			s.fill.Size = UDim2.fromOffset(math.floor(s.w * f + 0.5), s.fill.Size.Y.Offset)
-			s.fill.BackgroundColor3 = color or WHITE
+			sg.fill.Size = UDim2.fromOffset(math.floor(sg.w * f + 0.5), sg.fill.Size.Y.Offset)
+			sg.fill.BackgroundColor3 = color or WHITE
+			local g = math.clamp(ghostFrac * n - (i - 1), 0, 1)
+			sg.ghost.Size = UDim2.fromOffset(math.floor(sg.w * g + 0.5), sg.ghost.Size.Y.Offset)
 		end
 	end
-	return set
+	local lastColor = WHITE
+	local function set(frac, color)
+		frac = math.clamp(frac, 0, 1)
+		if frac > ghostFrac then ghostFrac = frac end -- healing: ghost snaps up
+		targetFrac = frac
+		lastColor = color or WHITE
+		paint(frac, lastColor)
+	end
+	local function tick(dt)
+		if ghostFrac > targetFrac then
+			ghostFrac = math.max(targetFrac, ghostFrac - dt * 0.35)
+			paint(targetFrac, lastColor)
+		end
+	end
+	return set, tick
 end
 
 -- you (bottom, large)
 local meName = text(squad, player.DisplayName, 30, 0, 1080 - 44 - 124, 420, 34, F_BOLD)
 local meHP = text(squad, "100", 34, 0, 1080 - 44 - 82, 80, 36, F_BOLD)
 local meMax = text(squad, "/ 100", 22, 66, 1080 - 44 - 74, 80, 28, F_MED, nil, DIM)
-local meBar = segBar(squad, 0, 1080 - 44 - 38, 10, 38, 22, 4)
+local meBar, meTick = segBar(squad, 0, 1080 - 44 - 38, 10, 38, 22, 4)
+local meTick_ = meTick
+-- team-colored tick left of your name + a thin underline that pulses when you are low
+local meAccent = rect(squad, -16, 1080 - 44 - 120, 6, 28, WHITE, 0)
+new("UICorner", { CornerRadius = UDim.new(0, 3) }, meAccent)
+local meGlow = rect(squad, 0, 1080 - 44 - 12, 10 * 42 - 4, 3, RED, 1)
+new("UICorner", { CornerRadius = UDim.new(0, 2) }, meGlow)
 
 -- teammates (above you)
 local mateRows = {}
@@ -92,8 +138,10 @@ local function mateRow(i)
 	local row = new("Frame", { Position = UDim2.fromOffset(0, y), Size = UDim2.fromOffset(420, 58), BackgroundTransparency = 1 }, squad)
 	local name = text(row, "", 22, 0, 0, 360, 26, F_BOLD)
 	local dead = text(row, "DOWN", 14, 0, 0, 360, 26, F_BOLD, Enum.TextXAlignment.Right, RED)
-	local bar = segBar(row, 0, 30, 10, 14, 10, 3)
-	mateRows[i] = { row = row, name = name, bar = bar, dead = dead }
+	local bar, tick = segBar(row, 0, 30, 10, 14, 10, 3)
+	local tick_ = rect(row, -12, 4, 4, 20, WHITE, 0)
+	new("UICorner", { CornerRadius = UDim.new(0, 2) }, tick_)
+	mateRows[i] = { row = row, name = name, bar = bar, tick = tick, accent = tick_, dead = dead }
 	return mateRows[i]
 end
 
@@ -120,8 +168,10 @@ local wName = text(items, "", 30, 0, 0, 380, 34, F_BOLD, Enum.TextXAlignment.Rig
 local ammoBig = text(items, "30", 34, 392, -2, 100, 38, F_BOLD, Enum.TextXAlignment.Right)
 local ammoMag = text(items, "/30", 22, 494, 6, 66, 28, F_MED, Enum.TextXAlignment.Left, DIM)
 local modeTxt = text(items, "", 14, 0, 34, 560, 18, F_MED, Enum.TextXAlignment.Right, DIM)
-local reloadBack = rect(items, 392, 40, 168, 3, Color3.new(0, 0, 0), 0.5)
-local reloadFill = rect(reloadBack, 0, 0, 0, 3, WHITE, 0)
+local reloadBack = rect(items, 392, 40, 168, 5, Color3.new(0, 0, 0), 0.45)
+new("UICorner", { CornerRadius = UDim.new(0, 3) }, reloadBack)
+local reloadFill = rect(reloadBack, 0, 0, 0, 5, WHITE, 0)
+new("UICorner", { CornerRadius = UDim.new(0, 3) }, reloadFill)
 reloadBack.Visible = false
 
 local SLOT = 76
@@ -159,7 +209,8 @@ end
 
 local function makeSlot(x, w, key)
 	local f = rect(slotRow, x, 0, w, SLOT, WHITE, 1)
-	local border = new("UIStroke", { Color = WHITE, Thickness = 1.5, Transparency = 0.6 }, f)
+	new("UICorner", { CornerRadius = UDim.new(0, 12) }, f)
+	local border = new("UIStroke", { Color = WHITE, Thickness = 2, Transparency = 0.55 }, f)
 	local k = text(slotRow, key, 16, x, SLOT + 14, w, 20, F_BOLD, Enum.TextXAlignment.Center, DIM)
 	return { frame = f, border = border, key = k }
 end
@@ -209,6 +260,10 @@ local function refreshAmmo()
 	local name = player:GetAttribute("HUDWeapon")
 	wName.Text = name and string.upper(name) or ""
 	local a, m = player:GetAttribute("HUDAmmo") or 0, player:GetAttribute("HUDMag") or 0
+	if ammoBig.Text ~= tostring(a) then
+		ammoBig.TextSize = 40
+		TWEEN:Create(ammoBig, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { TextSize = 34 }):Play()
+	end
 	ammoBig.Text = tostring(a)
 	ammoMag.Text = "/" .. tostring(m)
 	ammoBig.TextColor3 = (m > 0 and a <= m * 0.25) and RED or WHITE
@@ -220,7 +275,7 @@ for _, k in { "HUDWeapon", "HUDAmmo", "HUDMag", "HUDReload", "HUDMode" } do play
 player:GetAttributeChangedSignal("Weapon"):Connect(refreshGun)
 player:GetAttributeChangedSignal("LoadoutJson"):Connect(function() buildSlots() refreshGun() end)
 player:GetAttributeChangedSignal("HUDReloadU"):Connect(function()
-	reloadFill.Size = UDim2.fromOffset(math.floor(168 * (player:GetAttribute("HUDReloadU") or 0)), 3)
+	reloadFill.Size = UDim2.fromOffset(math.floor(168 * (player:GetAttribute("HUDReloadU") or 0)), 5)
 end)
 buildSlots()
 refreshGun()
@@ -228,7 +283,11 @@ refreshAmmo()
 
 -- ================= per-frame: health + squad + hide while carrying =================
 local acc = 0
+local clock = 0
 RunService.Heartbeat:Connect(function(dt)
+	clock += dt
+	meTick_(dt)
+	for _, r in mateRows do if r.tick then r.tick(dt) end end
 	acc += dt
 	if acc < 0.05 then return end
 	acc = 0
@@ -239,6 +298,10 @@ RunService.Heartbeat:Connect(function(dt)
 	meMax.Text = "/ " .. tostring(math.floor(max))
 	meMax.Position = UDim2.fromOffset(meHP.TextBounds.X + 8, meMax.Position.Y.Offset)
 	meBar(hp / max, (hp / max <= 0.3) and RED or WHITE)
+	meAccent.BackgroundColor3 = teamColor3()
+	local low = hp > 0 and hp / max <= 0.3
+	meGlow.BackgroundTransparency = low and (0.35 + 0.4 * (0.5 + 0.5 * math.sin(clock * 9))) or 1
+	meHP.TextColor3 = low and RED or WHITE
 	-- teammates
 	local mates = teammates()
 	for i = 1, math.max(#mates, #mateRows) do
@@ -252,6 +315,7 @@ RunService.Heartbeat:Connect(function(dt)
 			r.name.TextColor3 = alive and WHITE or DIM
 			r.dead.Visible = not alive
 			r.bar(h / m, alive and ((h / m <= 0.3) and RED or WHITE) or DIM)
+			r.accent.BackgroundColor3 = alive and teamColor3() or DIM
 		elseif mateRows[i] then
 			mateRows[i].row.Visible = false
 		end
