@@ -7,6 +7,7 @@ local UIS = game:GetService("UserInputService")
 local CAS = game:GetService("ContextActionService")
 local RS = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
+local TimeScale = require(RS:WaitForChild("TimeScale"))
 
 local char = script.Parent
 local hum = char:WaitForChild("Humanoid")
@@ -500,6 +501,17 @@ local stepConn = RunService.Stepped:Connect(function(_, dt)
 	local wantFall = not g and vy < 0 and mode ~= "mantle"
 	fallForce.Enabled = wantFall
 	if wantFall then fallForce.Force = Vector3.new(0, -root.AssemblyMass * workspace.Gravity * (CFG.FALL_GRAVITY_MULT - 1), 0) end
+
+	-- slow motion (end of a round): cap how fast anything can go, so slides, jumps and falls slow down with the walking
+	local ts = TimeScale.Get()
+	if ts < 1 then
+		local v = root.AssemblyLinearVelocity
+		local hv = Vector3.new(v.X, 0, v.Z)
+		local cap = 34 * ts + 1
+		if hv.Magnitude > cap then hv = hv.Unit * cap end
+		local vyCap = 80 * ts + 2
+		root.AssemblyLinearVelocity = Vector3.new(hv.X, math.clamp(v.Y, -vyCap, vyCap), hv.Z)
+	end
 
 	-- camera
 	camKick = approach(camKick, 0, 10, dt)
