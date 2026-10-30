@@ -27,6 +27,7 @@ local InviteR, RespondR, LeaveR, KickR, NoticeR = remote("Invite"), remote("Resp
 local PromoteR = remote("Promote")
 remote("Queue")
 remote("SetLoadout")
+remote("SetSkin")   -- LobbyServer handles it (skins tab)
 
 local M = {}
 local invites = {}   -- [targetUserId][partyId] = true (kept on the target's server)
