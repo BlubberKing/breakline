@@ -9,6 +9,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local MatchCfg = require(RS:WaitForChild("MatchConfig"))
 local BoxDamage = ServerStorage:WaitForChild("BoxDamage", 30) -- BindableEvent made by MatchServer
 local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
+local MatchState = RS:WaitForChild("MatchState", 30) -- made by MatchServer; guns only work while the match is live
 
 local remotes = Instance.new("Folder")
 remotes.Name = "GunRemotes"
@@ -124,6 +125,8 @@ end
 
 FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 	if weapon ~= player:GetAttribute("Weapon") or player:GetAttribute("Carrying") then return end
+	local ph = MatchState and MatchState:GetAttribute("Phase")
+	if ph == "Waiting" or ph == "Pregame" or ph == "Warp" or ph == "Countdown" or ph == "Summary" then return end
 	local cfg = Weapons.Get(weapon)
 	if typeof(origin) ~= "Vector3" or type(shots) ~= "table" then return end
 	if #shots < 1 or #shots > cfg.Pellets then return end
@@ -193,8 +196,14 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 	-- one damage number per target per shot (shotgun pellets are added together)
 	for model, h in hits do
 		if h.hum.Health > 0 then
+			local before = h.hum.Health
 			h.hum:TakeDamage(h.dmg)
-			HitConfirm:FireClient(player, model, h.head, h.hum.Health <= 0, math.floor(h.dmg + 0.5), h.pos)
+			local killed = h.hum.Health <= 0
+			if h.player then -- match stats for the souls screen (MatchServer resets them every round)
+				player:SetAttribute("StatDamage", (player:GetAttribute("StatDamage") or 0) + math.min(h.dmg, before))
+				if killed then player:SetAttribute("StatKills", (player:GetAttribute("StatKills") or 0) + 1) end
+			end
+			HitConfirm:FireClient(player, model, h.head, killed, math.floor(h.dmg + 0.5), h.pos)
 			if h.player then Damaged:FireClient(h.player, h.dmg, origin) end
 		end
 	end
