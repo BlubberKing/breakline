@@ -1,14 +1,16 @@
--- LobbyClient v5 "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
--- v5 look: the POP style is gone. Flat, sharp, dark, on-brand (black / white / Breakline red), built like a big-shooter front end.
--- No drifting shapes, no bouncing, no springy hovers, no rounded pills. Hovers are quick color shifts only.
+-- LobbyClient v5.1 "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
+-- Look: flat, sharp, dark, on-brand (black / white / Breakline red), built like a big-shooter front end.
+-- Motion is kept small: buttons grow a few percent on hover (smooth Quint ease), the galaxy and the planet ring turn very slowly.
 -- Layout (1920x1080 canvas, scaled to the screen, 56 px outer margin):
---   * home HUD (walking around the lobby): static BREAKLINE logo top left, souls top right, PLAY block + square "+" (invite) bottom right
---   * PLAY screen: black starry space, your squad on three stone pillars (you on the middle one, red edge light), names = plain text
---       top bar   : logo | souls, TAB SKINS, ESC BACK | thin rule
---       right     : LOADOUT column (primary, movement, gadgets 2-4, reserve, outfit/skin). Click a slot = picker over the stage.
---       bottom    : GAME MODE card | 3 party slots (leader always leftmost) | START block
---   * Skins are picked from the OUTFIT slot (or TAB). The separate slide-in panel and the top nav tabs are removed.
--- Same game logic / remotes as v3 / v4. Needs in ReplicatedStorage: LobbyCatalog, Skins, GunModels (copy of Breakline's), LobbyRemotes.
+--   * home HUD (walking around the lobby): static BREAKLINE logo top left, souls top right,
+--       bottom right = (hanger) skins circle | PLAY block | (+) invite circle
+--   * PLAY screen: black starry space with a slowly turning galaxy + a ringed planet, your squad on three stone pillars
+--       top bar   : logo | souls, ESC BACK | thin rule
+--       left      : GAME MODES tab. BREAKLINE on top (click = mode info), locked "coming soon" placeholder modes stacked under it
+--       bottom    : LOADOUT dock in the middle: [move]  [primary]  [gadget][gadget][gadget] | [reserve][reserve][reserve]
+--       right     : 3 party slots (leader leftmost) above (hanger) skins circle | PLAY block | (+) invite circle
+--   * The hanger circle (or TAB) opens the skin catalog over the stage. The outfit slot is gone from the main area.
+-- Same game logic / remotes as v3 / v4 / v5. Needs in ReplicatedStorage: LobbyCatalog, Skins, GunModels (copy of Breakline's), LobbyRemotes.
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
@@ -101,6 +103,30 @@ local function hoverable(b, bg, bgHot, st, stCol, stHot)
 	end)
 end
 
+-- hover grow: the button scales up a few percent around its centre (smooth, no bounce).
+-- Call it AFTER the button has its final Position/Size (it re-anchors the button to its centre).
+local GROW = TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local function grow(b, amt)
+	amt = amt or 1.05
+	if b.AnchorPoint == Vector2.zero then
+		local p, sz = b.Position, b.Size
+		b.AnchorPoint = Vector2.new(0.5, 0.5)
+		b.Position = UDim2.new(p.X.Scale + sz.X.Scale / 2, p.X.Offset + sz.X.Offset / 2, p.Y.Scale + sz.Y.Scale / 2, p.Y.Offset + sz.Y.Offset / 2)
+	end
+	local sc = new("UIScale", { Scale = 1 }, b)
+	b.MouseEnter:Connect(function() TweenService:Create(sc, GROW, { Scale = amt }):Play() end)
+	b.MouseLeave:Connect(function() TweenService:Create(sc, GROW, { Scale = 1 }):Play() end)
+	return sc
+end
+
+-- straight bar from (x1, y1) to (x2, y2): used to draw line icons
+local function bar(parent, x1, y1, x2, y2, th, col)
+	local dx, dy = x2 - x1, y2 - y1
+	return new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2),
+		Size = UDim2.fromOffset(math.sqrt(dx * dx + dy * dy) + th * 0.5, th), Rotation = math.deg(math.atan2(dy, dx)),
+		BackgroundColor3 = col, BorderSizePixel = 0 }, parent)
+end
+
 -- flat button. kind: "primary" (red), "ghost" (dark + 1 px line), "danger" (ghost with red text)
 local function button(parent, text, x, y, w, h, kind, size)
 	kind = kind or "ghost"
@@ -123,13 +149,6 @@ local function keyHint(parent, key, text, x, y)
 	return lbl(parent, text, 16, x + kw + 8, y, 160, 24, C.dim, "HM")
 end
 
--- small mono label with a hairline running to the right ("PRIMARY ———————")
-local function sectionLabel(parent, text, x, y, w)
-	lbl(parent, text, 12, x, y, w, 16, C.dim, "M")
-	local tw = math.floor(#text * 7.2) + 10
-	frame(parent, x + tw, y + 8, math.max(0, w - tw), 1, C.line, 0)
-end
-
 local function thumb(id) return ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(id) end
 local function commas(n)
 	local s = tostring(math.floor(n))
@@ -147,6 +166,63 @@ local function chevron(parent, x, y, size, color, thick)
 			Size = UDim2.fromOffset(thick or 2, len), Rotation = rot, BackgroundColor3 = color, BorderSizePixel = 0 }, h)
 	end
 	return h
+end
+
+-- clothes hanger (hook, shoulders, bar), drawn from thin bars inside a 36x28 box centred in parent
+local function hangerIcon(parent, col)
+	local h = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.fromOffset(36, 28),
+		BackgroundTransparency = 1 }, parent)
+	-- hook: a small ring, only its top half and bottom-right quarter shown (reads as a "?" hook)
+	local function ringIn(clip, rx, ry)
+		local r = new("Frame", { Position = UDim2.fromOffset(rx, ry), Size = UDim2.fromOffset(7, 7), BackgroundTransparency = 1 }, clip)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, r)
+		new("UIStroke", { Color = col, Thickness = 2 }, r)
+	end
+	local top = new("Frame", { Position = UDim2.fromOffset(11, -2), Size = UDim2.fromOffset(14, 7), BackgroundTransparency = 1, ClipsDescendants = true }, h)
+	ringIn(top, 3.5, 2)
+	local q = new("Frame", { Position = UDim2.fromOffset(18, 5), Size = UDim2.fromOffset(7, 7), BackgroundTransparency = 1, ClipsDescendants = true }, h)
+	ringIn(q, -3.5, -3)
+	bar(h, 18, 10.5, 18, 13, 2, col)
+	bar(h, 18, 13, 2, 24, 2, col)
+	bar(h, 18, 13, 34, 24, 2, col)
+	bar(h, 2, 24, 34, 24, 2, col)
+	return h
+end
+
+-- plus sign centred in parent
+local function plusIcon(parent, size, col)
+	for _, sz in { Vector2.new(size, 2), Vector2.new(2, size) } do
+		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(sz.X, sz.Y),
+			BackgroundColor3 = col, BorderSizePixel = 0 }, parent)
+	end
+end
+
+-- small padlock (locked game modes)
+local function lockIcon(parent, x, y, col)
+	local h = new("Frame", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(14, 17), BackgroundTransparency = 1 }, parent)
+	local sh = new("Frame", { Position = UDim2.fromOffset(3, 1), Size = UDim2.fromOffset(8, 10), BackgroundTransparency = 1 }, h)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, sh)
+	new("UIStroke", { Color = col, Thickness = 1.5 }, sh)
+	new("Frame", { Position = UDim2.fromOffset(0, 7), Size = UDim2.fromOffset(14, 10), BackgroundColor3 = col, BorderSizePixel = 0 }, h)
+	return h
+end
+
+-- round icon button (hanger / invite). The only round shapes in the UI, on purpose: they read as quick actions.
+-- returns button, stroke, setActive(on) (active = red ring, e.g. while the skin catalog is open)
+local function circleButton(parent, cx, cy, d)
+	local b = new("TextButton", { Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, cy),
+		Size = UDim2.fromOffset(d, d), BackgroundColor3 = C.panel, BackgroundTransparency = 0.05, BorderSizePixel = 0 }, parent)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, b)
+	local st = new("UIStroke", { Color = C.line2, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
+	local active, hot = false, false
+	local function paint()
+		tween(b, FAST, { BackgroundColor3 = hot and C.panel3 or C.panel })
+		tween(st, FAST, { Color = (active or hot) and C.red or C.line2, Thickness = active and 2 or 1.5 })
+	end
+	b.MouseEnter:Connect(function() hot = true paint() end)
+	b.MouseLeave:Connect(function() hot = false paint() end)
+	grow(b, 1.08)
+	return b, st, function(on) active = on paint() end
 end
 
 -- ================= logo: BREAK / LINE, static =================
@@ -352,18 +428,8 @@ local function actionBlock(parent, x, y, w, h, mainText, subText)
 		apply()
 	end
 	apply()
+	grow(b, 1.04)
 	return b, main, sub, paint
-end
-
--- square "+" button (invite)
-local function plusButton(parent, x, y, w, h)
-	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BackgroundTransparency = 0.1, BorderSizePixel = 0,
-		Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h) }, parent)
-	local st = border(b, C.line2, 1)
-	frame(b, (w - 22) / 2, (h - 2) / 2, 22, 2, C.text, 0)
-	frame(b, (w - 2) / 2, (h - 22) / 2, 2, 22, C.text, 0)
-	hoverable(b, C.panel, C.panel3, st, C.line2, C.red)
-	return b
 end
 
 -- ================= home HUD =================
@@ -378,11 +444,18 @@ end
 local hudC = canvas(hud, 2)
 makeLogo(hudC, 56, 36, 56)
 soulsWidget(hudC, RIGHT, 46)
-keyHint(hudC, "TAB", "SKINS", 56, 1004)
-local homePlay, _, _, homePaint = actionBlock(hudC, 1444, 912, 340, 112, "PLAY", "BREAKLINE  //  3V3")
+-- bottom-right cluster (same geometry as the PLAY screen): (hanger) | PLAY | (+)
+local CL_W, CIRCLE, CL_GAP = 480, 72, 16                    -- cluster width, circle diameter, gaps
+local CL_X = RIGHT - CL_W                                   -- 1384
+local BY, BH = 932, 96                                      -- bottom row top + height
+local PLAY_X, PLAY_W = CL_X + CIRCLE + CL_GAP, CL_W - 2 * (CIRCLE + CL_GAP)
+local homePlay, _, _, homePaint = actionBlock(hudC, PLAY_X, BY, PLAY_W, BH, "PLAY", "BREAKLINE  //  3V3")
 homePaint("go")
-local homePlus = plusButton(hudC, 1796, 912, 68, 112)
-local hudStatus = lbl(hudC, "", 16, 1064, 872, 800, 24, C.text, "HM", Enum.TextXAlignment.Right)
+local homeSkins = circleButton(hudC, CL_X + CIRCLE / 2, BY + BH / 2, CIRCLE)
+hangerIcon(homeSkins, C.text)
+local homePlus = circleButton(hudC, RIGHT - CIRCLE / 2, BY + BH / 2, CIRCLE)
+plusIcon(homePlus, 24, C.text)
+local hudStatus = lbl(hudC, "", 16, 1064, BY - 40, 800, 24, C.text, "HM", Enum.TextXAlignment.Right)
 
 -- ================= play screen =================
 local screen = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.void, BorderSizePixel = 0, Visible = false,
@@ -412,9 +485,102 @@ end
 
 local stage = canvas(screen, 2)
 
+-- ----- layout lines of the PLAY screen -----
+local TAB_X, TAB_W = 56, 300                 -- game modes tab (left)
+local MID_X = TAB_X + TAB_W + 24             -- 380: middle area starts here
+local STAGE_CX = math.floor((MID_X + RIGHT) / 2) -- 1122: the squad is centred in the middle area
+
+-- ----- background: a slowly turning galaxy behind the squad (2D, canvas space) -----
+local galaxy = new("Frame", { Size = UDim2.fromOffset(1920, 1080), BackgroundTransparency = 1, ZIndex = 0 }, stage)
+local galaxyDots = {}
+local GAL_C, GAL_TILT, GAL_SQUASH = Vector2.new(STAGE_CX, 430), math.rad(-13), 0.34
+do
+	-- soft elliptical glow: a horizontal fade inside a vertically faded CanvasGroup
+	local function glow(w, h, col, transp, dx, dy)
+		local cg = new("CanvasGroup", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(GAL_C.X + (dx or 0), GAL_C.Y + (dy or 0)),
+			Size = UDim2.fromOffset(w, h), Rotation = math.deg(GAL_TILT), BackgroundTransparency = 1, GroupTransparency = transp }, galaxy)
+		new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0),
+			NumberSequenceKeypoint.new(1, 1) }) }, cg)
+		local f = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = col, BorderSizePixel = 0 }, cg)
+		new("UIGradient", { Rotation = 0, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0),
+			NumberSequenceKeypoint.new(1, 1) }) }, f)
+	end
+	glow(1300, 420, rgb(70, 92, 150), 0.86)               -- wide cold disk
+	glow(820, 150, rgb(150, 34, 44), 0.9, 120, 20)        -- faint red dust lane (brand color, very low)
+	glow(520, 200, rgb(210, 220, 255), 0.8)               -- inner disk
+	glow(220, 110, rgb(255, 240, 226), 0.55)              -- bright core
+	local rng = Random.new(21)
+	local function dot(r, a, size, col, transp)
+		local f = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(size, size), BackgroundColor3 = col,
+			BackgroundTransparency = transp, BorderSizePixel = 0 }, galaxy)
+		-- inner stars orbit faster than outer ones (slow differential spin)
+		table.insert(galaxyDots, { f = f, r = r, a = a, w = 0.05 * (90 / (r + 90)) })
+	end
+	for _ = 1, 70 do -- core
+		local r = math.abs(rng:NextNumber() * rng:NextNumber()) * 90
+		dot(r, rng:NextNumber(0, math.pi * 2), rng:NextInteger(1, 2), rgb(255, 238, 222), rng:NextNumber(0.1, 0.5))
+	end
+	for arm = 0, 1 do -- two spiral arms
+		for _ = 1, 170 do
+			local u = rng:NextNumber()
+			local r = 50 + u * 560
+			local a = arm * math.pi + u * 3.6 + (rng:NextNumber() - 0.5) * (0.7 - u * 0.35)
+			r += (rng:NextNumber() - 0.5) * 50
+			local col = (rng:NextNumber() < 0.06) and C.red or rgb(200, 216, 255):Lerp(rgb(255, 240, 228), math.max(0, 0.6 - u))
+			dot(r, a, (rng:NextNumber() < 0.12) and 2 or 1, col, 0.2 + u * 0.55 + rng:NextNumber() * 0.2)
+		end
+	end
+	for _ = 1, 60 do -- loose halo stars
+		dot(rng:NextNumber(80, 640), rng:NextNumber(0, math.pi * 2), 1, rgb(190, 205, 240), rng:NextNumber(0.55, 0.85))
+	end
+end
+local function updateGalaxy(t)
+	local c, sn = math.cos(GAL_TILT), math.sin(GAL_TILT)
+	for _, d in galaxyDots do
+		local a = d.a + t * d.w
+		local x, y = math.cos(a) * d.r, math.sin(a) * d.r * GAL_SQUASH
+		d.f.Position = UDim2.fromOffset(GAL_C.X + x * c - y * sn, GAL_C.Y + x * sn + y * c)
+	end
+end
+updateGalaxy(0)
+
+-- ----- a small ringed planet, top right, lit from the galaxy side; the ring and a moon drift slowly -----
+local planetVP = new("ViewportFrame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(1730, 262), Size = UDim2.fromOffset(320, 320),
+	BackgroundTransparency = 1, ZIndex = 1, Ambient = rgb(16, 18, 24), LightColor = rgb(255, 244, 236), LightDirection = Vector3.new(-1, -0.25, -0.55) }, stage)
+local planetRing, planetMoon
+do
+	local cam = new("Camera", { FieldOfView = 20, CFrame = CFrame.lookAt(Vector3.new(0, 0, 30), Vector3.zero) }, planetVP)
+	planetVP.CurrentCamera = cam
+	new("Part", { Anchored = true, Shape = Enum.PartType.Ball, Size = Vector3.new(3.4, 3.4, 3.4), Color = rgb(78, 84, 102),
+		Material = Enum.Material.SmoothPlastic, CastShadow = false }, planetVP)
+	new("Part", { Anchored = true, Shape = Enum.PartType.Ball, Size = Vector3.new(3.62, 3.62, 3.62), Color = rgb(120, 170, 235),
+		Material = Enum.Material.SmoothPlastic, Transparency = 0.86, CastShadow = false }, planetVP)
+	planetRing = new("Model", { Name = "Ring" }, planetVP)
+	local rng = Random.new(5)
+	for _ = 1, 110 do
+		local a, r = rng:NextNumber(0, math.pi * 2), rng:NextNumber(2.5, 3.5)
+		local sz = rng:NextNumber(0.05, 0.12)
+		new("Part", { Anchored = true, Shape = Enum.PartType.Ball, Size = Vector3.new(sz, sz, sz), CFrame = CFrame.new(math.cos(a) * r, 0, math.sin(a) * r),
+			Color = (rng:NextNumber() < 0.3) and rgb(150, 200, 240) or rgb(214, 216, 222), Material = Enum.Material.Neon,
+			Transparency = rng:NextNumber(0.1, 0.5), CastShadow = false }, planetRing)
+	end
+	new("Part", { Anchored = true, Size = Vector3.new(0.6, 0.6, 0.6), Transparency = 1, CanCollide = false, Name = "Pivot" }, planetRing)
+	planetRing.PrimaryPart = planetRing.Pivot
+	planetMoon = new("Part", { Anchored = true, Shape = Enum.PartType.Ball, Size = Vector3.new(0.42, 0.42, 0.42), Color = rgb(150, 150, 156),
+		Material = Enum.Material.SmoothPlastic, CastShadow = false }, planetVP)
+end
+local RING_TILT = CFrame.Angles(0, 0, math.rad(-16)) * CFrame.Angles(math.rad(14), 0, 0)
+local function updatePlanet(t)
+	planetRing:PivotTo(RING_TILT * CFrame.Angles(0, t * 0.06, 0))
+	local a = t * 0.11
+	planetMoon.CFrame = RING_TILT * CFrame.new(math.cos(a) * 4.6, math.sin(a) * 0.5, math.sin(a) * 4.6)
+end
+updatePlanet(0)
+
 -- ----- the stage: three pillars in space -----
-local VPW, VPH = 1860, 1080 -- viewport is shifted so the squad is centred between the left edge and the loadout column
-local CAM_POS, CAM_LOOK, CAM_FOV = Vector3.new(0, 4.4, 28), Vector3.new(0, 3.5, 0), 34
+local VPW, VPH = 1920, 1080 -- the 3D view is shifted so the squad is centred in the middle area
+local VPX = STAGE_CX - VPW / 2
+local CAM_POS, CAM_LOOK, CAM_FOV = Vector3.new(0, 3.4, 28), Vector3.new(0, 2.5, 0), 34
 local PILLARS = {
 	{ x = 0, z = 1.0, top = 0, edge = C.red },                       -- you
 	{ x = -5.6, z = -0.8, top = -0.4, edge = rgb(150, 155, 166) },    -- teammate (left)
@@ -436,7 +602,7 @@ local function project(world)
 end
 
 -- soft light shafts from above, one per pillar (2D, behind the 3D view)
-local shaftLayer = new("Frame", { Size = UDim2.fromOffset(VPW, VPH), BackgroundTransparency = 1, ZIndex = 1 }, stage)
+local shaftLayer = new("Frame", { Position = UDim2.fromOffset(VPX, 0), Size = UDim2.fromOffset(VPW, VPH), BackgroundTransparency = 1, ZIndex = 1 }, stage)
 for i, pl in PILLARS do
 	local top = project(Vector3.new(pl.x, pl.top, pl.z))
 	local l = project(Vector3.new(pl.x - 3.2, pl.top, pl.z))
@@ -452,7 +618,7 @@ for i, pl in PILLARS do
 	end
 end
 
-local vp = new("ViewportFrame", { Size = UDim2.fromOffset(VPW, VPH), BackgroundTransparency = 1, ZIndex = 2,
+local vp = new("ViewportFrame", { Position = UDim2.fromOffset(VPX, 0), Size = UDim2.fromOffset(VPW, VPH), BackgroundTransparency = 1, ZIndex = 2,
 	Ambient = rgb(118, 120, 128), LightColor = rgb(255, 250, 244), LightDirection = Vector3.new(-0.4, -0.85, -0.6) }, stage)
 stageCam.Parent = vp
 vp.CurrentCamera = stageCam
@@ -485,14 +651,14 @@ end
 
 -- pillars dissolve into black toward the bottom of the screen
 do
-	local f = frame(stage, -1600, 690, 5120, 400, C.void, 0)
+	local f = frame(stage, -1600, 640, 5120, 440, C.void, 0)
 	f.ZIndex = 3
 	fade(f, 90, 1, 0)
 end
 
 local squad = {} -- { fig, root, tag, top }
 local squadKey = ""
-local nameLayer = new("Frame", { Size = UDim2.fromOffset(VPW, VPH), BackgroundTransparency = 1, ZIndex = 4 }, stage)
+local nameLayer = new("Frame", { Position = UDim2.fromOffset(VPX, 0), Size = UDim2.fromOffset(VPW, VPH), BackgroundTransparency = 1, ZIndex = 4 }, stage)
 
 -- names above heads: just text
 local function nameTag(text, isLeader)
@@ -535,24 +701,20 @@ end
 
 -- ----- top bar -----
 makeLogo(stage, 56, 34, 44).ZIndex = 5
-soulsWidget(stage, 1572, 38).ZIndex = 5
-local skinsKey = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(1600, 40),
-	Size = UDim2.fromOffset(124, 36), ZIndex = 5 }, stage)
-local skinsKeyLbl = keyHint(skinsKey, "TAB", "SKINS", 0, 6)
-local closeBtn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(1744, 40),
-	Size = UDim2.fromOffset(120, 36), ZIndex = 5 }, stage)
+soulsWidget(stage, 1712, 38).ZIndex = 5
+local closeBtn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(1752, 40),
+	Size = UDim2.fromOffset(112, 36), ZIndex = 5 }, stage)
 local closeLbl = keyHint(closeBtn, "ESC", "BACK", 0, 6)
-for b, l in { [skinsKey] = skinsKeyLbl, [closeBtn] = closeLbl } do
-	b.MouseEnter:Connect(function() tween(l, FAST, { TextColor3 = C.text }) end)
-	b.MouseLeave:Connect(function() tween(l, FAST, { TextColor3 = C.dim }) end)
-end
+closeBtn.MouseEnter:Connect(function() tween(closeLbl, FAST, { TextColor3 = C.text }) end)
+closeBtn.MouseLeave:Connect(function() tween(closeLbl, FAST, { TextColor3 = C.dim }) end)
+grow(closeBtn, 1.05)
 do
 	local rule = frame(stage, 56, 98, RIGHT - 56, 1, C.line, 0)
 	rule.ZIndex = 5
 end
 
 -- toast (top centre, under the rule)
-local toast = frame(stage, 680, 112, 560, 40, C.bg, 0.05)
+local toast = frame(stage, STAGE_CX - 280, 112, 560, 40, C.bg, 0.05)
 toast.ZIndex, toast.Visible = 20, false
 border(toast, C.line, 1)
 frame(toast, 0, 0, 3, 40, C.red, 0)
@@ -566,11 +728,12 @@ local function say(text)
 	task.delay(4, function() if my == toastToken then toast.Visible = false end end)
 end
 
--- ================= loadout column (right, over the stage) =================
-local LX, LW = 1444, 420
-local loadCol = new("Frame", { Position = UDim2.fromOffset(LX, 112), Size = UDim2.fromOffset(LW, 760), BackgroundTransparency = 1, ZIndex = 5 }, stage)
-lbl(loadCol, "LOADOUT", 28, 0, 0, 240, 40, C.text, "H")
-lbl(loadCol, "SELECT A SLOT TO CHANGE", 11, LW - 220, 14, 220, 16, C.mute, "M", Enum.TextXAlignment.Right)
+-- ================= loadout dock (bottom of the middle area) =================
+-- [move]  [primary]  [g2][g3][g4] | [r1][r2][r3]   all square tiles, one size
+local SQ, SQ_GAP, GRP_GAP, RES_GAP = 96, 8, 26, 22
+local DOCK_W = SQ * 8 + SQ_GAP * 4 + GRP_GAP * 2 + RES_GAP * 2 + 2
+local DOCK_X = math.floor((MID_X + CL_X - 24) / 2 - DOCK_W / 2)
+local loadCol = new("Frame", { Position = UDim2.fromOffset(DOCK_X, BY - 24), Size = UDim2.fromOffset(DOCK_W, SQ + 24), BackgroundTransparency = 1, ZIndex = 5 }, stage)
 
 local slots = {}
 local view = "home"
@@ -670,7 +833,7 @@ local function refreshLoadoutBar()
 end
 
 local function makeSlot(kind, idx, x, y, w, h, style, num)
-	local f = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BackgroundTransparency = 0.12, BorderSizePixel = 0,
+	local f = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BackgroundTransparency = 0.08, BorderSizePixel = 0,
 		Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h) }, loadCol)
 	local st = border(f, C.line, 1)
 	local mark = frame(f, 0, 0, 3, h, C.red, 0)
@@ -683,24 +846,37 @@ local function makeSlot(kind, idx, x, y, w, h, style, num)
 		tween(f, FAST, { BackgroundColor3 = C.panel })
 		if st.Color ~= C.red then tween(st, FAST, { Color = C.line }) end
 	end)
+	grow(f, 1.06)
 	local s = { kind = kind, idx = idx, frame = f, stroke = st, mark = mark, style = style, num = num }
 	table.insert(slots, s)
 	return s
 end
 
-sectionLabel(loadCol, "PRIMARY", 0, 50, LW)
-makeSlot("weapon", 1, 0, 70, LW, 170, "wide", "1")
-sectionLabel(loadCol, "MOVEMENT", 0, 256, LW)
-makeSlot("move", 1, 0, 276, LW, 66, "row")
-sectionLabel(loadCol, "GADGETS", 0, 358, LW)
-for i = 1, 3 do makeSlot("gadget", i, (i - 1) * 144, 378, 132, 104, "tile", tostring(i + 1)) end
-sectionLabel(loadCol, "RESERVE", 0, 498, LW)
-for i = 1, 3 do makeSlot("reserve", i, (i - 1) * 144, 518, 132, 104, "tile", "R" .. i) end
-sectionLabel(loadCol, "OUTFIT", 0, 638, LW)
-makeSlot("skin", 1, 0, 658, LW, 80, "row")
+do -- dock geometry: group labels sit above the tiles, a slim line splits active gadgets from the reserve
+	local x, y = 0, 24
+	local function groupLabel(text, gx, gw)
+		local l = lbl(loadCol, text, 11, gx, 0, gw, 16, C.dim, "M")
+		l.TextTruncate = Enum.TextTruncate.AtEnd
+	end
+	groupLabel("MOVE", x, SQ)
+	makeSlot("move", 1, x, y, SQ, SQ, "tile")
+	x += SQ + GRP_GAP
+	groupLabel("PRIMARY", x, SQ)
+	makeSlot("weapon", 1, x, y, SQ, SQ, "tile", "1")
+	x += SQ + GRP_GAP
+	groupLabel("GADGETS", x, SQ * 3)
+	for i = 1, 3 do makeSlot("gadget", i, x + (i - 1) * (SQ + SQ_GAP), y, SQ, SQ, "tile", tostring(i + 1)) end
+	x += SQ * 3 + SQ_GAP * 2 + RES_GAP
+	frame(loadCol, x, y + 6, 2, SQ - 12, C.line2, 0)
+	x += 2 + RES_GAP
+	groupLabel("RESERVE", x, SQ * 3)
+	for i = 1, 3 do makeSlot("reserve", i, x + (i - 1) * (SQ + SQ_GAP), y, SQ, SQ, "tile", "R" .. i) end
+end
 
 -- ================= overlay (picker / invite / mode) over the stage =================
-local OX, OY, OW, OH = 56, 116, 1364, 776
+local PARTY_Y, PARTY_H = 800, 108 -- party row (right cluster), the overlay stops above it
+local OX, OY = MID_X, 116
+local OW, OH = RIGHT - MID_X, PARTY_Y - 36 - OY
 local overlay = frame(stage, OX, OY, OW, OH, C.bg, 0.04)
 overlay.ZIndex, overlay.Visible, overlay.Active = 8, false, true
 border(overlay, C.line, 1)
@@ -710,6 +886,7 @@ for _, name in { "pick", "invite", "mode" } do
 end
 
 local setView -- forward
+local skinsActive, inviteActive -- forward (round buttons light up while their view is open)
 local function viewHeader(v, title, sub)
 	local t = lbl(v, title, 40, 32, 18, 900, 50, C.text, "H")
 	local s = lbl(v, sub, 12, 34, 70, 900, 16, C.dim, "M")
@@ -718,6 +895,7 @@ local function viewHeader(v, title, sub)
 	local cl = keyHint(close, "ESC", "CLOSE", 0, 3)
 	close.MouseEnter:Connect(function() tween(cl, FAST, { TextColor3 = C.text }) end)
 	close.MouseLeave:Connect(function() tween(cl, FAST, { TextColor3 = C.dim }) end)
+	grow(close, 1.05)
 	close.MouseButton1Click:Connect(function() setView("home") end)
 	frame(v, 32, 100, OW - 64, 1, C.line, 0)
 	return t, s
@@ -731,13 +909,13 @@ local pickScroll = new("ScrollingFrame", { Position = UDim2.fromOffset(24, 112),
 local pickGrid = new("UIGridLayout", { CellSize = UDim2.fromOffset(312, 208), CellPadding = UDim2.fromOffset(16, 16), SortOrder = Enum.SortOrder.LayoutOrder }, pickScroll)
 new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingBottom = UDim.new(0, 16) }, pickScroll)
 
-local PICK_TITLES = { move = "MOVEMENT", weapon = "PRIMARY", gadget = "GADGET", reserve = "RESERVE", skin = "OUTFIT" }
+local PICK_TITLES = { move = "MOVEMENT", weapon = "PRIMARY", gadget = "GADGET", reserve = "RESERVE", skin = "SKIN CATALOG" }
 local PICK_SUBS = {
 	move = "SPECIAL MOVEMENT ABILITY  //  EVERYONE KEEPS SPRINT, SLIDE AND MANTLE",
 	weapon = "THE GUN YOU DEPLOY WITH",
 	gadget = "GADGETS SIT ON KEYS 2 - 4 IN THE MATCH",
 	reserve = "SWAP WITH YOUR ACTIVE LOADOUT WHILE DEAD",
-	skin = "WORN IN THE LOBBY, ON THE STAGE AND IN THE MATCH",
+	skin = "PICK AN OUTFIT  //  WORN IN THE LOBBY, ON THE STAGE AND IN THE MATCH",
 }
 local function itemsFor(kind)
 	if kind == "move" then return Catalog.Moves end
@@ -774,7 +952,10 @@ end
 
 -- shared card shell for the pickers
 local function pickCard(order, equipped)
-	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BorderSizePixel = 0, LayoutOrder = order }, pickScroll)
+	local cell = new("Frame", { BackgroundTransparency = 1, LayoutOrder = order }, pickScroll) -- the grid places the cell, the card grows inside it
+	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1) }, cell)
+	grow(b, 1.03)
 	local st = border(b, equipped and C.red or C.line, equipped and 2 or 1)
 	b.MouseEnter:Connect(function()
 		tween(b, FAST, { BackgroundColor3 = C.panel2 })
@@ -807,11 +988,11 @@ function buildPick()
 	local current = slotItemId(kind, idx)
 
 	if kind == "skin" then
-		pickGrid.CellSize = UDim2.fromOffset(410, 610)
+		pickGrid.CellSize = UDim2.fromOffset(360, 500)
 		for i, sk in Skins.List do
 			local on = sk.id == mySkin
 			local b = pickCard(i, on)
-			local well = frame(b, 1, 1, 408, 478, C.void, 0)
+			local well = frame(b, 1, 1, 358, 364, C.void, 0)
 			grad(well, sk.card:Lerp(BLACK, 0.72), C.void, 90)
 			lbl(well, ("%02d"):format(i), 13, 16, 30, 60, 16, C.mute, "MB")
 			local fv = new("ViewportFrame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Ambient = rgb(130, 132, 140),
@@ -822,9 +1003,9 @@ function buildPick()
 			local fig = Skins.NewFigure(fv, sk.id, { weapon = loadout.Weapon, camPos = Vector3.new(0, 4.3, 19) })
 			fig:SetRoot(CFrame.Angles(0, math.rad(28), 0))
 			table.insert(skinFigs, fig)
-			lbl(b, sk.name, 30, 18, 490, 380, 38, C.text, "H")
-			lbl(b, string.upper(sk.sub), 11, 19, 528, 380, 14, on and C.redHi or C.dim, "M")
-			local ds = lbl(b, sk.desc, 13, 18, 550, 372, 40, C.dim, "B")
+			lbl(b, sk.name, 30, 18, 372, 330, 38, C.text, "H")
+			lbl(b, string.upper(sk.sub), 11, 19, 410, 330, 14, on and C.redHi or C.dim, "M")
+			local ds = lbl(b, sk.desc, 13, 18, 432, 324, 56, C.dim, "B")
 			ds.TextWrapped, ds.TextYAlignment = true, Enum.TextYAlignment.Top
 			b.MouseButton1Click:Connect(function() equipSkin(sk.id) end)
 		end
@@ -1074,50 +1255,94 @@ function setView(name)
 	nameLayer.Visible = name == "home"
 	for _, s in slots do drawSlot(s) end
 	if name == "invite" then rebuildInvite() end
+	if skinsActive then skinsActive(name == "pick" and pickKind == "skin") end
+	if inviteActive then inviteActive(name == "invite") end
 	if name ~= "pick" then
 		for _, f in skinFigs do f:Destroy() end
 		table.clear(skinFigs)
 	end
 end
 
--- ================= bottom row: game mode | party | start =================
-local BY, BH = 916, 112
+-- ================= left: GAME MODES tab =================
+-- BREAKLINE on top (live, click = mode info / select). The rest are locked placeholders that fill the column until new modes ship.
+local LOCKED_MODES = {
+	{ name = "RANKED", tag = "3V3  //  COMPETITIVE" },
+	{ name = "OVERLOAD", tag = "5V5  //  ZONE CONTROL" },
+	{ name = "DEATHMATCH", tag = "FFA  //  FIRST TO 30" },
+	{ name = "SIEGE", tag = "4V4  //  ATTACK + DEFEND" },
+	{ name = "FIRING RANGE", tag = "SOLO  //  PRACTICE" },
+}
+local TAB_Y, TAB_H = 116, BY + BH - 116
+local modeTab = frame(stage, TAB_X, TAB_Y, TAB_W, TAB_H, C.bg, 0.1)
+modeTab.ZIndex = 5
+border(modeTab, C.line, 1)
+lbl(modeTab, "GAME MODES", 22, 18, 12, 200, 30, C.text, "H")
+lbl(modeTab, ("%d / %d"):format(#MODES, #MODES + #LOCKED_MODES), 11, TAB_W - 118, 21, 100, 14, C.mute, "M", Enum.TextXAlignment.Right)
+frame(modeTab, 18, 52, TAB_W - 36, 1, C.line, 0)
 
--- game mode card
-local modeCard = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BackgroundTransparency = 0.12, BorderSizePixel = 0,
-	Position = UDim2.fromOffset(56, BY), Size = UDim2.fromOffset(364, BH), ZIndex = 5 }, stage)
+local MODE_PAD, LIVE_H, LOCK_GAP = 12, 178, 10
+local LOCK_H = math.floor((TAB_H - 66 - LIVE_H - LOCK_GAP - MODE_PAD - LOCK_GAP * (#LOCKED_MODES - 1)) / #LOCKED_MODES)
+local modeCard = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BorderSizePixel = 0,
+	Position = UDim2.fromOffset(MODE_PAD, 66), Size = UDim2.fromOffset(TAB_W - MODE_PAD * 2, LIVE_H), ZIndex = 6 }, modeTab)
 do
-	local st = border(modeCard, C.line, 1)
-	hoverable(modeCard, C.panel, C.panel2, st, C.line, C.line2)
-	local th = frame(modeCard, 10, 10, 128, BH - 20, C.panel, 0)
+	local w = TAB_W - MODE_PAD * 2
+	local st = border(modeCard, C.red, 1)
+	hoverable(modeCard, C.panel, C.panel2, st, C.red, C.redHi)
+	frame(modeCard, 0, 0, 3, LIVE_H, C.red, 0)
+	local th = frame(modeCard, 3, 0, w - 3, 92, C.panel, 0)
 	modeGraphic(th)
-	lbl(modeCard, "GAME MODE", 11, 154, 14, 190, 14, C.mute, "M")
-	local nm = lbl(modeCard, "", 30, 154, 28, 190, 40, C.text, "H")
-	local tg = lbl(modeCard, "", 11, 155, 74, 190, 14, C.dim, "M")
-	chevron(modeCard, 364 - 26, BH / 2 - 8, 8, C.mute, 2)
+	local tag = frame(modeCard, w - 82, 8, 74, 18, C.red, 0)
+	tag.ZIndex = 3
+	lbl(tag, "SELECTED", 10, 0, 0, 74, 18, C.text, "MB", Enum.TextXAlignment.Center)
+	local nm = lbl(modeCard, "", 30, 16, 98, w - 50, 40, C.text, "H")
+	local tg = lbl(modeCard, "", 11, 17, 138, w - 50, 14, C.dim, "M")
+	lbl(modeCard, "MODE INFO", 10, 17, 156, 120, 14, C.mute, "MB")
+	chevron(modeCard, w - 24, 118, 8, C.dim, 2)
 	function modeCardSel()
 		for _, m in MODES do
 			if m.id == selectedMode then nm.Text, tg.Text = m.name, m.tag end
 		end
+		tag.Visible = true
 	end
 	modeCardSel()
 	modeCard.MouseButton1Click:Connect(function()
+		if view == "mode" then setView("home") return end
 		for _, m in MODES do if m.id == selectedMode then openMode(m) end end
 	end)
+	grow(modeCard, 1.03)
+end
+for i, m in LOCKED_MODES do
+	local y = 66 + LIVE_H + LOCK_GAP + (i - 1) * (LOCK_H + LOCK_GAP)
+	local w = TAB_W - MODE_PAD * 2
+	local f = frame(modeTab, MODE_PAD, y, w, LOCK_H, C.panel, 0.45)
+	f.ZIndex = 6
+	border(f, C.line, 1, 0.35)
+	-- faint diagonal hatching = not available yet
+	local hatch = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ClipsDescendants = true }, f)
+	for k = 0, 14 do
+		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(k * 26 - 40, LOCK_H / 2), Size = UDim2.fromOffset(1, LOCK_H * 1.8),
+			Rotation = 35, BackgroundColor3 = C.line, BackgroundTransparency = 0.55, BorderSizePixel = 0 }, hatch)
+	end
+	lbl(f, m.name, 22, 16, math.floor(LOCK_H / 2) - 26, w - 60, 30, C.mute, "H")
+	lbl(f, m.tag, 10, 17, math.floor(LOCK_H / 2) + 4, w - 60, 14, C.mute, "M")
+	lbl(f, "COMING SOON", 10, 17, math.floor(LOCK_H / 2) + 20, w - 60, 14, C.redDeep:Lerp(C.mute, 0.3), "MB")
+	lockIcon(f, w - 32, math.floor(LOCK_H / 2) - 9, C.mute)
 end
 
--- party: 3 slots, the leader is always the leftmost
-local PX, PW, PGAP = 444, 316, 14
-local partyHolder = new("Frame", { Position = UDim2.fromOffset(PX, BY), Size = UDim2.fromOffset(PW * 3 + PGAP * 2, BH), BackgroundTransparency = 1, ZIndex = 5 }, stage)
-lbl(stage, "SQUAD", 11, PX, BY - 22, 200, 14, C.mute, "M").ZIndex = 5
-local squadCount = lbl(stage, "", 11, PX + PW * 3 + PGAP * 2 - 200, BY - 22, 200, 14, C.mute, "M", Enum.TextXAlignment.Right)
+-- ================= right cluster: party (3 slots) above (hanger) | PLAY | (+) =================
+-- party: 3 compact slots, the leader is always the leftmost
+local PW, PGAP = math.floor((CL_W - 24) / 3), 12
+local partyHolder = new("Frame", { Position = UDim2.fromOffset(CL_X, PARTY_Y), Size = UDim2.fromOffset(CL_W, PARTY_H), BackgroundTransparency = 1, ZIndex = 5 }, stage)
+lbl(stage, "SQUAD", 11, CL_X, PARTY_Y - 22, 200, 14, C.mute, "M").ZIndex = 5
+local squadCount = lbl(stage, "", 11, RIGHT - 200, PARTY_Y - 22, 200, 14, C.mute, "M", Enum.TextXAlignment.Right)
 squadCount.ZIndex = 5
 
 local function smallBtn(parent, text, x, y, w, danger)
-	local b = new("TextButton", { Text = text, TextSize = 11, FontFace = FONTS.MB, TextColor3 = danger and C.redHi or C.dim, BackgroundColor3 = C.panel2,
-		AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, 22) }, parent)
+	local b = new("TextButton", { Text = text, TextSize = 10, FontFace = FONTS.MB, TextColor3 = danger and C.redHi or C.dim, BackgroundColor3 = C.panel2,
+		AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, 20) }, parent)
 	local st = border(b, danger and C.redDeep or C.line, 1)
 	hoverable(b, C.panel2, C.panel3, st, danger and C.redDeep or C.line, danger and C.red or C.line2)
+	grow(b, 1.08)
 	return b
 end
 
@@ -1136,46 +1361,57 @@ local function renderParty()
 		if m then
 			local isMe = m.id == player.UserId
 			local isLeader = m.id == leader
-			local f = frame(partyHolder, x, 0, PW, BH, C.panel, 0.12)
+			local f = frame(partyHolder, x, 0, PW, PARTY_H, C.panel, 0.08)
 			border(f, C.line, 1)
 			if isLeader then frame(f, 0, 0, PW, 2, C.red, 0) end
-			local av = new("ImageLabel", { BackgroundColor3 = C.panel3, BorderSizePixel = 0, Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(BH - 20, BH - 20),
+			local av = new("ImageLabel", { BackgroundColor3 = C.panel3, BorderSizePixel = 0, Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(40, 40),
 				Image = thumb(m.id) }, f)
 			border(av, C.line, 1)
-			local tx = BH + 4
-			local role = isLeader and "LEADER" or (isMe and "YOU" or "MEMBER")
-			lbl(f, role .. ((isLeader and isMe) and "  //  YOU" or ""), 11, tx, 12, PW - tx - 10, 14, isLeader and C.redHi or C.mute, "MB")
-			local nm = lbl(f, string.upper(isMe and player.DisplayName or m.name), 24, tx, 26, PW - tx - 10, 32, C.text, "H")
+			lbl(f, isLeader and "LEADER" or "MEMBER", 10, 58, 14, PW - 66, 14, isLeader and C.redHi or C.mute, "MB")
+			if isMe then lbl(f, "YOU", 10, 58, 30, PW - 66, 14, C.dim, "MB") end
+			local nm = lbl(f, string.upper(isMe and player.DisplayName or m.name), 20, 10, 54, PW - 20, 24, C.text, "H")
 			nm.TextTruncate = Enum.TextTruncate.AtEnd
-			lbl(f, "@" .. m.name, 11, tx, 58, PW - tx - 10, 14, C.dim, "M").TextTruncate = Enum.TextTruncate.AtEnd
 			if iLead and not isMe then
-				local prom = smallBtn(f, "PROMOTE", tx, BH - 32, 84)
-				local kick = smallBtn(f, "KICK", tx + 92, BH - 32, 56, true)
+				local prom = smallBtn(f, "PROMOTE", 10, PARTY_H - 28, 74)
+				local kick = smallBtn(f, "KICK", 90, PARTY_H - 28, PW - 100, true)
 				prom.MouseButton1Click:Connect(function() PromoteR:FireServer(m.id) end)
 				kick.MouseButton1Click:Connect(function() KickR:FireServer(m.id) end)
 			elseif isMe and #list > 1 then
-				local lv = smallBtn(f, "LEAVE PARTY", tx, BH - 32, 110, true)
+				local lv = smallBtn(f, "LEAVE PARTY", 10, PARTY_H - 28, PW - 20, true)
 				lv.MouseButton1Click:Connect(function() LeaveR:FireServer() end)
+			else
+				lbl(f, "@" .. m.name, 10, 10, PARTY_H - 26, PW - 20, 14, C.mute, "M").TextTruncate = Enum.TextTruncate.AtEnd
 			end
 		else
-			local f = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(x, 0), Size = UDim2.fromOffset(PW, BH),
-				BackgroundColor3 = C.void, BackgroundTransparency = 0.35, BorderSizePixel = 0 }, partyHolder)
+			local f = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(x, 0), Size = UDim2.fromOffset(PW, PARTY_H),
+				BackgroundColor3 = C.void, BackgroundTransparency = 0.3, BorderSizePixel = 0 }, partyHolder)
 			local st = border(f, C.line, 1)
 			hoverable(f, C.void, C.panel2, st, C.line, C.red)
-			local well = frame(f, 10, 10, BH - 20, BH - 20, C.panel, 0.4)
+			local well = frame(f, (PW - 40) / 2, 16, 40, 40, C.panel, 0.4)
 			border(well, C.line, 1)
-			emptyMark(well, BH - 20, BH - 20)
-			lbl(f, "OPEN SLOT", 11, BH + 4, 30, 200, 14, C.mute, "MB")
-			lbl(f, "INVITE", 24, BH + 4, 44, 200, 32, C.dim, "H")
+			emptyMark(well, 40, 40)
+			lbl(f, "OPEN SLOT", 10, 0, 64, PW, 14, C.mute, "MB", Enum.TextXAlignment.Center)
+			lbl(f, "INVITE", 18, 0, 78, PW, 22, C.dim, "H", Enum.TextXAlignment.Center)
 			f.MouseButton1Click:Connect(function() setView("invite") end)
+			grow(f, 1.05)
 		end
 	end
 	if view == "invite" then rebuildInvite() end
 end
 
--- start / queue
-local startBtn, startMain, startSub, startPaint = actionBlock(stage, LX, BY, LW, BH, "START", "")
+-- PLAY (queue) block with the two round buttons
+local startBtn, startMain, startSub, startPaint = actionBlock(stage, PLAY_X, BY, PLAY_W, BH, "PLAY", "")
 startBtn.ZIndex = 5
+local skinsBtn
+skinsBtn, _, skinsActive = circleButton(stage, CL_X + CIRCLE / 2, BY + BH / 2, CIRCLE)
+skinsBtn.ZIndex = 5
+hangerIcon(skinsBtn, C.text)
+local inviteBtn
+inviteBtn, _, inviteActive = circleButton(stage, RIGHT - CIRCLE / 2, BY + BH / 2, CIRCLE)
+inviteBtn.ZIndex = 5
+plusIcon(inviteBtn, 24, C.text)
+lbl(stage, "SKINS", 10, CL_X, BY + BH + 6, CIRCLE, 14, C.mute, "MB", Enum.TextXAlignment.Center).ZIndex = 5
+lbl(stage, "INVITE", 10, RIGHT - CIRCLE, BY + BH + 6, CIRCLE, 14, C.mute, "MB", Enum.TextXAlignment.Center).ZIndex = 5
 
 local function fmtTime(s) return ("%d:%02d"):format(math.floor(s / 60), s % 60) end
 local function refreshQueue()
@@ -1194,7 +1430,7 @@ local function refreshQueue()
 		startMain.Text, startSub.Text = "WAITING", "ONLY THE LEADER CAN START"
 		startPaint("wait")
 	else
-		startMain.Text, startSub.Text = "START", mode.name .. (#list > 1 and ("  //  PARTY OF " .. #list) or "  //  3V3")
+		startMain.Text, startSub.Text = "PLAY", mode.name .. (#list > 1 and ("  //  PARTY OF " .. #list) or "  //  3V3")
 		startPaint("go")
 	end
 	hudStatus.Text = tp and "JOINING MATCH..." or (q and ("SEARCHING FOR PLAYERS  " .. fmtTime(math.max(0, os.time() - (player:GetAttribute("QueuedAt") or os.time())))) or "")
@@ -1281,24 +1517,29 @@ local function openSkins()
 	if not screenOpen then openScreen("home") end
 	openPick("skin", 1)
 end
+local function toggleSkins()
+	if screenOpen and view == "pick" and pickKind == "skin" then setView("home") else openSkins() end
+end
 homePlay.MouseButton1Click:Connect(function() openScreen("home") end)
 homePlus.MouseButton1Click:Connect(function() openScreen("invite") end)
+homeSkins.MouseButton1Click:Connect(openSkins)
 closeBtn.MouseButton1Click:Connect(closeScreen)
-skinsKey.MouseButton1Click:Connect(function()
-	if view == "pick" and pickKind == "skin" then setView("home") else openSkins() end
+skinsBtn.MouseButton1Click:Connect(toggleSkins)
+inviteBtn.MouseButton1Click:Connect(function()
+	if view == "invite" then setView("home") else setView("invite") end
 end)
 
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe or UIS:GetFocusedTextBox() then return end
 	if input.KeyCode == Enum.KeyCode.Tab then
-		if screenOpen and view == "pick" and pickKind == "skin" then setView("home") else openSkins() end
+		toggleSkins()
 	elseif input.KeyCode == Enum.KeyCode.Escape then
 		if screenOpen and view ~= "home" then setView("home")
 		elseif screenOpen then closeScreen() end
 	end
 end)
 
--- ================= render loop (idle figures + name positions + slow star breathing) =================
+-- ================= render loop (idle figures + name positions + star breathing + galaxy / planet drift) =================
 local t0 = os.clock()
 RunService.RenderStepped:Connect(function(dt)
 	if not screenOpen then return end
@@ -1307,6 +1548,8 @@ RunService.RenderStepped:Connect(function(dt)
 	for _, s in twinkles do
 		s.f.BackgroundTransparency = math.clamp(s.base + 0.35 * (0.5 + 0.5 * math.sin(t * s.spd + s.ph)), 0, 0.95)
 	end
+	updateGalaxy(t)
+	updatePlanet(t)
 	if view == "home" then
 		for _, s in squad do
 			s.fig:Update(t, dt)
