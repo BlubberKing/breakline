@@ -1,4 +1,4 @@
--- GunClient v3.1: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
+-- GunClient v3.2: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
 -- Live weapon/sight switching via Player attributes "Weapon" / "Sight" (set by the server, see GunServer).
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -628,6 +628,10 @@ local function onRender(dt)
 	local sliding = character:GetAttribute("Sliding") == true
 	local mantling = character:GetAttribute("Mantling") == true
 	local crouching = character:GetAttribute("Crouching") == true
+	-- sprint key is POLLED, not event-driven: a Shift press that Roblox marked "game processed" (a focused button, shift lock,
+	-- chat) used to be lost, which could leave you unable to sprint for a whole match. Same for a stuck fire button.
+	shiftHeld = (UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)) and UIS:GetFocusedTextBox() == nil
+	if triggerDown and not UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then triggerDown = false end
 	if menuOpen() then shiftHeld = false; setSprintToggle(false) end
 	if sprintToggle then -- auto-off after standing still for a moment
 		stillTime = moving and 0 or stillTime + dt
