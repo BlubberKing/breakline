@@ -155,12 +155,12 @@ local function refresh()
 		local t = player.Team and player.Team.Name
 		timerLabel.Text = t and t:upper() or "SPECTATING"
 		timerLabel.TextColor3 = t and teamColor() or Color3.new(1, 1, 1)
-	elseif phase == "Result" then
+	elseif phase == "Result" or phase == "SlowMo" then
 		local w = State:GetAttribute("Winner")
 		timerLabel.Text = (w and w ~= "") and (w:upper() .. " WINS") or "ROUND OVER"
 		timerLabel.TextColor3 = (w == NAME_A and COL_A) or (w == NAME_B and COL_B) or Color3.new(1, 1, 1)
 	end
-	if phase ~= "Playing" and phase ~= "Result" then timerLabel.TextColor3 = Color3.new(1, 1, 1) end
+	if phase ~= "Playing" and phase ~= "Result" and phase ~= "SlowMo" then timerLabel.TextColor3 = Color3.new(1, 1, 1) end
 
 	if phase ~= lastPhase then
 		lastPhase = phase
