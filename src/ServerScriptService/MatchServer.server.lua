@@ -662,9 +662,9 @@ local function endRound(winner)
 			local t = p.Team and p.Team.Name
 			if t and teamObjs[t] and t ~= "Lobby" then
 				if t == winner then
-					Profiles.Increment(p, "Coins", PC.COINS_WIN); Profiles.Increment(p, "Wins", 1)
+					Profiles.Increment(p, "Souls", PC.SOULS_WIN); Profiles.Increment(p, "Wins", 1)
 				else
-					Profiles.Increment(p, "Coins", PC.COINS_LOSS); Profiles.Increment(p, "Losses", 1)
+					Profiles.Increment(p, "Souls", PC.SOULS_LOSS); Profiles.Increment(p, "Losses", 1)
 				end
 			end
 		end
