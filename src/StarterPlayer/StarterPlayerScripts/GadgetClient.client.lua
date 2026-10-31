@@ -278,16 +278,20 @@ local SLEEVE, GLOVE = Color3.fromRGB(58, 70, 98), Color3.fromRGB(30, 33, 40)
 local function destroyVM()
 	if vm then vm.folder:Destroy() vm = nil end
 end
+-- v4.2: held gadget size (1 = the old, huge size). Lower = smaller on screen.
+local VM_SCALE_THROW, VM_SCALE_PLACE = 0.38, 0.24
 local function buildVM(id)
 	destroyVM()
 	local folder = Instance.new("Model")
 	folder.Name = "GadgetVM"
-	local model = GM.Build(id, nil, { anchored = true, scale = 1 })
+	local isPlace = Cfg.Items[id] and Cfg.Items[id].kind == "place"
+	local vmScale = isPlace and VM_SCALE_PLACE or VM_SCALE_THROW -- v4.2: much smaller in your hand
+	local model = GM.Build(id, nil, { anchored = true, scale = vmScale })
 	if not model then return end
 	model.Parent = folder
 	local glove = Instance.new("Part")
 	glove.Name = "Glove"
-	glove.Size = Vector3.new(0.5, 0.46, 0.56)
+	glove.Size = Vector3.new(0.3, 0.28, 0.34)
 	glove.Color, glove.Material = GLOVE, Enum.Material.SmoothPlastic
 	local sleeve = Instance.new("Part")
 	sleeve.Name = "Sleeve"
@@ -299,7 +303,7 @@ local function buildVM(id)
 		pt.Parent = folder
 	end
 	folder.Parent = camera
-	vm = { folder = folder, model = model, glove = glove, sleeve = sleeve, id = id, t0 = os.clock(), bob = 0 }
+	vm = { folder = folder, model = model, glove = glove, sleeve = sleeve, id = id, t0 = os.clock(), bob = 0, scale = vmScale }
 end
 
 local function easeOut(a) return 1 - (1 - clamp(a, 0, 1)) ^ 3 end
@@ -320,7 +324,7 @@ local function updateVM(dt, now)
 	-- windup while you hold the throw
 	local hold = (aimingThrow and not place) and clamp((now - aimStart) / 0.25, 0, 1) or 0
 	vm.hold = (vm.hold or 0) + (hold - (vm.hold or 0)) * (1 - math.exp(-dt * 16))
-	local base = place and Vector3.new(0.78, -0.72, -1.55) or Vector3.new(0.62, -0.5, -1.35)
+	local base = place and Vector3.new(0.7, -0.62, -1.9) or Vector3.new(0.58, -0.46, -1.7)
 	local pos = base
 		+ Vector3.new(math.sin(vm.bob) * 0.04 * amp, -math.abs(math.cos(vm.bob)) * 0.05 * amp + math.sin(now * 1.7) * 0.007, 0)
 		+ Vector3.new(0.05, -1.3 * (1 - raise), 0.5 * (1 - raise))
@@ -328,13 +332,13 @@ local function updateVM(dt, now)
 		+ Vector3.new(-0.1 * throwKick, 0.12 * throwKick, -1.0 * throwKick)
 	local rot = CFrame.Angles(rad(-18 * vm.hold + 38 * throwKick), rad(-12 - 10 * vm.hold), rad(-8 + 16 * (1 - raise)))
 	local cf = camera.CFrame * CFrame.new(pos) * rot
-	vm.model:PivotTo(cf * CFrame.new(0, place and 0.2 or 0, 0))
-	local gloveCF = cf * CFrame.new(-0.06, -0.52, 0.02)
+	vm.model:PivotTo(cf * CFrame.new(0, place and 0.2 * vm.scale or 0, 0))
+	local gloveCF = cf * CFrame.new(-0.03, place and -0.1 or -0.2, 0.01)
 	vm.glove.CFrame = gloveCF
 	local a = gloveCF.Position
-	local b = camera.CFrame * CFrame.new(1.7, -2.6, 0.9).Position
+	local b = camera.CFrame * CFrame.new(1.5, -2.4, 0.9).Position
 	local len = (b - a).Magnitude
-	vm.sleeve.Size = Vector3.new(0.5, 0.5, len)
+	vm.sleeve.Size = Vector3.new(0.3, 0.3, len)
 	vm.sleeve.CFrame = CFrame.lookAt(a, b) * CFrame.new(0, 0, -len / 2)
 end
 
