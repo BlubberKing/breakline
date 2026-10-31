@@ -105,6 +105,7 @@ local lastPress = 0
 local filterT = 0
 local alive = true
 local rollNow = 0
+local alignCF = nil -- v4.1: the smoothed body rotation while attached / standing back up (slerped, so it can never flip or spin)
 
 -- ================= loadout =================
 local function readMove()
@@ -202,7 +203,7 @@ local align = Instance.new("AlignOrientation")
 align.Name = "AbilityAlign"
 align.Attachment0 = att
 align.Mode = Enum.OrientationAlignmentMode.OneAttachment
-align.RigidityEnabled = false
+align.RigidityEnabled = true -- v4.1: rigid (was a spring that overshot and made the body wobble / spin on the wall)
 align.MaxTorque = 1e9
 align.MaxAngularVelocity = math.huge
 align.Responsiveness = 35
@@ -262,6 +263,7 @@ local function enterMode(m, hit, initDir, initSpeed)
 	local l = flat(root.CFrame.LookVector)
 	lookNow = l.Magnitude > 0.05 and l.Unit or lastLook
 	upNow = Vector3.yAxis
+	alignCF = root.CFrame.Rotation
 	hum.PlatformStand = true
 	hum.AutoRotate = false
 	driver.MaxForce = root.AssemblyMass * 700
@@ -535,13 +537,18 @@ end
 
 local function alignTo(dt)
 	local look, up = bodyBasis()
-	lookNow = lookNow:Lerp(look, math.min(1, dt * 12))
-	if lookNow.Magnitude < 0.05 then lookNow = look end
-	upNow = upNow:Lerp(up, math.min(1, dt * 12))
-	if upNow.Magnitude < 0.05 then upNow = up end
+	if look.Magnitude < 0.05 then look = lastLook end
+	if up.Magnitude < 0.05 then up = Vector3.yAxis end
+	-- v4.1: the wobble / 360 spins came from lerping the look VECTOR (opposite vectors lerp through zero and the direction flips) and from
+	-- a springy constraint. Now the target rotation is built once and the body slerps toward it (CFrame:Lerp = a real rotation blend),
+	-- the constraint is rigid, and any leftover angular velocity is killed every frame.
+	local target = makeCF(root.Position, up.Unit, look).Rotation
+	alignCF = (alignCF or root.CFrame.Rotation):Lerp(target, math.min(1, dt * 9))
+	lookNow, upNow = alignCF.LookVector, alignCF.UpVector
 	local lf = flat(lookNow)
 	if lf.Magnitude > 0.05 then lastLook = lf.Unit end
-	align.CFrame = makeCF(root.Position, upNow.Unit, lookNow)
+	align.CFrame = CFrame.new(root.Position) * alignCF
+	root.AssemblyAngularVelocity = Vector3.zero
 end
 
 -- ================= per-frame =================
@@ -699,10 +706,14 @@ local function update(dt)
 		-- smooth stand-up after leaving a wall
 		if now < uprightUntil then
 			align.Enabled = true
-			local look = flat(root.CFrame.LookVector)
-			align.CFrame = makeCF(root.Position, Vector3.yAxis, look.Magnitude > 0.05 and look or lastLook)
+			local look = flat((alignCF or root.CFrame.Rotation).LookVector)
+			local target = makeCF(root.Position, Vector3.yAxis, look.Magnitude > 0.05 and look or lastLook).Rotation
+			alignCF = (alignCF or root.CFrame.Rotation):Lerp(target, math.min(1, dt * 10))
+			align.CFrame = CFrame.new(root.Position) * alignCF
+			root.AssemblyAngularVelocity = Vector3.zero
 		elseif align.Enabled then
 			align.Enabled = false
+			alignCF = nil
 		end
 	else
 		airTime = 0
