@@ -24,6 +24,7 @@ local TimeScale = require(RS:WaitForChild("TimeScale"))
 local Levels = require(RS:WaitForChild("Levels")) -- v3.8: XP bar on the summary screen
 local Sfx = require(RS:WaitForChild("Sfx"))
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
+local GM = RS:FindFirstChild("GadgetModels") and require(RS.GadgetModels) or nil -- v4.1: real gadget pictures
 local State = RS:WaitForChild("MatchState")
 local Remotes = RS:WaitForChild("MatchRemotes")
 local LoadoutR = Remotes:WaitForChild("PregameLoadout")
@@ -382,6 +383,9 @@ local function runPregame(token)
 		elseif it and it.kind == "move" then -- v3.8: drawn ability icon
 			local ic = UI.AbilityIcon(t.content, it.id, 46, it.color)
 			ic.AnchorPoint, ic.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.4)
+		elseif it and it.kind == "gadget" and GM then -- v4.1: the real model, like the guns
+			local holder = new("Frame", { Size = UDim2.new(1, 0, 0.72, 0), BackgroundTransparency = 1 }, t.content)
+			GM.Picture(holder, it.id)
 		elseif it then
 			label(t.content, it.glyph, 30, F.H, it.color, { Size = UDim2.new(1, 0, 0.7, 0) })
 		else
@@ -443,6 +447,7 @@ local function runPregame(token)
 			local st = new("UIStroke", { Color = (it and it.id == cur or (not it and cur == "")) and K.red or K.line, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
 			local art = new("Frame", { Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 0, 78), BackgroundTransparency = 1, ZIndex = 15 }, b)
 			if it and it.kind == "weapon" then gunPicture(art, it.id)
+			elseif it and it.kind == "gadget" and GM then GM.Picture(art, it.id)
 			elseif it and it.kind == "move" then
 				local ic = UI.AbilityIcon(art, it.id, 52, it.color)
 				ic.AnchorPoint, ic.Position, ic.ZIndex = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), 15
@@ -603,6 +608,47 @@ local function runWarp(token)
 		part(world, Vector3.new(8, 0.7, 0.7), CFrame.new(0, 11, dz), WHITE, true)
 		part(world, Vector3.new(6.6, 10.4, 0.3), CFrame.new(0, 5.2, dz - 0.2), rgb(255, 252, 240), true, 0.05)
 		part(world, Vector3.new(26, 0.2, 40), CFrame.new(0, 0, dz + 14), rgb(210, 235, 255), true, 0.7)
+	end
+	-- v4.1: a little more to look at on the way (kept sparse and dark): drifting broken slabs, two dim far planets, faint nebula clouds,
+	-- a few ruined arches far off to the sides and thin soul-lights hanging in the void
+	do
+		local SLAB, SLAB2 = rgb(34, 36, 44), rgb(46, 49, 60)
+		for i = 1, 9 do -- broken stone slabs / pillars drifting beside the path
+			local side = (i % 2 == 0) and 1 or -1
+			local z = -DOOR_Z * ((i - 0.5) / 9) + rng:NextNumber(-12, 12)
+			local x = side * rng:NextNumber(22, 46)
+			local y = rng:NextNumber(-12, 22)
+			local sz = Vector3.new(rng:NextNumber(3, 8), rng:NextNumber(5, 18), rng:NextNumber(3, 8))
+			local cf = CFrame.new(x, y, z) * CFrame.Angles(rng:NextNumber(-0.5, 0.5), rng:NextNumber(0, 6.28), rng:NextNumber(-0.5, 0.5))
+			part(world, sz, cf, (i % 3 == 0) and SLAB2 or SLAB, false, 0)
+			if i % 3 == 0 then -- a faint soul-blue seam on some of them
+				part(world, Vector3.new(sz.X * 0.9, 0.15, sz.Z * 0.9), cf * CFrame.new(0, sz.Y * 0.2, 0), K.soul, true, 0.55)
+			end
+		end
+		for i = 1, 2 do -- far dim planets, one with a thin ring
+			local c = Vector3.new(i == 1 and -95 or 110, i == 1 and 38 or -22, -DOOR_Z * (i == 1 and 0.42 or 0.7))
+			local r = i == 1 and 26 or 18
+			part(world, Vector3.one * r * 2, CFrame.new(c), i == 1 and rgb(26, 28, 38) or rgb(30, 24, 34), false, 0, Enum.PartType.Ball)
+			part(world, Vector3.one * (r * 2 + 1.2), CFrame.new(c), K.soul, true, 0.94, Enum.PartType.Ball)
+			if i == 1 then
+				part(world, Vector3.new(0.4, r * 3.4, r * 3.4), CFrame.new(c) * CFrame.Angles(0.35, 0, math.rad(90) + 0.25), rgb(64, 70, 92), false, 0.45, Enum.PartType.Cylinder)
+			end
+		end
+		for i = 1, 4 do -- soft nebula clouds
+			local c = Vector3.new(rng:NextNumber(-70, 70), rng:NextNumber(-10, 40), -DOOR_Z * (i / 4.6))
+			part(world, Vector3.one * rng:NextNumber(30, 54), CFrame.new(c), i % 2 == 0 and rgb(40, 60, 110) or rgb(70, 40, 100), true, 0.93, Enum.PartType.Ball)
+		end
+		for i = 1, 3 do -- ruined arches far off the path
+			local side = (i % 2 == 0) and 1 or -1
+			local c = Vector3.new(side * rng:NextNumber(55, 80), -6, -DOOR_Z * (i / 3.4))
+			part(world, Vector3.new(3, 26, 3), CFrame.new(c + Vector3.new(-6, 13, 0)), SLAB, false, 0)
+			part(world, Vector3.new(3, 15, 3), CFrame.new(c + Vector3.new(6, 7.5, 0)) * CFrame.Angles(0, 0, 0.12), SLAB, false, 0)
+			part(world, Vector3.new(16, 2.4, 3), CFrame.new(c + Vector3.new(-1, 25, 0)) * CFrame.Angles(0, 0, -0.1), SLAB2, false, 0)
+		end
+		for _ = 1, 14 do -- thin soul lights hanging in the dark
+			local c = Vector3.new(rng:NextNumber(-40, 40), rng:NextNumber(-8, 24), rng:NextNumber(-DOOR_Z, -30))
+			part(world, Vector3.new(0.12, rng:NextNumber(2, 6), 0.12), CFrame.new(c), K.soulPale, true, 0.35)
+		end
 	end
 	-- dust for the sense of speed
 	for _ = 1, 320 do
@@ -816,13 +862,11 @@ local function runWarp(token)
 	end
 	tween(flash, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
 
-	-- 4) soft cut back to the normal first-person view (you are already standing on your spot, looking at the wall)
-	if not waitUntil(C.WARP_TIME - 0.3) then return end
-	tween(flash, TweenInfo.new(0.2), { BackgroundTransparency = 0.45 })
+	-- 4) v4.1: straight back to the normal first-person view with NO flash (you are already standing on your spot, looking at the wall)
 	if not waitUntil(C.WARP_TIME - 0.05) then return end
 	renderFns.warp = nil
 	restoreWorld()
-	tween(flash, TweenInfo.new(0.4), { BackgroundTransparency = 1 })
+	flash.BackgroundTransparency = 1
 end
 
 -- ======================================================================================
