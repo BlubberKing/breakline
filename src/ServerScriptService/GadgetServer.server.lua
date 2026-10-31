@@ -1,4 +1,9 @@
--- GadgetServer v1 (Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0.
+-- GadgetServer v2 (Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0, reworked in v4.1:
+--   v4.1: gadgets are EQUIPPED first (remote Equip: your gun is swapped for the item, char attribute HeldGadget = id), then
+--         "throw" kinds (frag / smoke / flash) are thrown with remote Use(slot, dir) and
+--         "place" kinds (sentry / shield / mine) are put down EXACTLY where the client's preview was with remote Place(slot, pos, facing).
+--         The server re-checks everything for placement (range, line of sight, surface, clearance - the same GadgetModels.Check the preview uses).
+--         Real models (GadgetModels) are used for thrown items, the sentry, the mine and the shield projector.
 -- Server-authoritative gadgets: FRAG, SMOKE, FLASH, SENTRY, SHIELD (bubble), MINE. Numbers: ReplicatedStorage.GadgetConfig.
 --   Client -> server : ReplicatedStorage.GadgetRemotes.Use (slot 1-3, aim direction)
 --   Server -> clients: ReplicatedStorage.GadgetRemotes.FX  ("Boom" / "Flash" / "ShieldBreak", ...) = purely visual
@@ -16,6 +21,7 @@ local Debris = game:GetService("Debris")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local Cfg = require(RS:WaitForChild("GadgetConfig"))
+local GM = require(RS:WaitForChild("GadgetModels"))
 local MatchState = RS:WaitForChild("MatchState", 30)
 local BoxDamage = SS:WaitForChild("BoxDamage", 30)
 
@@ -23,6 +29,8 @@ local remotes = Instance.new("Folder")
 remotes.Name = "GadgetRemotes"
 local UseR = Instance.new("RemoteEvent"); UseR.Name = "Use"; UseR.Parent = remotes
 local FxR = Instance.new("RemoteEvent"); FxR.Name = "FX"; FxR.Parent = remotes
+local EquipR = Instance.new("RemoteEvent"); EquipR.Name = "Equip"; EquipR.Parent = remotes
+local PlaceR = Instance.new("RemoteEvent"); PlaceR.Name = "Place"; PlaceR.Parent = remotes
 remotes.Parent = RS
 local DamageEvent = Instance.new("BindableEvent")
 DamageEvent.Name = "GadgetDamage"
@@ -116,6 +124,12 @@ local function breakShield(part, quiet)
 	shields[part] = nil
 	if not quiet then FxR:FireAllClients("ShieldBreak", part.Position, rec.radius, part.Color) end
 	if rec.ring then rec.ring:Destroy() end
+	for _, e in rec.extra or {} do
+		if e.Parent then
+			TweenService:Create(e, TweenInfo.new(quiet and 0.5 or 0.15), { Transparency = 1 }):Play()
+			Debris:AddItem(e, quiet and 0.6 or 0.2)
+		end
+	end
 	TweenService:Create(part, TweenInfo.new(quiet and 0.6 or 0.15), { Transparency = 1 }):Play()
 	Debris:AddItem(part, quiet and 0.7 or 0.2)
 end
@@ -149,9 +163,18 @@ local function buildShield(owner, pos)
 		Name = "ShieldRing", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 1, 1), Material = Enum.Material.Neon, Color = col, Transparency = 0.25,
 		CFrame = CFrame.new(pos + Vector3.new(0, 0.12, 0)) * CFrame.Angles(0, 0, math.rad(90)),
 	})
+	-- v4.1: the real projector (GadgetModels) sits in the middle of the dome
+	local extra = {}
+	local desc = GM.Describe("SHIELD", col)
+	if desc then
+		for _, d in desc.Parts do
+			table.insert(extra, mkPart({ Name = "Projector", Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = CFrame.new(pos) * d.CF,
+				Color = d.Color, Material = d.Material, Transparency = d.Transparency or 0 }))
+		end
+	end
 	TweenService:Create(dome, TweenInfo.new(cfg.expand, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = Vector3.one * R * 2 }):Play()
 	TweenService:Create(ring, TweenInfo.new(cfg.expand, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.new(0.2, ringD, ringD), Transparency = 0.5 }):Play()
-	shields[dome] = { hp = cfg.hp, max = cfg.hp, radius = R, owner = owner, ring = ring }
+	shields[dome] = { hp = cfg.hp, max = cfg.hp, radius = R, owner = owner, ring = ring, extra = extra }
 	CS:AddTag(dome, "GadgetShield")
 	task.delay(cfg.life, function() if shields[dome] then breakShield(dome, true) end end)
 end
@@ -259,34 +282,25 @@ local function buildSmoke(owner, pos)
 end
 
 ------------------------------------------------------------------ sentry
-local function buildSentry(owner, pos)
+local function buildSentry(owner, pos, facing)
 	local cfg = Cfg.Items.SENTRY
 	local col = teamColor(owner)
+	local desc = GM.Describe("SENTRY", col)
 	local model = Instance.new("Model")
 	model.Name = "Sentry"
-	local DARK = Color3.fromRGB(32, 36, 44)
-	local function sp(name, size, cf, color, mat, collide)
-		local p = mkPart({ Name = name, Size = size, CFrame = cf, Color = color, Material = mat or Enum.Material.Metal, CanQuery = true, CanCollide = collide or false }, model)
-		return p
+	local headPos = pos + desc.HeadPivot
+	local pivotInv = CFrame.new(desc.HeadPivot):Inverse()
+	local parts, eye, base = {}, nil, nil -- parts = { part, offset from the turning head }
+	for _, d in desc.Parts do
+		local isHead = d.Group == "head"
+		local cf = isHead and (CFrame.lookAt(headPos, headPos + facing) * (pivotInv * d.CF)) or (CFrame.new(pos) * d.CF)
+		local p = mkPart({ Name = d.Name, Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = cf, Color = d.Color, Material = d.Material,
+			CanQuery = true, CanCollide = d.Collide == true }, model)
+		if isHead then table.insert(parts, { p, pivotInv * d.CF }) end
+		if d.Name == "Eye" then eye = p end
+		if d.Name == "BaseDisc" then base = p end
 	end
-	local base = sp("Base", Vector3.new(2.6, 0.4, 2.6), CFrame.new(pos + Vector3.new(0, 0.2, 0)), DARK, nil, true)
-	sp("Column", Vector3.new(0.9, 1.4, 0.9), CFrame.new(pos + Vector3.new(0, 1.1, 0)), Color3.fromRGB(52, 58, 70), nil, true)
-	sp("Foot1", Vector3.new(0.5, 0.35, 2.9), CFrame.new(pos + Vector3.new(0, 0.18, 0)), Color3.fromRGB(52, 58, 70))
-	local headPos = pos + Vector3.new(0, 2.2, 0)
-	local parts = {} -- { part, local offset }
-	local function hp(name, size, off, color, mat)
-		local p = sp(name, size, CFrame.new(headPos) * off, color, mat)
-		table.insert(parts, { p, off })
-		return p
-	end
-	local body = hp("Body", Vector3.new(1.8, 1.1, 2.0), CFrame.new(), Color3.fromRGB(58, 64, 78))
-	hp("Barrel", Vector3.new(0.34, 0.34, 2.2), CFrame.new(0, 0.05, -1.9), DARK)
-	hp("BarrelRing", Vector3.new(0.5, 0.5, 0.25), CFrame.new(0, 0.05, -2.8), Color3.fromRGB(80, 86, 100))
-	hp("Cap", Vector3.new(1.0, 0.14, 1.2), CFrame.new(0, 0.62, 0.1), col, Enum.Material.Neon)
-	hp("SideL", Vector3.new(0.18, 0.7, 1.4), CFrame.new(-1.0, 0, 0.1), DARK)
-	hp("SideR", Vector3.new(0.18, 0.7, 1.4), CFrame.new(1.0, 0, 0.1), DARK)
-	local eye = hp("Eye", Vector3.new(0.5, 0.18, 0.12), CFrame.new(0, 0.2, -1.02), Color3.fromRGB(255, 70, 70), Enum.Material.Neon)
-	local muzzleOff = CFrame.new(0, 0.05, -3.1)
+	local muzzleOff = CFrame.new(desc.Muzzle - desc.HeadPivot)
 	local hum = Instance.new("Humanoid")
 	hum.MaxHealth, hum.Health = cfg.health, cfg.health
 	hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
@@ -300,12 +314,9 @@ local function buildSentry(owner, pos)
 	model:SetAttribute("OwnerId", owner.UserId)
 	CS:AddTag(model, "Sentry")
 	model.Parent = fxFolder
-	local look = Vector3.new(0, 0, -1)
-	local ol = owner.Character and owner.Character:FindFirstChild("HumanoidRootPart")
-	if ol then look = Vector3.new(ol.CFrame.LookVector.X, 0, ol.CFrame.LookVector.Z).Unit end
 	local rec = {
 		model = model, hum = hum, owner = owner, headPos = headPos, parts = parts, eye = eye, muzzleOff = muzzleOff, alive = true,
-		aim = look, base = look, scan = 0, nextFire = 0, nextScan = 0, armAt = os.clock() + cfg.armTime, dieAt = os.clock() + cfg.life, target = nil,
+		aim = facing, base = facing, scan = 0, nextFire = 0, nextScan = 0, armAt = os.clock() + cfg.armTime, dieAt = os.clock() + cfg.life, target = nil,
 	}
 	-- one sentry per player
 	for _, s in table.clone(sentries) do
@@ -386,16 +397,21 @@ end
 ------------------------------------------------------------------ mines
 local function buildMine(owner, pos, normal)
 	local cfg = Cfg.Items.MINE
-	local cf = cfFromUp(pos + normal * 0.2, normal)
-	local body = mkPart({ Name = "ProxMine", Size = Vector3.new(1.5, 0.4, 1.5), CFrame = cf, Color = Color3.fromRGB(46, 50, 60), Material = Enum.Material.Metal })
-	local ringP = mkPart({ Name = "Ring", Size = Vector3.new(1.0, 0.12, 1.0), CFrame = cf * CFrame.new(0, 0.22, 0), Color = Color3.fromRGB(255, 130, 60), Material = Enum.Material.Neon })
-	local eye = mkPart({ Name = "Eye", Shape = Enum.PartType.Ball, Size = Vector3.one * 0.35, CFrame = cf * CFrame.new(0, 0.34, 0), Color = Color3.fromRGB(90, 20, 20), Material = Enum.Material.Neon })
+	local cf = cfFromUp(pos, normal)
+	local desc = GM.Describe("MINE")
+	local all, eye, body = {}, nil, nil
+	for _, d in desc.Parts do
+		local p = mkPart({ Name = d.Name, Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = cf * d.CF, Color = d.Color, Material = d.Material })
+		table.insert(all, p)
+		if d.Name == "Eye" then eye = p end
+		if d.Name == "Body" then body = p end
+	end
 	local light = Instance.new("PointLight")
 	light.Color, light.Range, light.Brightness, light.Enabled = Color3.fromRGB(255, 50, 50), 5, 2, false
 	light.Parent = eye
 	body:SetAttribute("MineTeam", teamName(owner) or "none")
 	local rec = {
-		owner = owner, pos = pos + normal * 0.3, normal = normal, parts = { body, ringP, eye }, eye = eye, light = light, alive = true,
+		owner = owner, pos = pos + normal * 0.3, normal = normal, parts = all, eye = eye, light = light, alive = true,
 		armAt = os.clock() + cfg.arm, armed = false, trig = nil, dieAt = os.clock() + cfg.life, nextCheck = 0, blink = 0,
 	}
 	-- keep at most `maxActive` per owner (oldest goes first, quietly)
@@ -512,26 +528,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	end
 end)
 
------------------------------------------------------------------- throwing
-local function onLand(part, minAge, cb)
-	local born = os.clock()
-	local done = false
-	local conn
-	local function finish()
-		if done then return end
-		done = true
-		if conn then conn:Disconnect() end
-		if part.Parent then cb() end
-	end
-	conn = part.Touched:Connect(function(o)
-		if done or os.clock() - born < minAge then return end
-		if not o.CanCollide or o.Parent and o.Parent:FindFirstChildOfClass("Humanoid") then return end
-		if o.Name == "BubbleShield" or o:IsDescendantOf(fxFolder) then return end
-		finish()
-	end)
-	task.delay(4, finish)
-end
-
+------------------------------------------------------------------ state (charges, cooldowns)
 local state = {}
 local function loadoutIds(p)
 	local out = { "", "", "" }
@@ -569,6 +566,7 @@ local function resetState(p)
 	state[p] = s
 end
 
+------------------------------------------------------------------ throwing (frag / smoke / flash)
 local function launch(player, slot, id, dir)
 	local cfg = Cfg.Items[id]
 	local char, _, root = aliveChar(player)
@@ -578,18 +576,24 @@ local function launch(player, slot, id, dir)
 	local origin = from + dir * 1.8
 	local r = workspace:Raycast(from, dir * 1.8, newParams())
 	if r then origin = r.Position - dir * 0.4 end
+	-- an invisible physics ball carries the real model (GadgetModels) along
 	local p = Instance.new("Part")
 	p.Name = "Gadget_" .. id
 	p.Shape = Enum.PartType.Ball
-	if id == "MINE" or id == "SENTRY" then p.Shape = Enum.PartType.Block end
 	p.Size = Vector3.one * cfg.projSize
-	p.Color = cfg.projColor
+	p.Transparency = 1
 	p.Material = Enum.Material.SmoothPlastic
 	p.CanQuery, p.CanCollide, p.CanTouch, p.CastShadow = false, true, true, false
 	p.CustomPhysicalProperties = PhysicalProperties.new(0.8, 0.6, 0.4, 1, 1)
-	p.Position = origin
-	p:SetAttribute("LaunchDir", dir)
+	p.CFrame = CFrame.new(origin)
 	p.Parent = fxFolder
+	local model = GM.Build(id, nil, { anchored = false })
+	if model then
+		model:PivotTo(CFrame.new(origin))
+		for _, c in model:GetChildren() do c.Parent = p end
+		model:Destroy()
+		GM.WeldTo(p, p)
+	end
 	pcall(function() p:SetNetworkOwner(nil) end)
 	p.AssemblyLinearVelocity = dir * cfg.speed + root.AssemblyLinearVelocity * 0.35
 	p.AssemblyAngularVelocity = Vector3.new(rnd:NextNumber(-12, 12), rnd:NextNumber(-12, 12), rnd:NextNumber(-12, 12))
@@ -604,15 +608,6 @@ local function launch(player, slot, id, dir)
 	tr.Transparency = NumberSequence.new(0.3, 1)
 	tr.LightEmission = 0.4
 	tr.Parent = p
-
-	local function refund()
-		local s = state[player]
-		if s and s.ids[slot] == id then
-			s.count[slot] = math.min(s.count[slot] + 1, s.max[slot])
-			s.ready[slot] = 0
-			publish(player, s, slot)
-		end
-	end
 
 	if id == "FRAG" then
 		task.delay(cfg.fuse, function()
@@ -635,68 +630,117 @@ local function launch(player, slot, id, dir)
 			p:Destroy()
 			FxR:FireAllClients("Flash", pos, cfg.range, cfg.maxTime)
 		end)
-	elseif id == "SHIELD" then
-		onLand(p, 0.1, function()
-			local pos = p.Position
-			p:Destroy()
-			local g = workspace:Raycast(pos + Vector3.new(0, 1.5, 0), Vector3.new(0, -8, 0), newParams())
-			buildShield(player, g and g.Position or pos)
-		end)
-	elseif id == "SENTRY" then
-		onLand(p, 0.1, function()
-			local pos = p.Position
-			p:Destroy()
-			local g = workspace:Raycast(pos + Vector3.new(0, 2, 0), Vector3.new(0, -9, 0), newParams())
-			if g and g.Normal.Y > 0.7 then
-				buildSentry(player, g.Position)
-			else
-				refund()
-			end
-		end)
-	elseif id == "MINE" then
-		onLand(p, 0.05, function()
-			local pos = p.Position
-			p:Destroy()
-			local d = (p:GetAttribute("LaunchDir") or Vector3.new(0, -1, 0))
-			local res = workspace:Raycast(pos - d * 0.8, d * 2.4, newParams())
-			if res then
-				buildMine(player, res.Position, res.Normal)
-			else
-				local g = workspace:Raycast(pos + Vector3.new(0, 1, 0), Vector3.new(0, -4, 0), newParams())
-				if g then buildMine(player, g.Position, g.Normal) else refund() end
-			end
-		end)
 	end
 	return true
 end
 
-local lastUse = {}
-UseR.OnServerEvent:Connect(function(player, slot, dir)
+-- the checks every use shares. Returns s, id, cfg, char, root, t or nothing.
+local function prep(player, slot, kind)
 	if type(slot) ~= "number" or slot % 1 ~= 0 or slot < 1 or slot > 3 then return end
+	local s = state[player]
+	if not s then return end
+	local id = s.ids[slot]
+	local cfg = Cfg.Items[id]
+	if not cfg or cfg.kind ~= kind then return end
+	local ph = MatchState and MatchState:GetAttribute("Phase")
+	if MatchState and ph ~= "Playing" then return end
+	local char, _, root = aliveChar(player)
+	if not char then return end
+	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("Reviving") == true
+		or char:GetAttribute("AbilityMode") == "climb" then return end
+	if char:GetAttribute("HeldGadget") ~= id then return end -- it has to be in your hand (Equip)
+	local t = nowT()
+	if s.count[slot] <= 0 or t < s.ready[slot] then return end
+	return s, id, cfg, char, root, t
+end
+
+local function commit(player, s, slot, cfg, t, char)
+	s.count[slot] -= 1
+	s.ready[slot] = t + cfg.cooldown
+	if not s.nextCharge[slot] then s.nextCharge[slot] = t + cfg.recharge end
+	publish(player, s, slot)
+	char:SetAttribute("GadgetThrowAt", t) -- everybody's client plays the throwing arm
+end
+
+local lastUse, lastEquip = {}, {}
+UseR.OnServerEvent:Connect(function(player, slot, dir)
 	if typeof(dir) ~= "Vector3" then return end
 	local m = dir.Magnitude
 	if not (m > 0.9 and m < 1.1) then return end
 	local now = os.clock()
 	if now - (lastUse[player] or 0) < 0.25 then return end
-	local s = state[player]
+	local s, id, cfg, char, _, t = prep(player, slot, "throw")
 	if not s then return end
-	local id = s.ids[slot]
-	local cfg = Cfg.Items[id]
-	if not cfg then return end
-	local ph = MatchState and MatchState:GetAttribute("Phase")
-	if MatchState and ph ~= "Playing" then return end
-	local char, _, _ = aliveChar(player)
-	if not char then return end
-	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("AbilityMode") == "climb" then return end
-	local t = nowT()
-	if s.count[slot] <= 0 or t < s.ready[slot] then return end
-	dir = (dir.Unit + Vector3.new(0, 0.16, 0)).Unit
+	dir = (dir.Unit + Vector3.new(0, Cfg.Throw.Up, 0)).Unit
 	if not launch(player, slot, id, dir) then return end
 	lastUse[player] = now
-	s.count[slot] -= 1
-	s.ready[slot] = t + cfg.cooldown
-	if not s.nextCharge[slot] then s.nextCharge[slot] = t + cfg.recharge end
-	publish(player, s, slot)
+	commit(player, s, slot, cfg, t, char)
+end)
+
+------------------------------------------------------------------ equip (swap the gun for the item, or back)
+EquipR.OnServerEvent:Connect(function(player, slot)
+	local char = aliveChar(player)
+	if not char then return end
+	local now = os.clock()
+	if now - (lastEquip[player] or 0) < 0.12 then return end
+	lastEquip[player] = now
+	if slot == nil or slot == 0 then
+		char:SetAttribute("HeldGadget", nil)
+		char:SetAttribute("HeldSlot", nil)
+		return
+	end
+	if type(slot) ~= "number" or slot % 1 ~= 0 or slot < 1 or slot > 3 then return end
+	local s = state[player]
+	local id = s and s.ids[slot]
+	if not id or not Cfg.Items[id] or s.count[slot] <= 0 then return end
+	local ph = MatchState and MatchState:GetAttribute("Phase")
+	if MatchState and ph ~= "Playing" then return end
+	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("Reviving") == true
+		or char:GetAttribute("AbilityMode") == "climb" then return end
+	char:SetAttribute("HeldGadget", id)
+	char:SetAttribute("HeldSlot", slot)
+end)
+
+------------------------------------------------------------------ placing (sentry / shield / mine) exactly where the preview was
+PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing)
+	if typeof(spot) ~= "Vector3" then return end
+	local now = os.clock()
+	if now - (lastUse[player] or 0) < 0.25 then return end
+	local s, id, cfg, char, root, t = prep(player, slot, "place")
+	if not s then return end
+	local pl = GM.Place[id]
+	if not pl then return end
+	local head = char:FindFirstChild("Head")
+	local from = head and head.Position or root.Position + Vector3.new(0, 1.5, 0)
+	local to = spot - from
+	local dist = to.Magnitude
+	if dist < 0.5 or dist > pl.range * 1.2 + 2 then return end
+	-- the server finds the surface itself (what the client says is only where to look)
+	local ignore = charList()
+	table.insert(ignore, fxFolder)
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.FilterDescendantsInstances = ignore
+	rp.RespectCanCollide = true
+	local hit = workspace:Raycast(from, to.Unit * (dist + 1.5), rp)
+	if not hit or (hit.Position - spot).Magnitude > 2.5 then return end
+	local pos, normal = hit.Position, hit.Normal
+	if (pos - from).Magnitude > pl.range * 1.2 + 2 then return end
+	local ok = GM.Check(id, pos, normal, ignore)
+	if not ok then return end
+	local face = Vector3.zero
+	if typeof(facing) == "Vector3" then face = Vector3.new(facing.X, 0, facing.Z) end
+	if face.Magnitude < 0.1 then
+		face = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+		if face.Magnitude < 0.1 then face = Vector3.new(0, 0, -1) end
+	end
+	face = face.Unit
+	lastUse[player] = now
+	if id == "SENTRY" then buildSentry(player, pos, face)
+	elseif id == "SHIELD" then buildShield(player, pos)
+	elseif id == "MINE" then buildMine(player, pos, normal) end
+	commit(player, s, slot, cfg, t, char)
+	FxR:FireAllClients("Placed", pos, normal)
 end)
 
 -- recharge loop
@@ -726,6 +770,6 @@ end
 Players.PlayerAdded:Connect(onPlayer)
 for _, p in Players:GetPlayers() do onPlayer(p) end
 Players.PlayerRemoving:Connect(function(p)
-	state[p], lastUse[p] = nil, nil
+	state[p], lastUse[p], lastEquip[p] = nil, nil, nil
 	for part, rec in shields do if rec.owner == p then breakShield(part, true) end end
 end)
