@@ -243,6 +243,7 @@ local nextFireTime, bloom, sprayIndex, lastShotTime = 0, 0, 0, 0
 local burstQueue, semiPending = 0, nil
 local cycleStart = -10
 local aimAlpha, sprintAlpha, equipStart = 0, 0, os.clock()
+local lastHeldGadget = false
 local slideAlpha, mantleAlpha, crouchAlpha = 0, 0, 0
 local bobT, bobAmt, strafeRoll = 0, 0, 0
 local wasGrounded, airVelY = true, 0
@@ -421,7 +422,7 @@ local function reloadPose(u)
 end
 
 local function startReload()
-	if reloading or ammo == cfg.MagSize or humanoid.Health <= 0 or isCarrying() then return end
+	if reloading or ammo == cfg.MagSize or humanoid.Health <= 0 or isCarrying() or character:GetAttribute("HeldGadget") ~= nil then return end
 	reloading = true
 	burstQueue, semiPending = 0, nil
 	reloadStart = os.clock()
@@ -667,13 +668,20 @@ local function onRender(dt)
 	-- v3.8: wall-climbing (and the respawn reveal) put the gun away too, exactly like carrying a box
 	local abilityMode = character:GetAttribute("AbilityMode")
 	local revealing = character:GetAttribute("Revealing") == true
-	local carryingBox = isCarrying() or abilityMode == "climb" or revealing
+	-- v4.1: holding a gadget (grenade / sentry / ...), carrying a soul, rezzing someone or being dead also puts the gun away
+	local heldGadget = character:GetAttribute("HeldGadget") ~= nil
+	local carryingBox = isCarrying() or abilityMode == "climb" or revealing or heldGadget
+		or player:GetAttribute("CarryingSoul") == true or character:GetAttribute("Reviving") == true
 	if carryingBox then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
+	if heldGadget ~= lastHeldGadget then -- coming back to the gun: the usual equip animation plays again
+		if lastHeldGadget and not heldGadget then equipStart = os.clock() end
+		lastHeldGadget = heldGadget
+	end
 	local aiming = aimHeld and not reloading and alive and not mantling and not carryingBox
 	local wantsSprint = (shiftHeld or sprintToggle) and moving and not aiming and not triggerDown and not crouching
 	local sprinting = (wantsSprint and not sliding and not mantling) or (type(cutRun) == "number" and cutRun > 10)
 	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
-	humanoid.WalkSpeed = baseSpeed * ((isCarrying()) and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed) * TimeScale.Get() * (character:GetAttribute("AbilitySlow") or 1) -- slow motion at the end of a round
+	humanoid.WalkSpeed = baseSpeed * ((isCarrying()) and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed) * TimeScale.Get() * (character:GetAttribute("AbilitySlow") or 1) * (character:GetAttribute("Reviving") == true and 0 or 1) -- slow motion at the end of a round; v4.1: rooted while reviving
 	aimAlpha = approach(aimAlpha, aiming and 1 or 0, dt, cfg.ADSTime)
 	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
