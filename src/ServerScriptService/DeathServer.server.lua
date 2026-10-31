@@ -96,7 +96,7 @@ local function hoverSettle(rec)
 	part.AssemblyLinearVelocity, part.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
 	part.Anchored = true
 	part.CanCollide = false
-	part.CFrame = CFrame.new(part.Position.X, g + 2.5, part.Position.Z)
+	part.CFrame = CFrame.new(part.Position.X, g + 1.5, part.Position.Z)
 	rec.ground = g
 	setSoulState(rec, "Loose")
 	rec.part:SetAttribute("Ground", g)
@@ -142,7 +142,7 @@ local function pickUp(p, rec)
 	part.CanCollide = false
 	part.Massless = true
 	part.AssemblyLinearVelocity = Vector3.zero
-	local off = CFrame.new(0, 0.7, -2.5)
+	local off = CFrame.new(1.1, 0.5, -1.5) -- v4.2: small soul floating by your shoulder
 	part.CFrame = r.CFrame * off
 	local w = Instance.new("Weld")
 	w.Name = "CarryWeld"
@@ -218,12 +218,12 @@ local function createSoul(owner, pos)
 	local part = Instance.new("Part")
 	part.Name = "Soul"
 	part.Shape = Enum.PartType.Ball
-	part.Size = Vector3.one * 2.4
+	part.Size = Vector3.one * 0.8 -- v4.2: tiny soul
 	part.Transparency = 1 -- SoulClient draws the stylised soul around it
 	part.Anchored = true
 	part.CanCollide, part.CanQuery, part.CanTouch, part.CastShadow = false, false, false, false
 	part.CustomPhysicalProperties = PhysicalProperties.new(0.4, 0.5, 0.35, 1, 1)
-	part.CFrame = CFrame.new(pos.X, g + 2.5, pos.Z)
+	part.CFrame = CFrame.new(pos.X, g + 1.5, pos.Z)
 	pcall(function() part.CollisionGroup = "WPBox" end) -- passes through players like boxes do
 	part:SetAttribute("OwnerId", owner.UserId)
 	part:SetAttribute("OwnerName", owner.DisplayName ~= "" and owner.DisplayName or owner.Name)
@@ -232,7 +232,7 @@ local function createSoul(owner, pos)
 	part:SetAttribute("Ground", g)
 	part:SetAttribute("RezTime", SOUL.RezTime or C.REZ_TIME)
 	CS:AddTag(part, "Soul")
-	local rec = { owner = owner, part = part, team = teamName(owner), state = "Loose", ground = g, origin = Vector3.new(pos.X, g + 2.5, pos.Z) }
+	local rec = { owner = owner, part = part, team = teamName(owner), state = "Loose", ground = g, origin = Vector3.new(pos.X, g + 1.5, pos.Z) }
 
 	local pick = Instance.new("ProximityPrompt")
 	pick.Name = "PickPrompt"
