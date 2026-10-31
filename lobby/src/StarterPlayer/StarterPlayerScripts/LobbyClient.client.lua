@@ -8,7 +8,7 @@
 --       bottom right = (hanger) skins circle | PLAY block | (+) invite circle
 --   * PLAY screen: black starry space with a slowly turning galaxy, your squad on three stone pillars
 --       top bar   : logo | souls, ESC BACK | thin rule
---       left      : GAME MODES tab. BREAKLINE on top (click = mode info), locked "coming soon" placeholder modes stacked under it
+--       left      : GAME MODES tab. BREAKLINE big by default, scrollable list, click a small card to expand it; locked "coming soon" placeholder modes stacked under it
 --       bottom    : LOADOUT dock in the middle: [move]  [primary]  [gadget][gadget][gadget] | [reserve][reserve][reserve]
 --       right     : 3 party slots (leader leftmost) above (hanger) skins circle | PLAY block | (+) invite circle
 --   * The hanger circle (or TAB) opens the skin catalog over the stage. The outfit slot is gone from the main area.
@@ -325,8 +325,8 @@ local MODES = {
 	},
 	{
 		id = "1v1", name = "1V1", tag = "DUEL  //  FIRST TO 5",
-		desc = "One player against one player. No wall, no boxes, no souls. Win gunfights, use your gadgets and be the first to reach 5 kills. After a death you sit out a few seconds and watch your opponent.",
-		facts = { "Red vs Blue, one player each", "First to 5 kills wins the round", "No boxes, no souls, no revives", "Solo only: leave your party to queue" },
+		desc = "One player against one player. Win gunfights, use your gadgets and be the first to reach 5 kills. After a death you sit out a few seconds and watch your opponent.",
+		facts = { "Red vs Blue, one player each", "First to 5 kills wins the round", "Pure gunfights: aim, gadgets, positioning", "Solo only: leave your party to queue" },
 	},
 }
 local function modeById(id) for _, m in MODES do if m.id == id then return m end end return MODES[1] end
@@ -1281,52 +1281,91 @@ lbl(modeTab, "GAME MODES", 22, 18, 12, 200, 30, C.text, "H")
 lbl(modeTab, ("%d / %d"):format(#MODES, #MODES + #LOCKED_MODES), 11, TAB_W - 118, 21, 100, 14, C.mute, "M", Enum.TextXAlignment.Right)
 frame(modeTab, 18, 52, TAB_W - 36, 1, C.line, 0)
 
-local MODE_PAD, LIVE_H, LOCK_GAP = 12, 178, 10
-local LOCK_H = math.floor((TAB_H - 66 - #MODES * (LIVE_H + LOCK_GAP) - MODE_PAD - LOCK_GAP * (#LOCKED_MODES - 1)) / #LOCKED_MODES)
+local MODE_PAD, LIVE_H, SMALL_H, LOCK_GAP = 12, 178, 78, 10
 local cardRefresh = {}
-for mi, m in MODES do
-	local cy = 66 + (mi - 1) * (LIVE_H + LOCK_GAP)
+local expandedMode = "breakline" -- the big card (picture + name); every other mode is a small name-only card
+local rebuildModeList -- forward
+local listTop = 62
+local scroll = new("ScrollingFrame", { Position = UDim2.fromOffset(0, listTop), Size = UDim2.fromOffset(TAB_W, TAB_H - listTop - 4),
+	BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line2, ZIndex = 6,
+	CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.None,
+	ScrollingDirection = Enum.ScrollingDirection.Y, ElasticBehavior = Enum.ElasticBehavior.Never }, modeTab)
+
+local function liveCard(m, y, big)
+	local w = TAB_W - MODE_PAD * 2 - 6
+	local h = big and LIVE_H or SMALL_H
 	local card = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BorderSizePixel = 0,
-		Position = UDim2.fromOffset(MODE_PAD, cy), Size = UDim2.fromOffset(TAB_W - MODE_PAD * 2, LIVE_H), ZIndex = 6 }, modeTab)
-	local w = TAB_W - MODE_PAD * 2
+		Position = UDim2.fromOffset(MODE_PAD, y), Size = UDim2.fromOffset(w, h), ZIndex = 6 }, scroll)
 	local st = border(card, C.red, 1)
 	hoverable(card, C.panel, C.panel2, st, C.red, C.redHi)
-	frame(card, 0, 0, 3, LIVE_H, C.red, 0)
-	local th = frame(card, 3, 0, w - 3, 92, C.panel, 0)
-	modeGraphic(th, m.id == "1v1")
-	local tag = frame(card, w - 82, 8, 74, 18, C.red, 0)
-	tag.ZIndex = 3
-	lbl(tag, "SELECTED", 10, 0, 0, 74, 18, C.text, "MB", Enum.TextXAlignment.Center)
-	lbl(card, m.name, 30, 16, 98, w - 50, 40, C.text, "H")
-	lbl(card, m.tag, 11, 17, 138, w - 50, 14, C.dim, "M")
-	lbl(card, "MODE INFO", 10, 17, 156, 120, 14, C.mute, "MB")
-	chevron(card, w - 24, 118, 8, C.dim, 2)
+	frame(card, 0, 0, 3, h, C.red, 0)
+	local tag
+	if big then
+		local th = frame(card, 3, 0, w - 3, 92, C.panel, 0)
+		modeGraphic(th, m.id == "1v1")
+		tag = frame(card, w - 82, 8, 74, 18, C.red, 0)
+		tag.ZIndex = 3
+		lbl(tag, "SELECTED", 10, 0, 0, 74, 18, C.text, "MB", Enum.TextXAlignment.Center)
+		lbl(card, m.name, 30, 16, 98, w - 50, 40, C.text, "H")
+		lbl(card, m.tag, 11, 17, 138, w - 50, 14, C.dim, "M")
+		lbl(card, "MODE INFO", 10, 17, 156, 120, 14, C.mute, "MB")
+		chevron(card, w - 24, 118, 8, C.dim, 2)
+	else
+		lbl(card, m.name, 22, 16, 12, w - 110, 30, C.text, "H")
+		lbl(card, m.tag, 10, 17, 44, w - 40, 14, C.dim, "M")
+		lbl(card, "MODE INFO", 10, 17, 59, 120, 14, C.mute, "MB")
+		tag = frame(card, w - 82, 10, 74, 18, C.red, 0)
+		tag.ZIndex = 3
+		lbl(tag, "SELECTED", 10, 0, 0, 74, 18, C.text, "MB", Enum.TextXAlignment.Center)
+		chevron(card, w - 24, 52, 8, C.dim, 2)
+	end
 	table.insert(cardRefresh, function() tag.Visible = (selectedMode == m.id) end)
 	card.MouseButton1Click:Connect(function()
-		if view == "mode" and modeShown == m then setView("home") return end
+		if expandedMode == m.id and view == "mode" and modeShown == m then setView("home") return end
+		if expandedMode ~= m.id then
+			expandedMode = m.id
+			rebuildModeList()
+		end
 		openMode(m)
 	end)
-	grow(card, 1.03)
+	if big then grow(card, 1.03) end
 end
-modeCardSel = function() for _, f in cardRefresh do f() end end
-modeCardSel()
-for i, m in LOCKED_MODES do
-	local y = 66 + LIVE_H + LOCK_GAP + (i - 1) * (LOCK_H + LOCK_GAP)
-	local w = TAB_W - MODE_PAD * 2
-	local f = frame(modeTab, MODE_PAD, y, w, LOCK_H, C.panel, 0.45)
+
+local function lockedCard(m, y)
+	local w = TAB_W - MODE_PAD * 2 - 6
+	local H = SMALL_H
+	local f = frame(scroll, MODE_PAD, y, w, H, C.panel, 0.45)
 	f.ZIndex = 6
 	border(f, C.line, 1, 0.35)
-	-- faint diagonal hatching = not available yet
 	local hatch = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ClipsDescendants = true }, f)
 	for k = 0, 14 do
-		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(k * 26 - 40, LOCK_H / 2), Size = UDim2.fromOffset(1, LOCK_H * 1.8),
+		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(k * 26 - 40, H / 2), Size = UDim2.fromOffset(1, H * 1.8),
 			Rotation = 35, BackgroundColor3 = C.line, BackgroundTransparency = 0.55, BorderSizePixel = 0 }, hatch)
 	end
-	lbl(f, m.name, 22, 16, math.floor(LOCK_H / 2) - 26, w - 60, 30, C.mute, "H")
-	lbl(f, m.tag, 10, 17, math.floor(LOCK_H / 2) + 4, w - 60, 14, C.mute, "M")
-	lbl(f, "COMING SOON", 10, 17, math.floor(LOCK_H / 2) + 20, w - 60, 14, C.redDeep:Lerp(C.mute, 0.3), "MB")
-	lockIcon(f, w - 32, math.floor(LOCK_H / 2) - 9, C.mute)
+	lbl(f, m.name, 22, 16, 12, w - 60, 30, C.mute, "H")
+	lbl(f, m.tag, 10, 17, 44, w - 60, 14, C.mute, "M")
+	lbl(f, "COMING SOON", 10, 17, 59, w - 60, 14, C.redDeep:Lerp(C.mute, 0.3), "MB")
+	lockIcon(f, w - 32, math.floor(H / 2) - 9, C.mute)
 end
+
+function rebuildModeList()
+	for _, c in scroll:GetChildren() do c:Destroy() end
+	table.clear(cardRefresh)
+	local y = 4
+	for _, m in MODES do
+		local big = (expandedMode == m.id)
+		liveCard(m, y, big)
+		y += (big and LIVE_H or SMALL_H) + LOCK_GAP
+	end
+	for _, m in LOCKED_MODES do
+		lockedCard(m, y)
+		y += SMALL_H + LOCK_GAP
+	end
+	scroll.CanvasSize = UDim2.fromOffset(0, y + 4)
+	modeCardSel()
+end
+modeCardSel = function() for _, f in cardRefresh do f() end end
+rebuildModeList()
 
 -- ================= right cluster: party (3 slots) above (hanger) | PLAY | (+) =================
 -- party: 3 compact slots, the leader is always the leftmost
