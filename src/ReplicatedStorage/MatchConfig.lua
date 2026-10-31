@@ -57,7 +57,9 @@ C.MODES = { Breakline = "Breakline", OneVOne = "1v1" }
 C.V1 = {
 	KillsToWin = 5,  -- first player to this many kills wins the round
 	MinPlayers = 1,  -- players needed to start a 1v1 (2 for live games; 1 lets you test alone in Studio)
-	RespawnTime = 4, -- seconds you are out after a death in a 1v1 (you spectate your opponent). There are no souls / revives in 1v1.
+	RespawnTime = 3, -- seconds you are out after a death in a 1v1 (you spectate your opponent). Keep equal to ResetDelay so both players come back together.
+	RoundTime = 90,  -- v4.2: one 1v1 round lasts a minute and a half. A kill, a death or the timer ends it and both players go back to their sides.
+	ResetDelay = 3,  -- seconds between the end of a round and both players being put back on their sides
 }
 
 -- Team 1 (Red) defends one end of the map, team 2 (Blue) the other. See MAP.SwapEnds.
