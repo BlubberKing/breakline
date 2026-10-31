@@ -142,7 +142,8 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 	if weapon ~= player:GetAttribute("Weapon") or player:GetAttribute("Carrying") then return end
 	do -- v3.8: no shooting while your body is being revealed after a respawn, or while wall-climbing
 		local ch = player.Character
-		if ch and (ch:GetAttribute("Revealing") == true or ch:GetAttribute("AbilityMode") == "climb") then return end
+		if ch and (ch:GetAttribute("Revealing") == true or ch:GetAttribute("AbilityMode") == "climb" or ch:GetAttribute("HeldGadget") ~= nil
+			or ch:GetAttribute("Reviving") == true or player:GetAttribute("CarryingSoul") == true) then return end
 	end
 	local ph = MatchState and MatchState:GetAttribute("Phase")
 	if ph == "Waiting" or ph == "Pregame" or ph == "Warp" or ph == "Countdown" or ph == "Summary" then return end
