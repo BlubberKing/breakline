@@ -625,19 +625,6 @@ local function runWarp(token)
 				part(world, Vector3.new(sz.X * 0.9, 0.15, sz.Z * 0.9), cf * CFrame.new(0, sz.Y * 0.2, 0), K.soul, true, 0.55)
 			end
 		end
-		for i = 1, 2 do -- far dim planets, one with a thin ring
-			local c = Vector3.new(i == 1 and -95 or 110, i == 1 and 38 or -22, -DOOR_Z * (i == 1 and 0.42 or 0.7))
-			local r = i == 1 and 26 or 18
-			part(world, Vector3.one * r * 2, CFrame.new(c), i == 1 and rgb(26, 28, 38) or rgb(30, 24, 34), false, 0, Enum.PartType.Ball)
-			part(world, Vector3.one * (r * 2 + 1.2), CFrame.new(c), K.soul, true, 0.94, Enum.PartType.Ball)
-			if i == 1 then
-				part(world, Vector3.new(0.4, r * 3.4, r * 3.4), CFrame.new(c) * CFrame.Angles(0.35, 0, math.rad(90) + 0.25), rgb(64, 70, 92), false, 0.45, Enum.PartType.Cylinder)
-			end
-		end
-		for i = 1, 4 do -- soft nebula clouds
-			local c = Vector3.new(rng:NextNumber(-70, 70), rng:NextNumber(-10, 40), -DOOR_Z * (i / 4.6))
-			part(world, Vector3.one * rng:NextNumber(30, 54), CFrame.new(c), i % 2 == 0 and rgb(40, 60, 110) or rgb(70, 40, 100), true, 0.93, Enum.PartType.Ball)
-		end
 		for i = 1, 3 do -- ruined arches far off the path
 			local side = (i % 2 == 0) and 1 or -1
 			local c = Vector3.new(side * rng:NextNumber(55, 80), -6, -DOOR_Z * (i / 3.4))
@@ -650,16 +637,16 @@ local function runWarp(token)
 			part(world, Vector3.new(0.12, rng:NextNumber(2, 6), 0.12), CFrame.new(c), K.soulPale, true, 0.35)
 		end
 	end
-	-- dust for the sense of speed
-	for _ = 1, 320 do
-		local s = rng:NextNumber(0.15, 0.55)
-		part(world, Vector3.new(s, s, s), CFrame.new(rng:NextNumber(-70, 70), rng:NextNumber(-30, 45), rng:NextNumber(-DOOR_Z - 10, 30)),
-			rng:NextNumber() < 0.3 and K.soul or rgb(200, 205, 215), true, rng:NextNumber(0.2, 0.7), Enum.PartType.Ball)
+	-- dust for the sense of speed: thin streaks along the flight line (no balls)
+	for _ = 1, 220 do
+		local w, l = rng:NextNumber(0.03, 0.08), rng:NextNumber(1.2, 5)
+		part(world, Vector3.new(w, w, l), CFrame.new(rng:NextNumber(-70, 70), rng:NextNumber(-30, 45), rng:NextNumber(-DOOR_Z - 10, 30)),
+			rng:NextNumber() < 0.3 and K.soul or rgb(200, 205, 215), true, rng:NextNumber(0.35, 0.8))
 	end
-	-- the soul: bright core + two soft halos
+	-- the soul: a tiny bright spark with one faint soft glow (no big orbs)
 	local core = part(world, Vector3.new(1, 1, 1), CFrame.new(0, 0, 0), WHITE, true, 0, Enum.PartType.Ball)
-	local halo1 = part(world, Vector3.new(2, 2, 2), CFrame.new(0, 0, 0), K.soul, true, 0.75, Enum.PartType.Ball)
-	local halo2 = part(world, Vector3.new(4, 4, 4), CFrame.new(0, 0, 0), K.soul, true, 0.9, Enum.PartType.Ball)
+	local halo1 = part(world, Vector3.new(2, 2, 2), CFrame.new(0, 0, 0), K.soul, true, 0.85, Enum.PartType.Ball)
+	local halo2 = part(world, Vector3.new(0.1, 0.1, 0.1), CFrame.new(0, 0, 0), K.soul, true, 1, Enum.PartType.Block)
 	local trail = {}
 	local function soulAt(u)
 		local z = -DOOR_Z * (u ^ 1.8)
@@ -679,23 +666,23 @@ local function runWarp(token)
 		local u = math.clamp((t - FLY0) / (FLY1 - FLY0), 0, 1)
 		local pos = soulAt(u)
 		local pulse = 1 + 0.12 * math.sin(t * 14)
-		local s = (0.4 + 1.1 * light) * pulse
-		core.Size, halo1.Size, halo2.Size = Vector3.one * s, Vector3.one * s * 2.3, Vector3.one * s * 4.2
+		local s = (0.2 + 0.35 * light) * pulse
+		core.Size, halo1.Size, halo2.Size = Vector3.one * s, Vector3.one * s * 1.9, Vector3.new(0.1, 0.1, 0.1)
 		core.CFrame, halo1.CFrame, halo2.CFrame = CFrame.new(pos), CFrame.new(pos), CFrame.new(pos)
 		core.Transparency = 1 - light
-		halo1.Transparency = 1 - 0.25 * light
-		halo2.Transparency = 1 - 0.1 * light
+		halo1.Transparency = 1 - 0.12 * light
+		halo2.Transparency = 1
 		-- trail
 		if u > 0 and t - lastTrail > 0.012 then
 			lastTrail = t
-			local p = part(world, Vector3.one * s * 0.8, CFrame.new(pos), rng:NextNumber() < 0.5 and K.soul or K.soulPale, true, 0.2, Enum.PartType.Ball)
-			table.insert(trail, { p = p, born = t, size = s * 0.8 })
+			local p = part(world, Vector3.new(s * 0.45, s * 0.45, 1.6), CFrame.new(pos), rng:NextNumber() < 0.5 and K.soul or K.soulPale, true, 0.3)
+			table.insert(trail, { p = p, born = t, size = s * 0.45, cf = CFrame.new(pos) })
 		end
 		for i = #trail, 1, -1 do
 			local tr = trail[i]
 			local a = (t - tr.born) / 0.7
 			if a >= 1 then tr.p:Destroy() table.remove(trail, i)
-			else tr.p.Size = Vector3.one * tr.size * (1 - a); tr.p.Transparency = 0.2 + 0.8 * a end
+			else tr.p.Size = Vector3.new(tr.size * (1 - a), tr.size * (1 - a), 1.6 + 2.5 * a); tr.p.Transparency = 0.3 + 0.7 * a end
 		end
 		-- camera follows from above and behind
 		local target = pos + Vector3.new(0, 15 - 6 * u, 26 - 4 * u)
