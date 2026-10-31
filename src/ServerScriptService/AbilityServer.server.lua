@@ -17,6 +17,24 @@ State.Name = "State"
 State.Parent = folder
 folder.Parent = RS
 
+-- v4.1: MoveAnim (every client) sends crouch / slide / sprint so everybody can see your run, crouch and slide animations.
+local MoveR = Instance.new("RemoteEvent")
+MoveR.Name = "Move"
+MoveR.Parent = folder
+local lastMove = {}
+MoveR.OnServerEvent:Connect(function(player, crouch, slide, sprint)
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 then return end
+	if type(crouch) ~= "boolean" or type(slide) ~= "boolean" or type(sprint) ~= "boolean" then return end
+	local now = os.clock()
+	if now - (lastMove[player] or 0) < 0.05 then return end
+	lastMove[player] = now
+	char:SetAttribute("MvCrouch", crouch)
+	char:SetAttribute("MvSlide", slide)
+	char:SetAttribute("MvSprint", sprint)
+end)
+
 local NEEDS = { wallrun = "WRUN", climb = "WCLIMB" }
 local lastSent = {}
 
@@ -48,4 +66,4 @@ State.OnServerEvent:Connect(function(player, mode, normal)
 	end
 end)
 
-Players.PlayerRemoving:Connect(function(p) lastSent[p] = nil end)
+Players.PlayerRemoving:Connect(function(p) lastSent[p], lastMove[p] = nil, nil end)
