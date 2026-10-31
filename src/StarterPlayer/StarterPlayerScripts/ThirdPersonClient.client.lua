@@ -39,8 +39,8 @@ local CFG = {
 	BOB = 0.03,
 	STRIDE_TWIST_DEG = 3.2, -- slim body: a little hip/shoulder counter-twist while running (reads as a longer stride)
 	TURN_LAG_DEG = 1.2, TURN_LAG_MAX = 7,
-	SLIDE_LEAN = 25,
-	CROUCH_LEAN = 10,
+	SLIDE_LEAN = 20,    -- v4.1: body leans BACK while sliding (positive = back); MoveAnim now poses the legs + arms, so this is a bit less than before (25)
+	CROUCH_LEAN = 8,
 }
 
 local Weapons = require(RS:WaitForChild("WeaponConfig"))
@@ -262,6 +262,12 @@ local function update(st, dt, t, isLocal)
 	st.ikL.SmoothTime = smooth
 	st.ikR.SmoothTime = cbox and 0.06 or 0
 	st.ikL.Weight = 1 - 0.9 * st.mantle
+	local plrOwner = st.player
+	local freeHands = st.char:GetAttribute("HeldGadget") ~= nil or st.char:GetAttribute("Reviving") == true
+		or (plrOwner and plrOwner:GetAttribute("CarryingSoul") == true)
+	if freeHands then -- v4.1: a gadget in hand / carrying a soul / reviving: no gun IK (MoveAnim poses the arms)
+		st.ikR.Weight, st.ikL.Weight = 0, 0
+	end
 	if st.char:GetAttribute("AbilityMode") == "climb" then -- v4.0: wall climb: both hands are free (AbilityPose animates the arms), the gun hangs at the hip
 		st.ikR.Weight, st.ikL.Weight = 0, 0
 	end
@@ -342,10 +348,10 @@ poseSignal:Connect(function(a, b)
 	end
 end)
 
--- Leg pose for sliding / crouching (after the Animator so it overrides walk/run)
+-- (v4.1: the crouch / slide leg poses moved into MoveAnim, which also animates walking + running and the arms)
 RunService.Stepped:Connect(function()
 	for _, st in pairs(states) do
-		if st.crouch > 0.01 and not st.restored and st.rHip and st.lHip and st.rKnee and st.lKnee then
+		if false and st.crouch > 0.01 and not st.restored and st.rHip and st.lHip and st.rKnee and st.lKnee then
 			-- mostly crouch pose, a bit of the walk cycle still shows through so crouch-walking reads
 			local c = st.crouch * 0.8
 			st.rHip.Transform = st.rHip.Transform:Lerp(CFrame.Angles(rad(40), 0, 0), c)
@@ -353,7 +359,7 @@ RunService.Stepped:Connect(function()
 			st.rKnee.Transform = st.rKnee.Transform:Lerp(CFrame.Angles(rad(-65), 0, 0), c)
 			st.lKnee.Transform = st.lKnee.Transform:Lerp(CFrame.Angles(rad(-65), 0, 0), c)
 		end
-		if st.slide > 0.01 and not st.restored and st.rHip and st.lHip and st.rKnee and st.lKnee then
+		if false and st.slide > 0.01 and not st.restored and st.rHip and st.lHip and st.rKnee and st.lKnee then
 			local a = st.slide
 			st.rHip.Transform = st.rHip.Transform:Lerp(CFrame.Angles(rad(60), 0, 0), a)
 			st.rKnee.Transform = st.rKnee.Transform:Lerp(CFrame.Angles(rad(-12), 0, 0), a)
@@ -399,7 +405,8 @@ RunService.RenderStepped:Connect(function()
 		if plr ~= player and plr.Character then
 			local g = plr.Character:FindFirstChild("TPGun")
 			if g then
-				local want = (plr:GetAttribute("Carrying") == true) and 1 or 0
+				local want = (plr:GetAttribute("Carrying") == true or (plr.Character and (plr.Character:GetAttribute("HeldGadget") ~= nil
+					or plr.Character:GetAttribute("Reviving") == true)) or plr:GetAttribute("CarryingSoul") == true) and 1 or 0
 				if g:GetAttribute("CarryHide") ~= want then
 					g:SetAttribute("CarryHide", want)
 					for _, d in ipairs(g:GetDescendants()) do
@@ -415,7 +422,8 @@ RunService.RenderStepped:Connect(function()
 	if not char then return end
 	if char:GetAttribute("Revealing") == true then return end -- v3.8: RespawnReveal drives the transparency of your own body meanwhile
 	local fp = isFirstPerson(char)
-	local carryingNow = player:GetAttribute("Carrying") == true
+	local carryingNow = player:GetAttribute("Carrying") == true or char:GetAttribute("HeldGadget") ~= nil
+		or char:GetAttribute("Reviving") == true or player:GetAttribute("CarryingSoul") == true
 	for _, name in ipairs({ "Gear", "TPGun" }) do
 		local f = char:FindFirstChild(name)
 		local ltm = (fp or (carryingNow and name == "TPGun")) and 1 or 0
