@@ -1,6 +1,6 @@
 -- LobbyCatalog (ModuleScript in ReplicatedStorage) - LOBBY place only. Used by LobbyClient (UI) and LobbyServer (validation).
 -- Every item you can put in a loadout slot. Weapon ids match WeaponConfig in Breakline (VX9 = M4A1, KR47 = AK-47, ...).
--- Gadgets are PLACEHOLDERS until they exist in Breakline. Movement abilities (v3.8) are real: AbilityClient.
+-- Gadgets (v4.0) and movement abilities (v3.8) are real. (MEDKIT + SCANNER placeholders were removed in v4.0.)
 -- The icons are placeholder tiles (color + short glyph); swap drawItem in LobbyClient for real images later.
 local K = {}
 
@@ -25,15 +25,13 @@ add(K.Weapons, "weapon", "BREACHER", "BREACHER", "Shotgun", "BR", W(240, 90, 80)
 add(K.Weapons, "weapon", "V9", "V9", "Pistol", "V9", W(170, 180, 205))
 add(K.Weapons, "weapon", "MAGNUM", ".44 Magnum", "Revolver", ".44", W(200, 160, 120))
 
--- gadgets (placeholders)
-add(K.Gadgets, "gadget", "FRAG", "Frag Grenade", "Gadget", "FG", W(235, 90, 70))
-add(K.Gadgets, "gadget", "SMOKE", "Smoke", "Gadget", "SM", W(150, 165, 190))
-add(K.Gadgets, "gadget", "FLASH", "Flashbang", "Gadget", "FL", W(250, 235, 140))
-add(K.Gadgets, "gadget", "SENTRY", "Sentry", "Gadget", "SN", W(90, 190, 255))
-add(K.Gadgets, "gadget", "MEDKIT", "Medkit", "Gadget", "MK", W(80, 210, 130))
-add(K.Gadgets, "gadget", "SCANNER", "Scanner", "Gadget", "SC", W(120, 120, 255))
-add(K.Gadgets, "gadget", "MINE", "Prox. Mine", "Gadget", "PM", W(255, 130, 60))
-add(K.Gadgets, "gadget", "SHIELD", "Shield", "Gadget", "SH", W(100, 220, 230))
+-- gadgets (v4.0: REAL, built in Breakline: GadgetServer / GadgetClient, numbers in GadgetConfig; keys 2 / 3 / 4 in a match)
+add(K.Gadgets, "gadget", "FRAG", "Frag Grenade", "Explosive, 2 charges", "FG", W(235, 90, 70))
+add(K.Gadgets, "gadget", "SMOKE", "Smoke", "Blocks sight, 2 charges", "SM", W(150, 165, 190))
+add(K.Gadgets, "gadget", "FLASH", "Flashbang", "Blinds who looks, 2 charges", "FL", W(250, 235, 140))
+add(K.Gadgets, "gadget", "SENTRY", "Sentry", "Auto turret, 1 charge", "SN", W(90, 190, 255))
+add(K.Gadgets, "gadget", "SHIELD", "Bubble Shield", "Throw: grows a dome, 1 charge", "SH", W(100, 220, 230))
+add(K.Gadgets, "gadget", "MINE", "Prox. Mine", "Sticks + blows up, 2 charges", "PM", W(255, 130, 60))
 
 -- special movement abilities (v3.8: REAL, built in AbilityClient). `icon` = UIKit.AbilityIcon id (small drawn graphic).
 add(K.Moves, "move", "DJUMP", "Double Jump", "Air jump", "DJ", W(90, 210, 255))
