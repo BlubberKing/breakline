@@ -33,8 +33,32 @@ C.XP = {
 	PerKill = 12, PerPlugged = 8, PerDestroyed = 10,
 	PerHundredDamage = 2,
 }
-C.RESPAWN_TIME = 5   -- PROPOSAL (GDD: 5-7s)
-C.REVEAL_TIME = 1.4  -- v3.8: after a respawn your body is revealed bottom-up by souls; you cannot move / shoot / be hurt until it is done
+C.RESPAWN_TIME = 5   -- (no longer used since v4.1: see DEAD_TIME / WIPE_TIME below; kept so old scripts do not break)
+-- v4.1 respawn reveal: your camera hovers behind + above your body while souls build it (REVEAL_BUILD), then a fast rush puts you back
+-- into it (REVEAL_DIVE) and you play instantly. Total frozen time = REVEAL_BUILD + REVEAL_DIVE.
+C.REVEAL_BUILD = 1.75
+C.REVEAL_DIVE  = 0.3
+C.REVEAL_TIME  = C.REVEAL_BUILD + C.REVEAL_DIVE
+C.REZ_FINISH   = 0.55 -- after a revive the body is already ~85% built (it was building the whole 8 s), this is the rest + the dive
+
+-- ===== v4.1 death screen + souls =====
+C.DEAD_TIME = 15  -- seconds you are dead (you spectate a living teammate)
+C.WIPE_TIME = 10  -- team wipe (nobody left to spectate): EVERYONE on the team is dead for this long and free-roams the map
+C.REZ_TIME  = 8   -- seconds a teammate has to hold the revive prompt on your soul
+C.SOUL = {
+	CarryTime  = 0.3,   -- hold E this long to pick a soul up
+	ThrowSpeed = 70,    -- studs/s when you throw a soul (left click), Q drops it
+	Reach      = 8,     -- prompt distance
+	HoldRange  = 3.2,   -- the rezzing player must stay this close to where they started (and keep holding)
+}
+
+-- ===== v4.1 modes (picked from the child of MapBounds, see MatchServer) =====
+C.MODES = { Breakline = "Breakline", OneVOne = "1v1" }
+C.V1 = {
+	KillsToWin = 5,  -- first player to this many kills wins the round
+	MinPlayers = 1,  -- players needed to start a 1v1 (2 for live games; 1 lets you test alone in Studio)
+	RespawnTime = 4, -- seconds you are out after a death in a 1v1 (you spectate your opponent). There are no souls / revives in 1v1.
+}
 
 -- Team 1 (Red) defends one end of the map, team 2 (Blue) the other. See MAP.SwapEnds.
 C.Teams = {
