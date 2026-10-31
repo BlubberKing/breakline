@@ -20,6 +20,9 @@ local matches = MemoryStoreService:GetHashMap("Matches")   -- Breakline's MatchR
 local assign = MemoryStoreService:GetHashMap("Assign_v1")
 
 local QueueR = RS:WaitForChild("LobbyRemotes"):WaitForChild("Queue")
+-- v4.2: two modes. "breakline" = 3v3 wall push (PC.TEAM_SIZE per team), "1v1" = one player per team.
+local MODE_SIZE = { breakline = PC.TEAM_SIZE, ["1v1"] = 1 }
+local MODE_NAME = { breakline = "Breakline", ["1v1"] = "1v1" }
 local queuedKey = {}   -- [userId] = queue key (only for players on THIS server)
 local lastQueue = {}
 
@@ -98,11 +101,13 @@ end)
 Players.PlayerRemoving:Connect(function(p) lastLoadout[p] = nil lastSkin[p] = nil end)
 
 -- ===== queue remote =====
-QueueR.OnServerEvent:Connect(function(player, on)
+QueueR.OnServerEvent:Connect(function(player, on, modeId)
 	if os.clock() - (lastQueue[player] or 0) < 1 then return end
 	lastQueue[player] = os.clock()
 	if PC.BREAKLINE_PLACE_ID == 0 then Party.Notice(player, "Set BREAKLINE_PLACE_ID in PlaceConfig first.") return end
 
+	modeId = (modeId == "1v1") and "1v1" or "breakline"
+	local teamSize = MODE_SIZE[modeId]
 	local party, id = Party.Get(player)
 	local ids = { player.UserId }
 	local key = "solo_" .. player.UserId
@@ -113,9 +118,9 @@ QueueR.OnServerEvent:Connect(function(player, on)
 	end
 
 	if on == true then
-		if #ids > PC.TEAM_SIZE then Party.Notice(player, "Your party is bigger than a team.") return end
+		if #ids > teamSize then Party.Notice(player, modeId == "1v1" and "1v1 is solo only. Leave your party to queue for it." or "Your party is bigger than a team.") return end
 		local ok = pcall(function()
-			queue:SetAsync(key, { ids = ids }, PC.QUEUE_TIMEOUT, os.time())
+			queue:SetAsync(key, { ids = ids, mode = modeId }, PC.QUEUE_TIMEOUT, os.time())
 		end)
 		if not ok then Party.Notice(player, "Matchmaking is busy, try again.") return end
 		setQueued(ids, true, key)
@@ -194,6 +199,44 @@ task.spawn(function()
 end)
 
 -- ===== matchmaker =====
+local function matchMode(items, modeId)
+	local size = MODE_SIZE[modeId]
+	local teams = { Red = {}, Blue = {} }
+	local usedKeys, seen = {}, {}
+	for _, it in items do
+		local v = it.value
+		local itMode = (type(v) == "table" and v.mode == "1v1") and "1v1" or "breakline" -- old entries without a mode = breakline
+		local ids = type(v) == "table" and v.ids
+		if itMode == modeId and type(ids) == "table" and #ids >= 1 and #ids <= size then
+			local clash = false
+			for _, uid in ids do if seen[uid] then clash = true end end -- same player twice (stale entry)
+			if not clash then
+				local pick
+				for _, name in { "Red", "Blue" } do
+					if #teams[name] + #ids <= size and (not pick or #teams[name] < #teams[pick]) then pick = name end
+				end
+				if pick then
+					for _, uid in ids do table.insert(teams[pick], uid) seen[uid] = true end
+					table.insert(usedKeys, it.key)
+				end
+			end
+		end
+	end
+	if #teams.Red < size or #teams.Blue < size then return end
+
+	local okS, code, serverId = pcall(function() return TeleportService:ReserveServer(PC.BREAKLINE_PLACE_ID) end)
+	if not okS then warn("[Lobby] ReserveServer failed:", code) return end
+	local all = {}
+	for _, uid in teams.Red do table.insert(all, uid) end
+	for _, uid in teams.Blue do table.insert(all, uid) end
+	local saved = pcall(function() matches:SetAsync(serverId, { Red = teams.Red, Blue = teams.Blue, Mode = MODE_NAME[modeId] }, 3600) end)
+	if not saved then return end
+	for _, k in usedKeys do pcall(function() queue:RemoveAsync(k) end) end
+	for _, uid in all do pcall(function() assign:SetAsync(tostring(uid), code, 120) end) end
+	publish("MatchFound", { code = code, ids = all })
+	print("[Lobby] match made (" .. modeId .. "):", #teams.Red, "vs", #teams.Blue)
+end
+
 local function tryMatch()
 	local got = false
 	local ok = pcall(function()
@@ -207,40 +250,8 @@ local function tryMatch()
 
 	local okR, items = pcall(function() return queue:GetRangeAsync(Enum.SortDirection.Ascending, 50) end)
 	if not okR or type(items) ~= "table" then return end
-
-	local teams = { Red = {}, Blue = {} }
-	local usedKeys, seen = {}, {}
-	local function size(t) return #t end
-	for _, it in items do
-		local ids = it.value and it.value.ids
-		if type(ids) == "table" and #ids >= 1 and #ids <= PC.TEAM_SIZE then
-			local clash = false
-			for _, uid in ids do if seen[uid] then clash = true end end -- same player twice (stale entry)
-			if not clash then
-				local pick
-				for _, name in { "Red", "Blue" } do
-					if size(teams[name]) + #ids <= PC.TEAM_SIZE and (not pick or size(teams[name]) < size(teams[pick])) then pick = name end
-				end
-				if pick then
-					for _, uid in ids do table.insert(teams[pick], uid) seen[uid] = true end
-					table.insert(usedKeys, it.key)
-				end
-			end
-		end
-	end
-	if #teams.Red < PC.TEAM_SIZE or #teams.Blue < PC.TEAM_SIZE then return end
-
-	local okS, code, serverId = pcall(function() return TeleportService:ReserveServer(PC.BREAKLINE_PLACE_ID) end)
-	if not okS then warn("[Lobby] ReserveServer failed:", code) return end
-	local all = {}
-	for _, uid in teams.Red do table.insert(all, uid) end
-	for _, uid in teams.Blue do table.insert(all, uid) end
-	local saved = pcall(function() matches:SetAsync(serverId, { Red = teams.Red, Blue = teams.Blue }, 3600) end)
-	if not saved then return end
-	for _, k in usedKeys do pcall(function() queue:RemoveAsync(k) end) end
-	for _, uid in all do pcall(function() assign:SetAsync(tostring(uid), code, 120) end) end
-	publish("MatchFound", { code = code, ids = all })
-	print("[Lobby] match made:", #teams.Red, "vs", #teams.Blue)
+	matchMode(items, "breakline")
+	matchMode(items, "1v1")
 end
 
 task.spawn(function()
