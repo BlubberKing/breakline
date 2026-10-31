@@ -487,7 +487,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 						local char, _, root = aliveChar(p)
 						if char then
 							local d = root.Position - m.pos
-							if Vector3.new(d.X, 0, d.Z).Magnitude <= mc.trigger and math.abs(d.Y) < 6 then
+							if Vector3.new(d.X, 0, d.Z).Magnitude <= mc.trigger and math.abs(d.Y - m.pos.Y) < 6 then
 								m.trig = now + mc.delay
 								break
 							end
