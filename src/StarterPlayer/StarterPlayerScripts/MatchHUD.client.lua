@@ -19,6 +19,7 @@ local StarterGui = game:GetService("StarterGui")
 
 local player = Players.LocalPlayer
 local GunModels = require(RS:WaitForChild("GunModels"))
+local GM = require(RS:WaitForChild("GadgetModels")) -- v4.1: real gadget pictures
 local Catalog = RS:FindFirstChild("LobbyCatalog") and require(RS.LobbyCatalog) or nil
 
 pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false) end)
@@ -237,7 +238,10 @@ local function buildSlots()
 		local id = type(lo.Gadgets) == "table" and lo.Gadgets[idx] or ""
 		local item = Catalog and Catalog.ById[id]
 		if item then
-			s.glyph = text(s.frame, item.glyph, 24, 0, 8, SLOT, SLOT - 16, F_BOLD, Enum.TextXAlignment.Center, WHITE)
+			s.glyph = text(s.frame, "", 24, 0, 8, SLOT, SLOT - 16, F_BOLD, Enum.TextXAlignment.Center, WHITE) -- (kept as the colour handle; the picture is below)
+			local picHolder = new("Frame", { Position = UDim2.fromOffset(6, 4), Size = UDim2.fromOffset(SLOT - 12, SLOT - 22), BackgroundTransparency = 1 }, s.frame)
+			s.pic = GM.Picture(picHolder, item.id)
+			s.itemId = item.id
 			s.name = text(s.frame, string.upper(item.name), 9, 0, SLOT - 17, SLOT, 12, F_MED, Enum.TextXAlignment.Center, DIM)
 			s.count = text(s.frame, "", 16, SLOT - 30, 4, 26, 18, F_BOLD, Enum.TextXAlignment.Right, WHITE)
 			s.cd = rect(s.frame, 0, 0, SLOT, SLOT, Color3.new(0, 0, 0), 0.45)
@@ -307,7 +311,15 @@ local function updateGadgetSlots()
 			s.count.Text = max > 0 and tostring(count) or ""
 			s.count.TextColor3 = count > 0 and WHITE or RED
 			s.glyph.TextColor3 = usable and WHITE or DIM
-			s.border.Transparency = usable and 0.3 or 0.75
+			if s.pic then
+				s.pic.ImageTransparency = usable and 0 or 0.55
+				s.pic.ImageColor3 = usable and Color3.new(1, 1, 1) or Color3.fromRGB(150, 150, 150)
+			end
+			local ch = player.Character
+			local equipped = ch ~= nil and ch:GetAttribute("HeldSlot") == i
+			s.border.Transparency = equipped and 0 or (usable and 0.3 or 0.75)
+			s.border.Color = equipped and Color3.fromRGB(110, 200, 255) or WHITE
+			s.border.Thickness = equipped and 3 or 2
 			local frac, label = 0, ""
 			if count <= 0 and nxt > t then
 				local left = nxt - t
@@ -359,5 +371,5 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 	-- the item row is pointless while carrying a box (guns are locked)
-	items.Visible = player:GetAttribute("Carrying") ~= true
+	items.Visible = player:GetAttribute("Carrying") ~= true and player:GetAttribute("IsDead") ~= true
 end)
