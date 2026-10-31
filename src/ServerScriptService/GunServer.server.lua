@@ -8,6 +8,7 @@ local GunMath = require(RS:WaitForChild("GunMath"))
 local ServerStorage = game:GetService("ServerStorage")
 local MatchCfg = require(RS:WaitForChild("MatchConfig"))
 local BoxDamage = ServerStorage:WaitForChild("BoxDamage", 30) -- BindableEvent made by MatchServer
+local GadgetDamage = ServerStorage:WaitForChild("GadgetDamage", 30) -- BindableEvent made by GadgetServer (v4.0: bubble shields)
 local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
 local MatchState = RS:WaitForChild("MatchState", 30) -- made by MatchServer; guns only work while the match is live
 
@@ -84,6 +85,8 @@ local function checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
 	if not hum or hum.Health <= 0 or model == char then return end
 	local targetPlayer = Players:GetPlayerFromCharacter(model)
 	if targetPlayer and not player.Neutral and targetPlayer.Team == player.Team then return end
+	local sentryTeam = model:GetAttribute("OwnerTeam") -- v4.0: a gadget Sentry (has a Humanoid, no player); never shoot your own team's
+	if sentryTeam and player.Team and sentryTeam == player.Team.Name then return end
 
 	local toHit = hitPos - origin
 	local dist = toHit.Magnitude
@@ -121,6 +124,18 @@ local function checkBoxHit(player, cfg, origin, dir, hitPart, hitPos)
 	local r = workspace:Raycast(origin, toHit.Unit * (dist + 1), params)
 	if r and r.Instance ~= hitPart then return end -- something solid is in the way
 	return hitPart, GunMath.Damage(cfg, dist, false) * MatchCfg.BOX.DamageMult, hitPos
+end
+
+-- v4.0: validates a shot at a bubble shield (GadgetServer); returns the shield part, damage or nil. Friendly shields soak the bullet but take no damage.
+local function checkShieldHit(player, cfg, origin, dir, hitPart, hitPos)
+	if hitPart.Name ~= "BubbleShield" or not hitPart:HasTag("GadgetShield") then return end
+	local toHit = hitPos - origin
+	local dist = toHit.Magnitude
+	if dist > cfg.Range or dist < 0.01 or toHit.Unit:Dot(dir) < 0.95 then return end
+	if (hitPart.Position - hitPos).Magnitude > hitPart.Size.X / 2 + 3 then return end
+	local team = hitPart:GetAttribute("ShieldTeam")
+	if team and player.Team and team == player.Team.Name then return end
+	return hitPart, GunMath.Damage(cfg, dist, false)
 end
 
 FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
@@ -176,6 +191,10 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 			local b = boxHits[boxPart] or { dmg = 0, pos = boxPos }
 			b.dmg += boxDmg
 			boxHits[boxPart] = b
+		end
+		if typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") and typeof(hitPos) == "Vector3" and GadgetDamage then
+			local sp, sd = checkShieldHit(player, cfg, origin, dir, hitPart, hitPos)
+			if sp then GadgetDamage:Fire(sp, sd) end
 		end
 		local model, hum, dmg, head, pos, targetPlayer = checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
 		if model then
