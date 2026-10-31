@@ -60,40 +60,32 @@ local function buildLook(part)
 	folder.Name = "SoulLook_" .. part:GetAttribute("OwnerName")
 	folder.Parent = fxFolder
 	look.folder = folder
-	-- core: a teardrop = a ball + a short pointed tail made of shrinking balls
-	look.core = add(mk(Vector3.new(1.5, 1.75, 1.5), ICE, 0.02, Enum.PartType.Ball, folder))
-	look.shell = add(mk(Vector3.new(2.1, 2.45, 2.1), col, 0.55, Enum.PartType.Ball, folder))
-	look.glow = add(mk(Vector3.new(3.3, 3.7, 3.3), col, 0.88, Enum.PartType.Ball, folder))
+	-- v4.2: a TINY ghostly soul: a small pale translucent head, a wispy tail that fades out, two little dark eyes, a faint glow
+	look.core = add(mk(Vector3.new(0.5, 0.56, 0.5), ICE, 0.35, Enum.PartType.Ball, folder))
+	look.shell = add(mk(Vector3.new(0.72, 0.8, 0.72), col, 0.78, Enum.PartType.Ball, folder))
+	look.glow = add(mk(Vector3.new(1.3, 1.45, 1.3), col, 0.93, Enum.PartType.Ball, folder))
 	look.tail = {}
-	for i = 1, 5 do
-		table.insert(look.tail, add(mk(Vector3.one * (1.1 - i * 0.18), i % 2 == 0 and col or ICE, 0.18 + i * 0.12, Enum.PartType.Ball, folder)))
+	for i = 1, 6 do
+		table.insert(look.tail, add(mk(Vector3.one * (0.46 - i * 0.065), i % 2 == 0 and col or ICE, 0.45 + i * 0.09, Enum.PartType.Ball, folder)))
 	end
-	-- two halo rings turning around the core at different angles
-	look.rings = {}
+	look.eyes = {}
 	for i = 1, 2 do
-		local d = i == 1 and 3.4 or 4.2
-		local r = add(mk(Vector3.new(0.09, d, d), i == 1 and col or ICE, 0.35, Enum.PartType.Cylinder, folder))
-		table.insert(look.rings, { part = r, speed = i == 1 and 1.3 or -0.9, tilt = i == 1 and rad(70) or rad(25) })
+		table.insert(look.eyes, add(mk(Vector3.new(0.09, 0.13, 0.05), Color3.fromRGB(20, 26, 40), 0.1, nil, folder)))
 	end
-	-- orbiting sparks
-	look.sparks = {}
-	for i = 1, 5 do
-		local sp = add(mk(Vector3.one * 0.26, i % 2 == 0 and ICE or col, 0.05, Enum.PartType.Ball, folder))
-		table.insert(look.sparks, { part = sp, a = (i / 5) * math.pi * 2, r = 1.8 + (i % 3) * 0.28, speed = 1.7 + (i % 3) * 0.5, y = (i % 2 == 0) and 0.4 or -0.3 })
-	end
+	look.rings, look.sparks = {}, {}
 	local pl = Instance.new("PointLight")
-	pl.Color, pl.Range, pl.Brightness = col, 16, 2.2
+	pl.Color, pl.Range, pl.Brightness = col, 6, 0.9
 	pl.Parent = look.core
-	-- floor ring + beam
-	look.floorRing = add(mk(Vector3.new(0.1, 5, 5), col, 0.35, Enum.PartType.Cylinder, folder))
-	look.floorDot = add(mk(Vector3.new(0.12, 2.4, 2.4), ICE, 0.45, Enum.PartType.Cylinder, folder))
-	look.beam = add(mk(Vector3.new(26, 0.5, 0.5), col, 0.8, nil, folder))
+	-- faint floor ring only (no beam)
+	look.floorRing = add(mk(Vector3.new(0.06, 1.6, 1.6), col, 0.6, Enum.PartType.Cylinder, folder))
+	look.floorDot = add(mk(Vector3.new(0.06, 0.6, 0.6), ICE, 0.7, Enum.PartType.Cylinder, folder))
+	look.beam = add(mk(Vector3.new(0.1, 0.1, 0.1), col, 1, nil, folder))
 	-- name tag
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "Tag"
 	bb.Adornee = look.core
 	bb.Size = UDim2.fromOffset(300, 92)
-	bb.StudsOffset = Vector3.new(0, 3.5, 0)
+	bb.StudsOffset = Vector3.new(0, 1.7, 0)
 	bb.AlwaysOnTop = true
 	bb.MaxDistance = 220
 	bb.LightInfluence = 0
@@ -153,7 +145,7 @@ end
 local function startRezFx(look)
 	local part = look.part
 	local owner = ownerCharacter(part)
-	local g = part:GetAttribute("Ground") or (part.Position.Y - 2.5)
+	local g = part:GetAttribute("Ground") or (part.Position.Y - 1.5)
 	-- a posed copy of the revived player's body (their dead body is in pieces): their skin, standing beside the soul, facing the reviver
 	local by = Players:GetPlayerByUserId(part:GetAttribute("RezBy") or 0)
 	local byRoot = by and by.Character and by.Character:FindFirstChild("HumanoidRootPart")
@@ -229,40 +221,38 @@ RunService.RenderStepped:Connect(function(dt)
 		local state = part:GetAttribute("State")
 		local rezBy = part:GetAttribute("RezBy")
 		local pos = part.Position
-		local g = part:GetAttribute("Ground") or (pos.Y - 2.5)
+		local g = part:GetAttribute("Ground") or (pos.Y - 1.5)
 		-- bobbing while loose, steadier while carried, flickering when thrown
 		local bob = (state == "Loose") and sin(t * 2.1) * 0.22 or 0
 		local c = pos + Vector3.new(0, bob, 0)
 		local tilt = (state == "Thrown") and (t * 8) or 0
-		look.core.CFrame = CFrame.new(c) * CFrame.Angles(0, t * 1.2, tilt * 0.2)
-		local pulse = 1 + 0.07 * sin(t * 5)
-		look.core.Size = Vector3.new(1.5, 1.75, 1.5) * pulse
+		look.core.CFrame = CFrame.new(c) * CFrame.Angles(0, t * 0.8, tilt * 0.2)
+		local pulse = 1 + 0.06 * sin(t * 4)
+		look.core.Size = Vector3.new(0.5, 0.56, 0.5) * pulse
 		look.shell.CFrame = look.core.CFrame
-		look.shell.Size = Vector3.new(2.1, 2.45, 2.1) * (1 + 0.1 * sin(t * 4 + 1))
+		look.shell.Size = Vector3.new(0.72, 0.8, 0.72) * (1 + 0.08 * sin(t * 3 + 1))
 		look.glow.CFrame = look.core.CFrame
-		look.glow.Size = Vector3.new(3.3, 3.7, 3.3) * (1 + 0.14 * sin(t * 3 + 2))
-		-- the tail trails below and sways
+		look.glow.Size = Vector3.new(1.3, 1.45, 1.3) * (1 + 0.1 * sin(t * 2.4 + 2))
+		-- the wispy tail trails below and sways like smoke
 		for i, tp in look.tail do
-			local sway = Vector3.new(sin(t * 3 + i * 0.7) * 0.18 * i, -0.95 - i * 0.55, cos(t * 2.6 + i * 0.7) * 0.18 * i)
+			local sway = Vector3.new(sin(t * 3 + i * 0.8) * 0.07 * i, -0.3 - i * 0.2, cos(t * 2.6 + i * 0.8) * 0.07 * i)
 			tp.CFrame = CFrame.new(c + sway)
 		end
-		for _, rg in look.rings do
-			rg.part.CFrame = CFrame.new(c) * CFrame.Angles(0, t * rg.speed, 0) * CFrame.Angles(rg.tilt, 0, math.rad(90))
+		-- two tiny eyes, on the side of the head that faces the camera
+		local toCam = camera.CFrame.Position - c
+		local faceCF = CFrame.lookAt(c, Vector3.new(camera.CFrame.Position.X, c.Y, camera.CFrame.Position.Z))
+		for i, e in look.eyes do
+			e.CFrame = faceCF * CFrame.new((i == 1 and -0.1 or 0.1), 0.05, -0.23)
 		end
-		for _, sp in look.sparks do
-			local a = sp.a + t * sp.speed
-			sp.part.CFrame = CFrame.new(c + Vector3.new(cos(a) * sp.r, sp.y + sin(t * 3 + sp.a) * 0.3, sin(a) * sp.r))
-		end
-		-- floor marker
+		-- floor marker (small + faint)
 		local onFloor = state ~= "Thrown"
-		look.floorRing.Transparency = onFloor and (0.3 + 0.2 * sin(t * 3)) or 1
-		look.floorDot.Transparency = onFloor and 0.45 or 1
-		look.beam.Transparency = onFloor and 0.82 or 1
-		local fpos = Vector3.new(c.X, g + 0.12, c.Z)
+		look.floorRing.Transparency = onFloor and (0.6 + 0.2 * sin(t * 3)) or 1
+		look.floorDot.Transparency = onFloor and 0.7 or 1
+		local fpos = Vector3.new(c.X, g + 0.1, c.Z)
 		look.floorRing.CFrame = CFrame.new(fpos) * CFrame.Angles(0, 0, math.rad(90))
-		look.floorRing.Size = Vector3.new(0.1, 4.6 + 0.5 * sin(t * 3), 4.6 + 0.5 * sin(t * 3))
+		look.floorRing.Size = Vector3.new(0.06, 1.5 + 0.2 * sin(t * 3), 1.5 + 0.2 * sin(t * 3))
 		look.floorDot.CFrame = CFrame.new(fpos) * CFrame.Angles(0, 0, math.rad(90))
-		look.beam.CFrame = CFrame.new(c.X, g + 13, c.Z) * CFrame.Angles(0, 0, math.rad(90))
+		look.beam.CFrame = CFrame.new(c.X, g + 1, c.Z)
 
 		-- is it a soul I can use? (living teammate of the dead player)
 		local mine = (part:GetAttribute("OwnerId") == player.UserId)
@@ -280,7 +270,7 @@ RunService.RenderStepped:Connect(function(dt)
 		-- name tag + progress
 		look.subLbl.Text = mine and "YOUR SOUL" or (isMate and "HOLD  F  REVIVE    E  CARRY" or "SOUL")
 		look.tag.Enabled = true
-		local scale = clamp((camera.CFrame.Position - c).Magnitude / 45, 0.75, 1.5)
+		local scale = clamp((camera.CFrame.Position - c).Magnitude / 45, 0.6, 1.2)
 		look.tag.Size = UDim2.fromOffset(300 * scale, 92 * scale)
 		if rezBy then
 			local start = part:GetAttribute("RezStart") or 0
