@@ -52,36 +52,67 @@ local function label(parent, size, pos, text, ts, color)
 	return l
 end
 
+-- v4.2 top bar: no plate, no outlines. Left score | big timer | right score, one thin progress line underneath.
+-- Same condensed white type as the rest of the HUD (MatchHUD); the team colours only appear on the two numbers and the line.
+local HFAM = Font.fromEnum(Enum.Font.RobotoCondensed).Family
+local H_BOLD, H_MED = Font.new(HFAM, Enum.FontWeight.Bold), Font.new(HFAM, Enum.FontWeight.Medium)
+local SOFT = Color3.fromRGB(235, 235, 232)
+
 local top = Instance.new("Frame")
 top.AnchorPoint = Vector2.new(0.5, 0)
-top.Position = UDim2.new(0.5, 0, 0, 10)
-top.Size = UDim2.fromOffset(460, 84)
-top.BackgroundColor3 = Color3.fromRGB(22, 16, 34) -- v3.2: soft rounded plate so the top bar matches the lobby / HUD
-top.BackgroundTransparency = 0.45
-top.BorderSizePixel = 0
+top.Position = UDim2.new(0.5, 0, 0, 14)
+top.Size = UDim2.fromOffset(520, 92)
+top.BackgroundTransparency = 1
 top.Parent = gui
-do
-	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 26); c.Parent = top
-	local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255, 255, 255); st.Transparency = 0.8; st.Thickness = 2; st.Parent = top
+do -- very soft dark fade behind the text so white reads on bright maps (not a box)
+	local fade = Instance.new("Frame")
+	fade.Size = UDim2.new(1.4, 0, 1.3, 0)
+	fade.Position = UDim2.fromScale(-0.2, -0.15)
+	fade.BackgroundColor3 = Color3.new(0, 0, 0)
+	fade.BorderSizePixel = 0
+	fade.ZIndex = 0
+	fade.Parent = top
+	local g = Instance.new("UIGradient")
+	g.Rotation = 90
+	g.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.62), NumberSequenceKeypoint.new(1, 1) })
+	g.Parent = fade
 end
 
-local scoreA = label(top, UDim2.fromOffset(110, 36), UDim2.fromOffset(60, 20), "0", 30, COL_A)
-local scoreB = label(top, UDim2.fromOffset(110, 36), UDim2.fromOffset(400, 20), "0", 30, COL_B)
-local timerLabel = label(top, UDim2.fromOffset(200, 36), UDim2.fromOffset(230, 20), "", 22)
-local nameA = label(top, UDim2.fromOffset(110, 16), UDim2.fromOffset(60, 44), NAME_A:upper() .. " BOXES", 11, COL_A)
-local nameB = label(top, UDim2.fromOffset(110, 16), UDim2.fromOffset(400, 44), NAME_B:upper() .. " BOXES", 11, COL_B)
+local function hlabel(size, pos, text, ts, color, font, anchor)
+	local l = Instance.new("TextLabel")
+	l.AnchorPoint = anchor or Vector2.new(0.5, 0.5)
+	l.Size, l.Position = size, pos
+	l.BackgroundTransparency = 1
+	l.FontFace = font or H_BOLD
+	l.TextSize = ts
+	l.TextColor3 = color or Color3.new(1, 1, 1)
+	l.Text = text
+	local st = Instance.new("UIStroke")
+	st.Thickness = 1.2; st.Transparency = 0.55; st.Color = Color3.new(0, 0, 0)
+	st.Parent = l
+	l.Parent = top
+	return l
+end
 
--- wall progress: bar spans finish line (team A end, left) to finish line (team B end, right); the marker is the wall
+local scoreA = hlabel(UDim2.fromOffset(120, 54), UDim2.fromOffset(60, 26), "0", 50, COL_A)
+local scoreB = hlabel(UDim2.fromOffset(120, 54), UDim2.fromOffset(460, 26), "0", 50, COL_B)
+local nameA = hlabel(UDim2.fromOffset(120, 16), UDim2.fromOffset(60, 60), NAME_A:upper(), 13, SOFT, H_MED)
+local nameB = hlabel(UDim2.fromOffset(120, 16), UDim2.fromOffset(460, 60), NAME_B:upper(), 13, SOFT, H_MED)
+local timerLabel = hlabel(UDim2.fromOffset(280, 40), UDim2.fromOffset(260, 22), "", 34, Color3.new(1, 1, 1))
+local subLabel = hlabel(UDim2.fromOffset(280, 16), UDim2.fromOffset(260, 47), "", 13, SOFT, H_MED)
+for _, l in { nameA, nameB, subLabel } do l.TextTransparency = 0.15 end
+
+-- progress line: left end = team A's finish line, right end = team B's. The tick is the wall (Breakline) or the kill lead (1v1).
 local bar = Instance.new("Frame")
 bar.AnchorPoint = Vector2.new(0.5, 0)
-bar.Position = UDim2.fromOffset(230, 62)
-bar.Size = UDim2.fromOffset(420, 12)
-bar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
-bar.BackgroundTransparency = 0.2
+bar.Position = UDim2.fromOffset(260, 72)
+bar.Size = UDim2.fromOffset(360, 4)
+bar.BackgroundColor3 = Color3.new(0, 0, 0)
+bar.BackgroundTransparency = 0.45
 bar.BorderSizePixel = 0
 bar.Parent = top
 do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Parent = bar end
-local track = Instance.new("Frame") -- clips the two team halves to the rounded bar; the marker lives outside it
+local track = Instance.new("Frame") -- clips the two halves to the rounded line
 track.Size = UDim2.fromScale(1, 1)
 track.BackgroundTransparency = 1
 track.ClipsDescendants = true
@@ -90,7 +121,7 @@ do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Pare
 local halfA = Instance.new("Frame")
 halfA.Size = UDim2.fromScale(0.5, 1)
 halfA.BackgroundColor3 = COL_A
-halfA.BackgroundTransparency = 0.45
+halfA.BackgroundTransparency = 0.25
 halfA.BorderSizePixel = 0
 halfA.Parent = track
 local halfB = halfA:Clone()
@@ -99,13 +130,13 @@ halfB.BackgroundColor3 = COL_B
 halfB.Parent = track
 local marker = Instance.new("Frame")
 marker.AnchorPoint = Vector2.new(0.5, 0.5)
-marker.Size = UDim2.fromOffset(8, 20)
+marker.Size = UDim2.fromOffset(4, 14)
 marker.Position = UDim2.fromScale(0.5, 0.5)
 marker.BackgroundColor3 = Color3.new(1, 1, 1)
 marker.BorderSizePixel = 0
 marker.ZIndex = 3
 marker.Parent = bar
-do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Parent = marker; local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(20, 12, 30); st.Thickness = 2; st.Parent = marker end
+do local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Parent = marker end
 
 local banner = label(gui, UDim2.fromOffset(700, 60), UDim2.new(0.5, 0, 0.22, 0), "", 40)
 banner.TextTransparency = 1
@@ -135,40 +166,50 @@ local function teamColor()
 end
 
 local function clampKills(x) return math.clamp(x, -1, 1) end
+local function fmtTime(sec)
+	sec = math.max(0, math.ceil(sec))
+	return ("%d:%02d"):format(sec // 60, sec % 60)
+end
 local function refresh()
 	local phase = State:GetAttribute("Phase")
-	local ends = State:GetAttribute("PhaseEnds") or 0
-	if State:GetAttribute("Mode") == "1v1" then -- v4.1: first to N kills. The bar fills toward whoever leads; the numbers are kills.
+	local oneVone = State:GetAttribute("Mode") == "1v1"
+	local myTeamName = player.Team and player.Team.Name
+	if oneVone then -- first to N kills (each round is one kill or the timer). The line leans toward whoever leads.
 		local ka, kb, need = State:GetAttribute("KillsA") or 0, State:GetAttribute("KillsB") or 0, State:GetAttribute("KillsToWin") or 5
 		scoreA.Text, scoreB.Text = tostring(ka), tostring(kb)
-		nameA.Text, nameB.Text = NAME_A:upper() .. " KILLS", NAME_B:upper() .. " KILLS"
+		nameA.Text, nameB.Text = NAME_A:upper(), NAME_B:upper()
 		marker.Position = UDim2.fromScale(0.5 + 0.5 * clampKills((kb - ka) / math.max(need, 1)), 0.5)
 	else
 		scoreA.Text = tostring(State:GetAttribute("BoxesA") or 0)
 		scoreB.Text = tostring(State:GetAttribute("BoxesB") or 0)
+		nameA.Text, nameB.Text = NAME_A:upper() .. " BOXES", NAME_B:upper() .. " BOXES"
 		marker.Position = UDim2.fromScale(0.5 + 0.5 * (State:GetAttribute("WallFrac") or 0), 0.5)
 	end
 
-	if phase == "Waiting" then
-		timerLabel.Text = "WAITING FOR PLAYERS"
-	elseif phase == "Pregame" then
-		timerLabel.Text = "PREPARING"
-	elseif phase == "Warp" then
-		timerLabel.Text = "DEPLOYING"
-	elseif phase == "Countdown" then
-		timerLabel.Text = "GET READY"
-	elseif phase == "Summary" then
-		timerLabel.Text = "MATCH OVER"
+	local main, sub, col = "", "", Color3.new(1, 1, 1)
+	if phase == "Waiting" then main = "WAITING FOR PLAYERS"
+	elseif phase == "Pregame" then main = "PREPARING"
+	elseif phase == "Warp" then main = "DEPLOYING"
+	elseif phase == "Countdown" then main = "GET READY"
+	elseif phase == "Summary" then main = "MATCH OVER"
 	elseif phase == "Playing" then
-		local t = player.Team and player.Team.Name
-		timerLabel.Text = t and (t:upper() .. (State:GetAttribute("Mode") == "1v1" and "  -  FIRST TO " .. tostring(State:GetAttribute("KillsToWin") or 5) or "")) or "SPECTATING"
-		timerLabel.TextColor3 = t and teamColor() or Color3.new(1, 1, 1)
+		if oneVone then
+			local live = State:GetAttribute("RoundLive") == true
+			local left = (State:GetAttribute("RoundEnds") or 0) - workspace:GetServerTimeNow()
+			main = live and fmtTime(left) or "--:--"
+			if live and left <= 10 then col = Color3.fromRGB(255, 120, 110) end
+			sub = ("ROUND %d   -   FIRST TO %d"):format(State:GetAttribute("Round") or 1, State:GetAttribute("KillsToWin") or 5)
+		else
+			main = myTeamName and myTeamName:upper() or "SPECTATING"
+			col = myTeamName and teamColor() or col
+			sub = "WALL PUSH"
+		end
 	elseif phase == "Result" or phase == "SlowMo" then
 		local w = State:GetAttribute("Winner")
-		timerLabel.Text = (w and w ~= "") and (w:upper() .. " WINS") or "ROUND OVER"
-		timerLabel.TextColor3 = (w == NAME_A and COL_A) or (w == NAME_B and COL_B) or Color3.new(1, 1, 1)
+		main = (w and w ~= "") and (w:upper() .. " WINS") or "ROUND OVER"
+		col = (w == NAME_A and COL_A) or (w == NAME_B and COL_B) or col
 	end
-	if phase ~= "Playing" and phase ~= "Result" and phase ~= "SlowMo" then timerLabel.TextColor3 = Color3.new(1, 1, 1) end
+	timerLabel.Text, subLabel.Text, timerLabel.TextColor3 = main, sub, col
 
 	if phase ~= lastPhase then
 		lastPhase = phase
