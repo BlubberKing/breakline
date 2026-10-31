@@ -115,6 +115,9 @@ stateFolder:SetAttribute("Mode", MODE)
 stateFolder:SetAttribute("KillsA", 0)
 stateFolder:SetAttribute("KillsB", 0)
 stateFolder:SetAttribute("KillsToWin", C.V1.KillsToWin)
+stateFolder:SetAttribute("Round", 1)       -- v4.2 (1v1): round number
+stateFolder:SetAttribute("RoundEnds", 0)   -- v4.2 (1v1): server time the round timer runs out (0 while the round is resetting)
+stateFolder:SetAttribute("RoundLive", false)
 stateFolder:SetAttribute("Phase", "Waiting")
 stateFolder:SetAttribute("PhaseEnds", 0)
 stateFolder:SetAttribute("Winner", "")
@@ -283,6 +286,7 @@ local boxes = {}    -- set of box records
 local byPart = {}   -- part -> record
 local carrying = {} -- player -> record
 local nextSpawnAt = 0
+local v1 = { round = 1, endsAt = 0, lastTotal = 0, resetting = false } -- v4.2: 1v1 round state
 
 local function setPhase(name, duration)
 	phase = name
@@ -796,6 +800,42 @@ local function respawn(p)
 	task.spawn(function() pcall(function() p:LoadCharacter() end) end)
 end
 
+-- ===================== v4.2: 1v1 rounds =====================
+-- Each round is C.V1.RoundTime (90 s). A kill, a death or the timer ends it: after ResetDelay both players are respawned on their own
+-- sides (DeathServer brings back whoever died, we reload whoever is still alive). The kills (= rounds won) add up to KillsToWin.
+local function v1Publish(live)
+	stateFolder:SetAttribute("Round", v1.round)
+	stateFolder:SetAttribute("RoundLive", live)
+	stateFolder:SetAttribute("RoundEnds", live and (workspace:GetServerTimeNow() + math.max(v1.endsAt - os.clock(), 0)) or 0)
+end
+local function v1StartClock()
+	v1.endsAt = os.clock() + C.V1.RoundTime
+	v1.lastTotal = teamKills(TEAM_A) + teamKills(TEAM_B)
+	v1.resetting = false
+	v1Publish(true)
+end
+local function v1Reset(text)
+	if v1.resetting then return end
+	v1.resetting = true
+	v1Publish(false)
+	notify(text, Color3.new(1, 1, 1))
+	task.delay(C.V1.ResetDelay, function()
+		if phase ~= "Playing" then return end
+		v1.round += 1
+		notify("ROUND " .. v1.round, Color3.new(1, 1, 1))
+		for _, tn in { TEAM_A, TEAM_B } do
+			for _, p in teamObjs[tn]:GetPlayers() do
+				local h = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+				if h and h.Health > 0 then respawn(p) end -- (a dead player is respawned by DeathServer at the same moment)
+			end
+		end
+		v1Publish(false)
+		task.wait(C.REVEAL_TIME + 0.6) -- both players are frozen + untouchable while their bodies are rebuilt
+		if phase ~= "Playing" then return end
+		v1StartClock()
+	end)
+end
+
 local function assignTeams()
 	if Roster.Reserved then -- teams come from the lobby matchmaker, never random
 		local seated = {}
@@ -841,6 +881,10 @@ end
 local function beginPlay()
 	setFrozen(false)
 	setPhase("Playing", 0)
+	if ONE_V_ONE then
+		v1.round = 1
+		v1StartClock()
+	end
 	if not ONE_V_ONE then
 		for _ = 1, BOX.StartPerSide do spawnPair() end
 		nextSpawnAt = os.clock() + BOX.SpawnInterval
@@ -972,7 +1016,21 @@ RunService.Heartbeat:Connect(function(dt)
 			local ka, kb = teamKills(TEAM_A), teamKills(TEAM_B)
 			stateFolder:SetAttribute("KillsA", ka)
 			stateFolder:SetAttribute("KillsB", kb)
-			if ka >= C.V1.KillsToWin then endRound(TEAM_A) elseif kb >= C.V1.KillsToWin then endRound(TEAM_B) end
+			if ka >= C.V1.KillsToWin then endRound(TEAM_A)
+			elseif kb >= C.V1.KillsToWin then endRound(TEAM_B)
+			elseif not v1.resetting then
+				local over, timeUp = ka + kb ~= v1.lastTotal, false -- somebody got a kill
+				if not over and os.clock() >= v1.endsAt then over, timeUp = true, true end
+				if not over then
+					for _, tn in { TEAM_A, TEAM_B } do
+						for _, p in teamObjs[tn]:GetPlayers() do
+							local h = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+							if h and h.Health <= 0 then over = true end -- somebody died (fall, own gadget...)
+						end
+					end
+				end
+				if over then v1Reset(timeUp and "TIME UP" or "ROUND OVER") end
+			end
 		end
 		return
 	end
