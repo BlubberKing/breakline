@@ -748,6 +748,25 @@ local function runWarp(token)
 			commonFwd = (toWall:Dot(axis) >= 0) and axis or -axis
 		end
 	end
+	-- v4.2: the run direction comes from the spawn pads (my team's pads -> the other team's pads). It works with or without a wall,
+	-- so the 1v1 run-in (no wall) heads straight for the enemy side instead of running sideways.
+	do
+		local wf = workspace:FindFirstChild("WallPush")
+		local mine, theirs, nm, nt = Vector3.zero, Vector3.zero, 0, 0
+		if wf and player.Team then
+			for _, sp in wf:GetChildren() do
+				if sp:IsA("SpawnLocation") and sp.Name ~= "LobbySpawn" then
+					if sp.Name == player.Team.Name .. "Spawn" then mine += sp.Position nm += 1
+					elseif sp.Name:match("Spawn$") then theirs += sp.Position nt += 1 end
+				end
+			end
+		end
+		if nm > 0 and nt > 0 then
+			local d = theirs / nt - mine / nm
+			d = Vector3.new(d.X, 0, d.Z)
+			if d.Magnitude > 1 then commonFwd = d.Unit end
+		end
+	end
 	-- keep the run inside the map: stop short of anything solid + visible behind the spawn line
 	local backParams = RaycastParams.new()
 	backParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -852,7 +871,10 @@ local function runWarp(token)
 	-- 4) v4.1: straight back to the normal first-person view with NO flash (you are already standing on your spot, looking at the wall)
 	if not waitUntil(C.WARP_TIME - 0.05) then return end
 	renderFns.warp = nil
+	local lastCF = camera.CFrame
 	restoreWorld()
+	camera.CFrame = lastCF -- v4.2: hand the camera back looking exactly where the run-in ended (no snap / turn)
+	game:GetService("UserInputService").MouseDeltaSensitivity = 1
 	flash.BackgroundTransparency = 1
 end
 
