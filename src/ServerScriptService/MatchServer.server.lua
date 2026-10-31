@@ -1,4 +1,8 @@
--- MatchServer v2: Wall Push main mode (GDD 2.1). Server-authoritative.
+-- MatchServer v3 (v4.1: 1v1 mode, death screen hand-off, revive spawns). Wall Push main mode (GDD 2.1). Server-authoritative.
+-- v4.1 MODES: the MapBounds part has a CHILD that says which mode this map is: a child NAMED "Breakline" or "1v1" (any instance type), or a
+--   StringValue / TextLabel inside it whose Value / Text is "Breakline" / "1v1", or the attribute Mode on MapBounds. No child = Breakline.
+--   1v1 = one player per team (Red vs Blue), no wall, no boxes, first to MatchConfig.V1.KillsToWin (5) kills wins the round.
+--   MatchState attributes: Mode, KillsA, KillsB, KillsToWin.
 -- It builds ONLY the gameplay pieces and fits them inside YOUR part named "MapBounds" (Workspace):
 --   * invisible boundary walls + ceiling   * the 2 finish lines   * 6 invisible team spawn pads
 --   * the middle wall with 3 box holes per side   * the boxes
@@ -56,6 +60,32 @@ else
 	bCF, bSize = p.CFrame, p.Size
 end
 local MAP_W, MAP_H, MAP_L = bSize.X, bSize.Y, bSize.Z -- width (X), height (Y), length (Z)
+
+-- v4.1: which mode is this map? (see the header)
+local MODE = "Breakline"
+do
+	local function parse(v)
+		local n = string.lower(tostring(v or "")):gsub("[%s_%-]", "")
+		if n == "1v1" or n == "onevone" or n == "oneonone" or n == "1on1" or n == "duel" then return "1v1" end
+		if n == "breakline" or n == "wallpush" then return "Breakline" end
+		return nil
+	end
+	local m
+	if bounds then
+		m = parse(bounds:GetAttribute("Mode"))
+		if not m then
+			for _, ch in bounds:GetDescendants() do
+				m = parse(ch.Name)
+				if not m and ch:IsA("StringValue") then m = parse(ch.Value) end
+				if not m and (ch:IsA("TextLabel") or ch:IsA("TextButton") or ch:IsA("TextBox")) then m = parse(ch.Text) end
+				if m then break end
+			end
+		end
+	end
+	MODE = m or "Breakline"
+	print("[MatchServer] mode: " .. MODE)
+end
+local ONE_V_ONE = MODE == "1v1"
 local _, yaw = bCF:ToOrientation()
 -- "origin": ground level at the center of MapBounds. Everything below is built in this local space (X across, Y up, Z = length).
 local origin = CFrame.new(bCF.Position.X, bCF.Position.Y - MAP_H / 2 + M.GroundOffset, bCF.Position.Z) * CFrame.Angles(0, yaw, 0)
@@ -79,6 +109,10 @@ remotes.Parent = RS
 
 local stateFolder = Instance.new("Folder")
 stateFolder.Name = "MatchState"
+stateFolder:SetAttribute("Mode", MODE)
+stateFolder:SetAttribute("KillsA", 0)
+stateFolder:SetAttribute("KillsB", 0)
+stateFolder:SetAttribute("KillsToWin", C.V1.KillsToWin)
 stateFolder:SetAttribute("Phase", "Waiting")
 stateFolder:SetAttribute("PhaseEnds", 0)
 stateFolder:SetAttribute("Winner", "")
@@ -122,7 +156,7 @@ lobbyTeam.TeamColor = lobbyColor
 lobbyTeam.AutoAssignable = false
 lobbyTeam.Parent = Teams
 
-Players.RespawnTime = C.RESPAWN_TIME
+Players.RespawnTime = 600 -- v4.1: automatic respawn is effectively OFF, DeathServer calls LoadCharacter when the death timer ends
 
 -- ===================== generated pieces (all fitted to MapBounds) =====================
 local mapFolder = workspace:FindFirstChild("WallPush")
@@ -213,7 +247,7 @@ end
 -- the wall: one transparent slab, a neon top edge, and 3 "indents" (frame + dark back plate) per side
 local wallParts, wallBase = {}, {}
 local WALL_H = math.min(MAP_H, M.WallHeightMax)
-do
+if not ONE_V_ONE then
 	local function wp(part)
 		noPhysics(part) -- players + bullets pass through
 		table.insert(wallParts, part)
@@ -268,6 +302,15 @@ do
 	end)
 end
 
+-- v4.1 (1v1): kills per team. Counted from the players' StatKills attribute (GunServer + GadgetServer add to it), so no new hook is needed.
+local function teamKills(team)
+	local n = 0
+	for _, p in Players:GetPlayers() do
+		if p.Team and p.Team.Name == team then n += (p:GetAttribute("StatKills") or 0) end
+	end
+	return n
+end
+
 local function notify(text, color)
 	NotifyRemote:FireAllClients(text, color or Color3.new(1, 1, 1))
 end
@@ -281,6 +324,8 @@ local function resetStats()
 		p:SetAttribute("StatKills", 0); p:SetAttribute("StatDamage", 0)
 		p:SetAttribute("StatPlugged", 0); p:SetAttribute("StatDestroyed", 0)
 	end
+	stateFolder:SetAttribute("KillsA", 0)
+	stateFolder:SetAttribute("KillsB", 0)
 end
 
 -- world CFrame of a hole's box position
@@ -308,6 +353,7 @@ local function nearestHoleFor(team, pos)
 end
 
 local function moveWall()
+	if #wallParts == 0 then return end -- (1v1 maps have no wall)
 	local off = CFrame.new(0, 0, wallZ)
 	local cfs = table.create(#wallParts)
 	for i = 1, #wallParts do cfs[i] = origin * off * wallBase[i] end
@@ -707,8 +753,10 @@ local function buildReward(p, outcome)
 	elseif outcome == "loss" then add("DEFEAT", nil, R.Loss)
 	else add("DRAW", nil, R.Draw) end
 	add("KILLS", tostring(kills), 1 + kills * R.PerKill)
-	add("BOXES PLUGGED", tostring(plugged), 1 + plugged * R.PerPlugged)
-	add("BOXES DESTROYED", tostring(destroyed), 1 + destroyed * R.PerDestroyed)
+	if not ONE_V_ONE then -- (no boxes in a 1v1)
+		add("BOXES PLUGGED", tostring(plugged), 1 + plugged * R.PerPlugged)
+		add("BOXES DESTROYED", tostring(destroyed), 1 + destroyed * R.PerDestroyed)
+	end
 	add("DAMAGE", tostring(math.floor(dmg)), 1 + math.floor(dmg / 1000) * R.PerThousandDamage)
 	-- v3.8: XP (player level). One number; the summary screen fills the XP bar with it while the stat rows are revealed.
 	local X = C.XP
@@ -748,9 +796,15 @@ end
 
 local function assignTeams()
 	if Roster.Reserved then -- teams come from the lobby matchmaker, never random
+		local seated = {}
 		for _, p in Players:GetPlayers() do
 			local t = Roster.TeamOf(p.UserId)
-			p.Team = (t and teamObjs[t]) or lobbyTeam
+			if t and teamObjs[t] and (not ONE_V_ONE or not seated[t]) then -- v4.1: a 1v1 map seats ONE player per team, the others spectate from the lobby team
+				seated[t] = true
+				p.Team = teamObjs[t]
+			else
+				p.Team = lobbyTeam
+			end
 		end
 		return
 	end
@@ -759,8 +813,9 @@ local function assignTeams()
 		local j = rnd:NextInteger(1, i)
 		list[i], list[j] = list[j], list[i]
 	end
+	local cap = ONE_V_ONE and 2 or 6
 	for i, p in list do
-		if i <= 6 then p.Team = teamObjs[i % 2 == 1 and TEAM_A or TEAM_B] else p.Team = lobbyTeam end
+		if i <= cap then p.Team = teamObjs[i % 2 == 1 and TEAM_A or TEAM_B] else p.Team = lobbyTeam end
 	end
 end
 
@@ -784,8 +839,10 @@ end
 local function beginPlay()
 	setFrozen(false)
 	setPhase("Playing", 0)
-	for _ = 1, BOX.StartPerSide do spawnPair() end
-	nextSpawnAt = os.clock() + BOX.SpawnInterval
+	if not ONE_V_ONE then
+		for _ = 1, BOX.StartPerSide do spawnPair() end
+		nextSpawnAt = os.clock() + BOX.SpawnInterval
+	end
 end
 
 local function resetToLobby()
@@ -825,9 +882,15 @@ local function onCharacter(player, char)
 	do -- put Red / Blue players on their own finish line
 		local root = char:WaitForChild("HumanoidRootPart", 10)
 		local tn = player.Team and player.Team.Name
+		local rezCF = player:GetAttribute("RezCF") -- v4.1: revived by a teammate: appear where your soul was
 		if root and tn and teamObjs[tn] and tn ~= "Lobby" and char.Parent then
-			char:PivotTo(teamSpawnCF(player, tn))
+			if typeof(rezCF) == "CFrame" and phase == "Playing" then
+				char:PivotTo(rezCF)
+			else
+				char:PivotTo(teamSpawnCF(player, tn))
+			end
 		end
+		if rezCF ~= nil then player:SetAttribute("RezCF", nil) end
 		if root and (phase == "Warp" or phase == "Countdown") then root.Anchored = true end -- frozen until the countdown ends
 		-- v3.8: respawning in the middle of a round: you are frozen + untouchable while souls reveal your body bottom-up (RespawnReveal client)
 		if root and char.Parent and phase == "Playing" then
@@ -835,9 +898,14 @@ local function onCharacter(player, char)
 			ff.Visible = false
 			ff.Parent = char
 			root.Anchored = true
+			local build = player:GetAttribute("RevealBuild") or C.REVEAL_BUILD
+			player:SetAttribute("RevealBuild", nil)
 			char:SetAttribute("RevealStart", workspace:GetServerTimeNow())
+			char:SetAttribute("RevealBuild", build)
+			char:SetAttribute("RevealFrom", player:GetAttribute("RevealFrom") or 0) -- a revive starts the reveal already mostly built
+			player:SetAttribute("RevealFrom", nil)
 			char:SetAttribute("Revealing", true)
-			task.delay(C.REVEAL_TIME, function()
+			task.delay(build + C.REVEAL_DIVE, function()
 				if ff.Parent then ff:Destroy() end
 				if not char.Parent then return end
 				char:SetAttribute("Revealing", false)
@@ -871,7 +939,7 @@ local function onPlayer(player)
 	elseif phase == "Playing" then -- late joiner: fill the smaller team if there is room
 		local a, b = #teamObjs[TEAM_A]:GetPlayers(), #teamObjs[TEAM_B]:GetPlayers()
 		local pick = a <= b and TEAM_A or TEAM_B
-		if math.min(a, b) < 3 then player.Team = teamObjs[pick] end
+		if math.min(a, b) < (ONE_V_ONE and 1 or 3) then player.Team = teamObjs[pick] end
 	end
 	player.CharacterAdded:Connect(function(char) onCharacter(player, char) end)
 	player.CharacterRemoving:Connect(function()
@@ -890,9 +958,22 @@ end)
 
 -- ===================== main simulation =====================
 local barTimer, publishTimer = 0, 0
+local killTimer = 0
 RunService.Heartbeat:Connect(function(dt)
 	if phase ~= "Playing" then return end
 	local now = os.clock()
+
+	if ONE_V_ONE then -- v4.1: first to KillsToWin kills wins; no wall, no boxes
+		killTimer += dt
+		if killTimer >= 0.1 then
+			killTimer = 0
+			local ka, kb = teamKills(TEAM_A), teamKills(TEAM_B)
+			stateFolder:SetAttribute("KillsA", ka)
+			stateFolder:SetAttribute("KillsB", kb)
+			if ka >= C.V1.KillsToWin then endRound(TEAM_A) elseif kb >= C.V1.KillsToWin then endRound(TEAM_B) end
+		end
+		return
+	end
 
 	-- wall: moves toward the finish line of the team with FEWER plugged boxes
 	local nA, nB = countPlugged(TEAM_A), countPlugged(TEAM_B)
@@ -1006,7 +1087,7 @@ end)
 
 local function enough()
 	if Roster.Reserved then return Roster.Ready() end
-	return #Players:GetPlayers() >= C.MIN_PLAYERS
+	return #Players:GetPlayers() >= (ONE_V_ONE and C.V1.MinPlayers or C.MIN_PLAYERS)
 end
 
 -- ===================== loading + pre-game + summary handlers =====================
@@ -1061,7 +1142,7 @@ end)
 local function publishLoad()
 	stateFolder:SetAttribute("Present", #Players:GetPlayers())
 	stateFolder:SetAttribute("Ready", readyCount())
-	stateFolder:SetAttribute("Expected", Roster.Reserved and math.max(Roster.Total, #Players:GetPlayers()) or math.max(C.MIN_PLAYERS, #Players:GetPlayers()))
+	stateFolder:SetAttribute("Expected", Roster.Reserved and math.max(Roster.Total, #Players:GetPlayers()) or math.max(ONE_V_ONE and C.V1.MinPlayers or C.MIN_PLAYERS, #Players:GetPlayers()))
 end
 
 task.spawn(function()
