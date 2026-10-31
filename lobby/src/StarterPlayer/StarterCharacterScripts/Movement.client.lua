@@ -492,7 +492,7 @@ local stepConn = RunService.Stepped:Connect(function(_, dt)
 	if crouchHeld and UIS:IsKeyDown(Enum.KeyCode.LeftShift) and flat(hum.MoveDirection).Magnitude > 0.1 and not blocked then
 		crouchHeld = false -- pressing sprint cancels crouch (also cancels toggle-crouch)
 	end
-	local wantCrouch = (mode == "none" or mode == "slideout") and g and (crouchHeld or blocked)
+	local wantCrouch = (mode == "none" or mode == "slideout") and g and (crouchHeld or blocked or char:GetAttribute("Reviving") == true) -- v4.1: kneeling to revive a teammate
 	if wantCrouch ~= crouching then
 		crouching = wantCrouch
 		char:SetAttribute("Crouching", crouching)
