@@ -83,6 +83,8 @@ do
 		end
 	end
 	MODE = m or "Breakline"
+	if Roster.Reserved and Roster.Mode == "1v1" then MODE = "1v1" end -- v4.2: the lobby queue decides the mode
+	if Roster.Reserved and Roster.Mode == "Breakline" then MODE = "Breakline" end
 	print("[MatchServer] mode: " .. MODE)
 end
 local ONE_V_ONE = MODE == "1v1"
