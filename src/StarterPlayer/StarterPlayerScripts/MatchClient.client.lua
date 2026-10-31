@@ -134,12 +134,20 @@ local function teamColor()
 	return player.Team and player.Team.TeamColor.Color or ACCENT
 end
 
+local function clampKills(x) return math.clamp(x, -1, 1) end
 local function refresh()
 	local phase = State:GetAttribute("Phase")
 	local ends = State:GetAttribute("PhaseEnds") or 0
-	scoreA.Text = tostring(State:GetAttribute("BoxesA") or 0)
-	scoreB.Text = tostring(State:GetAttribute("BoxesB") or 0)
-	marker.Position = UDim2.fromScale(0.5 + 0.5 * (State:GetAttribute("WallFrac") or 0), 0.5)
+	if State:GetAttribute("Mode") == "1v1" then -- v4.1: first to N kills. The bar fills toward whoever leads; the numbers are kills.
+		local ka, kb, need = State:GetAttribute("KillsA") or 0, State:GetAttribute("KillsB") or 0, State:GetAttribute("KillsToWin") or 5
+		scoreA.Text, scoreB.Text = tostring(ka), tostring(kb)
+		nameA.Text, nameB.Text = NAME_A:upper() .. " KILLS", NAME_B:upper() .. " KILLS"
+		marker.Position = UDim2.fromScale(0.5 + 0.5 * clampKills((kb - ka) / math.max(need, 1)), 0.5)
+	else
+		scoreA.Text = tostring(State:GetAttribute("BoxesA") or 0)
+		scoreB.Text = tostring(State:GetAttribute("BoxesB") or 0)
+		marker.Position = UDim2.fromScale(0.5 + 0.5 * (State:GetAttribute("WallFrac") or 0), 0.5)
+	end
 
 	if phase == "Waiting" then
 		timerLabel.Text = "WAITING FOR PLAYERS"
@@ -153,7 +161,7 @@ local function refresh()
 		timerLabel.Text = "MATCH OVER"
 	elseif phase == "Playing" then
 		local t = player.Team and player.Team.Name
-		timerLabel.Text = t and t:upper() or "SPECTATING"
+		timerLabel.Text = t and (t:upper() .. (State:GetAttribute("Mode") == "1v1" and "  -  FIRST TO " .. tostring(State:GetAttribute("KillsToWin") or 5) or "")) or "SPECTATING"
 		timerLabel.TextColor3 = t and teamColor() or Color3.new(1, 1, 1)
 	elseif phase == "Result" or phase == "SlowMo" then
 		local w = State:GetAttribute("Winner")
