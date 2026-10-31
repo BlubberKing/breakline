@@ -141,6 +141,14 @@ local lastTargetPos
 local camPos, camYaw, camPitch = nil, 0, 0
 local switchCooldown = 0
 local deathChar -- the body we died in (for the starting camera)
+local hiddenParts, shownChar = {}, nil -- v4.2: parts of the spectated body we hid for ourselves
+local function restoreBody()
+	for d in hiddenParts do
+		if d.Parent then d.LocalTransparencyModifier = 0 end
+	end
+	table.clear(hiddenParts)
+	shownChar = nil
+end
 
 local function myTeamName() return player.Team and player.Team.Name or nil end
 local function isAlivePlayer(p)
@@ -255,12 +263,18 @@ local function camStep(dt)
 			roam.pos = camPos
 			local px, py = camera.CFrame:ToEulerAnglesYXZ()
 			roam.yaw, roam.pitch = py, px
-			-- their head would fill the screen: hide it (and anything worn on it) for us
+			-- v4.2: we sit INSIDE their body, so hide all of it (head, torso, arms, legs, hair, hats...) and only leave the gun they hold,
+			-- like a real first-person view. Done every frame so newly added parts (accessories, a reloaded gun) are hidden too.
+			if shownChar ~= char then restoreBody(); shownChar = char end
 			for _, d in char:GetDescendants() do
-				if d:IsA("BasePart") and (d.Name == "Head" or d:FindFirstAncestorOfClass("Accessory")) then d.LocalTransparencyModifier = 1 end
+				if d:IsA("BasePart") and not d:FindFirstAncestor("TPGun") then
+					d.LocalTransparencyModifier = 1
+					hiddenParts[d] = true
+				end
 			end
 		end
 	else
+		if shownChar then restoreBody() end
 		if roam.fresh then
 			roam.fresh = false
 			local startPos = (lastTargetPos and lastTargetPos + Vector3.new(0, 3, 0)) or camera.CFrame.Position
@@ -334,6 +348,7 @@ RunService.RenderStepped:Connect(function(dt)
 		gui.Enabled = false
 		pcall(function() RunService:UnbindFromRenderStep(BIND) end)
 		target = nil
+		restoreBody()
 		-- RespawnReveal takes the camera when the new body appears. If that never happens (round ended), hand it back.
 		task.delay(3, function()
 			if active or player:GetAttribute("IsDead") == true then return end
