@@ -323,7 +323,13 @@ local MODES = {
 		desc = "Two teams, one moving wall. Carry boxes to your side's holes and plug them in: the team with more plugged boxes pushes the wall toward the enemy. Shoot enemy boxes to break them. Push the wall onto their finish line to win.",
 		facts = { "Red vs Blue, 3 players per team", "Carry boxes: hold E, plug them into your holes", "Break the other team's boxes with your gun", "Wall reaches a finish line = round over" },
 	},
+	{
+		id = "1v1", name = "1V1", tag = "DUEL  //  FIRST TO 5",
+		desc = "One player against one player. No wall, no boxes, no souls. Win gunfights, use your gadgets and be the first to reach 5 kills. After a death you sit out a few seconds and watch your opponent.",
+		facts = { "Red vs Blue, one player each", "First to 5 kills wins the round", "No boxes, no souls, no revives", "Solo only: leave your party to queue" },
+	},
 }
+local function modeById(id) for _, m in MODES do if m.id == id then return m end end return MODES[1] end
 local selectedMode = "breakline"
 
 local loadout = { Weapon = Catalog.DefaultWeapon, Move = "", Gadgets = { "", "", "" }, Reserve = { "", "", "" } }
@@ -1165,7 +1171,7 @@ Players.PlayerAdded:Connect(function() if view == "invite" then rebuildInvite() 
 Players.PlayerRemoving:Connect(function() if view == "invite" then task.defer(rebuildInvite) end end)
 
 -- ----- game mode graphic: flat top-down map (red end, wall with holes, blue end) -----
-local function modeGraphic(parent)
+local function modeGraphic(parent, duel)
 	local g = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(12, 13, 17), BorderSizePixel = 0, ClipsDescendants = true }, parent)
 	for i = 1, 7 do -- faint grid
 		new("Frame", { Position = UDim2.fromScale(i / 8, 0), Size = UDim2.new(0, 1, 1, 0), BackgroundColor3 = C.line, BackgroundTransparency = 0.5, BorderSizePixel = 0 }, g)
@@ -1177,6 +1183,14 @@ local function modeGraphic(parent)
 	end
 	zone(0, C.red, true)
 	zone(0.86, C.blue, false)
+	if duel then -- 1v1: no wall, just two dots facing each other
+		for _, d in { { 0.24, C.red }, { 0.76, C.blue } } do
+			local dot = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(d[1], 0.5), Size = UDim2.fromOffset(16, 16), BackgroundColor3 = d[2], BorderSizePixel = 0 }, g)
+			border(dot, C.text, 1, 0.5)
+		end
+		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(0.4, 0, 0, 2), BackgroundColor3 = C.dim, BackgroundTransparency = 0.5, BorderSizePixel = 0 }, g)
+		return g
+	end
 	-- the wall (slightly toward blue = red is pushing) with 3 holes per side
 	new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.58, 0.06), Size = UDim2.new(0, 3, 0.88, 0), BackgroundColor3 = C.text, BorderSizePixel = 0 }, g)
 	for i = 1, 3 do
@@ -1204,7 +1218,7 @@ local modeV = views.mode
 viewHeader(modeV, "GAME MODE", "CHOOSE WHAT YOU QUEUE FOR")
 local modeArt = frame(modeV, 32, 124, 600, 450, C.panel, 0)
 border(modeArt, C.line, 1)
-modeGraphic(modeArt)
+local modeArtG = modeGraphic(modeArt)
 local mTitle = lbl(modeV, "", 72, 668, 112, 640, 84, C.text, "H")
 local mTag = lbl(modeV, "", 13, 671, 196, 640, 16, C.redHi, "MB")
 local mDesc = lbl(modeV, "", 16, 670, 228, 640, 110, C.dim, "B")
@@ -1212,9 +1226,12 @@ mDesc.TextWrapped, mDesc.TextYAlignment = true, Enum.TextYAlignment.Top
 local mFacts = new("Frame", { Position = UDim2.fromOffset(670, 350), Size = UDim2.fromOffset(640, 180), BackgroundTransparency = 1 }, modeV)
 local mSelect = button(modeV, "SELECT", 670, 518, 260, 56, "primary", 24)
 local modeShown = MODES[1]
-local modeCardSel -- forward (bottom-left card refresh)
+local modeCardSel = function() end -- forward (bottom-left card refresh)
+local refreshQueue -- forward (defined near the PLAY block)
 local function openMode(m)
 	modeShown = m
+	modeArtG:Destroy()
+	modeArtG = modeGraphic(modeArt, m.id == "1v1")
 	mTitle.Text, mTag.Text, mDesc.Text = m.name, m.tag, m.desc
 	for _, c in mFacts:GetChildren() do c:Destroy() end
 	for i, f in m.facts do
@@ -1228,6 +1245,7 @@ end
 mSelect.MouseButton1Click:Connect(function()
 	selectedMode = modeShown.id
 	if modeCardSel then modeCardSel() end
+	if refreshQueue then pcall(refreshQueue) end
 	setView("home")
 end)
 
@@ -1264,36 +1282,34 @@ lbl(modeTab, ("%d / %d"):format(#MODES, #MODES + #LOCKED_MODES), 11, TAB_W - 118
 frame(modeTab, 18, 52, TAB_W - 36, 1, C.line, 0)
 
 local MODE_PAD, LIVE_H, LOCK_GAP = 12, 178, 10
-local LOCK_H = math.floor((TAB_H - 66 - LIVE_H - LOCK_GAP - MODE_PAD - LOCK_GAP * (#LOCKED_MODES - 1)) / #LOCKED_MODES)
-local modeCard = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BorderSizePixel = 0,
-	Position = UDim2.fromOffset(MODE_PAD, 66), Size = UDim2.fromOffset(TAB_W - MODE_PAD * 2, LIVE_H), ZIndex = 6 }, modeTab)
-do
+local LOCK_H = math.floor((TAB_H - 66 - #MODES * (LIVE_H + LOCK_GAP) - MODE_PAD - LOCK_GAP * (#LOCKED_MODES - 1)) / #LOCKED_MODES)
+local cardRefresh = {}
+for mi, m in MODES do
+	local cy = 66 + (mi - 1) * (LIVE_H + LOCK_GAP)
+	local card = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BorderSizePixel = 0,
+		Position = UDim2.fromOffset(MODE_PAD, cy), Size = UDim2.fromOffset(TAB_W - MODE_PAD * 2, LIVE_H), ZIndex = 6 }, modeTab)
 	local w = TAB_W - MODE_PAD * 2
-	local st = border(modeCard, C.red, 1)
-	hoverable(modeCard, C.panel, C.panel2, st, C.red, C.redHi)
-	frame(modeCard, 0, 0, 3, LIVE_H, C.red, 0)
-	local th = frame(modeCard, 3, 0, w - 3, 92, C.panel, 0)
-	modeGraphic(th)
-	local tag = frame(modeCard, w - 82, 8, 74, 18, C.red, 0)
+	local st = border(card, C.red, 1)
+	hoverable(card, C.panel, C.panel2, st, C.red, C.redHi)
+	frame(card, 0, 0, 3, LIVE_H, C.red, 0)
+	local th = frame(card, 3, 0, w - 3, 92, C.panel, 0)
+	modeGraphic(th, m.id == "1v1")
+	local tag = frame(card, w - 82, 8, 74, 18, C.red, 0)
 	tag.ZIndex = 3
 	lbl(tag, "SELECTED", 10, 0, 0, 74, 18, C.text, "MB", Enum.TextXAlignment.Center)
-	local nm = lbl(modeCard, "", 30, 16, 98, w - 50, 40, C.text, "H")
-	local tg = lbl(modeCard, "", 11, 17, 138, w - 50, 14, C.dim, "M")
-	lbl(modeCard, "MODE INFO", 10, 17, 156, 120, 14, C.mute, "MB")
-	chevron(modeCard, w - 24, 118, 8, C.dim, 2)
-	function modeCardSel()
-		for _, m in MODES do
-			if m.id == selectedMode then nm.Text, tg.Text = m.name, m.tag end
-		end
-		tag.Visible = true
-	end
-	modeCardSel()
-	modeCard.MouseButton1Click:Connect(function()
-		if view == "mode" then setView("home") return end
-		for _, m in MODES do if m.id == selectedMode then openMode(m) end end
+	lbl(card, m.name, 30, 16, 98, w - 50, 40, C.text, "H")
+	lbl(card, m.tag, 11, 17, 138, w - 50, 14, C.dim, "M")
+	lbl(card, "MODE INFO", 10, 17, 156, 120, 14, C.mute, "MB")
+	chevron(card, w - 24, 118, 8, C.dim, 2)
+	table.insert(cardRefresh, function() tag.Visible = (selectedMode == m.id) end)
+	card.MouseButton1Click:Connect(function()
+		if view == "mode" and modeShown == m then setView("home") return end
+		openMode(m)
 	end)
-	grow(modeCard, 1.03)
+	grow(card, 1.03)
 end
+modeCardSel = function() for _, f in cardRefresh do f() end end
+modeCardSel()
 for i, m in LOCKED_MODES do
 	local y = 66 + LIVE_H + LOCK_GAP + (i - 1) * (LOCK_H + LOCK_GAP)
 	local w = TAB_W - MODE_PAD * 2
@@ -1397,11 +1413,12 @@ lbl(stage, "SKINS", 10, CL_X, BY + BH + 6, CIRCLE, 14, C.mute, "MB", Enum.TextXA
 lbl(stage, "INVITE", 10, RIGHT - CIRCLE, BY + BH + 6, CIRCLE, 14, C.mute, "MB", Enum.TextXAlignment.Center).ZIndex = 5
 
 local function fmtTime(s) return ("%d:%02d"):format(math.floor(s / 60), s % 60) end
-local function refreshQueue()
+refreshQueue = function()
 	local q, tp = player:GetAttribute("Queued"), player:GetAttribute("Teleporting")
 	local list, leader = partyInfo()
 	local iLead = (leader == player.UserId)
-	local mode = MODES[1]
+	local mode = modeById(selectedMode)
+	local size = (mode.id == "1v1") and "1V1" or "3V3"
 	if tp then
 		startMain.Text, startSub.Text = "DEPLOYING", "JOINING MATCH..."
 		startPaint("wait")
@@ -1413,7 +1430,7 @@ local function refreshQueue()
 		startMain.Text, startSub.Text = "WAITING", "ONLY THE LEADER CAN START"
 		startPaint("wait")
 	else
-		startMain.Text, startSub.Text = "PLAY", mode.name .. (#list > 1 and ("  //  PARTY OF " .. #list) or "  //  3V3")
+		startMain.Text, startSub.Text = "PLAY", mode.name .. (#list > 1 and ("  //  PARTY OF " .. #list) or ("  //  " .. size))
 		startPaint("go")
 	end
 	hudStatus.Text = tp and "JOINING MATCH..." or (q and ("SEARCHING FOR PLAYERS  " .. fmtTime(math.max(0, os.time() - (player:GetAttribute("QueuedAt") or os.time())))) or "")
@@ -1427,7 +1444,7 @@ local function refreshQueue()
 		homePaint("cancel")
 		homeQueueBar.Visible, homeQueueEdge.Transparency = true, 0
 	else
-		homeMain.Text, homeSub.Text = "PLAY", "BREAKLINE  //  3V3"
+		homeMain.Text, homeSub.Text = "PLAY", mode.name .. "  //  " .. size
 		homePaint("go")
 		homeQueueBar.Visible, homeQueueEdge.Transparency = false, 1
 	end
@@ -1436,7 +1453,7 @@ startBtn.MouseButton1Click:Connect(function()
 	if player:GetAttribute("Teleporting") then return end
 	local _, leader = partyInfo()
 	if leader ~= player.UserId and not player:GetAttribute("Queued") then say("Only the party leader can start the search.") return end
-	QueueR:FireServer(not player:GetAttribute("Queued"))
+	QueueR:FireServer(not player:GetAttribute("Queued"), selectedMode)
 end)
 
 local squadQueued = false
