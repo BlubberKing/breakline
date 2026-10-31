@@ -262,6 +262,9 @@ local function update(st, dt, t, isLocal)
 	st.ikL.SmoothTime = smooth
 	st.ikR.SmoothTime = cbox and 0.06 or 0
 	st.ikL.Weight = 1 - 0.9 * st.mantle
+	if st.char:GetAttribute("AbilityMode") == "climb" then -- v4.0: wall climb: both hands are free (AbilityPose animates the arms), the gun hangs at the hip
+		st.ikR.Weight, st.ikL.Weight = 0, 0
+	end
 
 	local magOffGun = t.reloading and phase >= 0.36 and phase < 0.7
 	for _, p in ipairs(st.magParts) do p.Transparency = magOffGun and 1 or 0 end
