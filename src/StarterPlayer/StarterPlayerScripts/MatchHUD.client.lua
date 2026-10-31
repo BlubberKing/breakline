@@ -231,15 +231,25 @@ local function buildSlots()
 		local ok, t = pcall(function() return HttpService:JSONDecode(raw) end)
 		if ok and type(t) == "table" then lo = t end
 	end
-	for i = 1, 3 do
-		local x = gx - i * (SLOT + 12)
-		local s = makeSlot(x, SLOT, tostring(i + 1))
-		local id = type(lo.Gadgets) == "table" and lo.Gadgets[4 - i] or ""
+	for idx = 1, 3 do -- v4.0: left to right = gadget 1, 2, 3 (keys 2, 3, 4), then the gun (key 1); real gadgets now: icon + charges + cooldown
+		local x = gx - (4 - idx) * (SLOT + 12)
+		local s = makeSlot(x, SLOT, tostring(idx + 1))
+		local id = type(lo.Gadgets) == "table" and lo.Gadgets[idx] or ""
 		local item = Catalog and Catalog.ById[id]
 		if item then
-			text(s.frame, item.glyph, 24, 0, 0, SLOT, SLOT, F_BOLD, Enum.TextXAlignment.Center, DIM)
-			local soon = text(s.frame, "SOON", 10, 0, SLOT - 16, SLOT, 14, F_MED, Enum.TextXAlignment.Center, DIM)
-			soon.TextTransparency = 0.3
+			s.glyph = text(s.frame, item.glyph, 24, 0, 8, SLOT, SLOT - 16, F_BOLD, Enum.TextXAlignment.Center, WHITE)
+			s.name = text(s.frame, string.upper(item.name), 9, 0, SLOT - 17, SLOT, 12, F_MED, Enum.TextXAlignment.Center, DIM)
+			s.count = text(s.frame, "", 16, SLOT - 30, 4, 26, 18, F_BOLD, Enum.TextXAlignment.Right, WHITE)
+			s.cd = rect(s.frame, 0, 0, SLOT, SLOT, Color3.new(0, 0, 0), 0.45)
+			s.cd.Size = UDim2.fromOffset(SLOT, 0)
+			s.cd.AnchorPoint = Vector2.new(0, 1)
+			s.cd.Position = UDim2.fromOffset(0, SLOT)
+			s.cd.ZIndex = 5
+			s.cdText = text(s.frame, "", 22, 0, 0, SLOT, SLOT, F_BOLD, Enum.TextXAlignment.Center, WHITE)
+			s.cdText.ZIndex = 6
+			s.idx = idx
+			s.frame.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
+			s.frame.BackgroundTransparency = 0.35
 		else
 			s.border.Transparency = 0.85
 		end
@@ -284,9 +294,37 @@ refreshAmmo()
 -- ================= per-frame: health + squad + hide while carrying =================
 local acc = 0
 local clock = 0
+local function updateGadgetSlots()
+	local t = workspace:GetServerTimeNow()
+	for _, s in gadgetSlots do
+		if s.idx then
+			local i = s.idx
+			local count = player:GetAttribute("GadCount" .. i) or 0
+			local max = player:GetAttribute("GadMax" .. i) or 0
+			local ready = player:GetAttribute("GadReady" .. i) or 0
+			local nxt = player:GetAttribute("GadNext" .. i) or 0
+			local usable = count > 0 and t >= ready
+			s.count.Text = max > 0 and tostring(count) or ""
+			s.count.TextColor3 = count > 0 and WHITE or RED
+			s.glyph.TextColor3 = usable and WHITE or DIM
+			s.border.Transparency = usable and 0.3 or 0.75
+			local frac, label = 0, ""
+			if count <= 0 and nxt > t then
+				local left = nxt - t
+				frac, label = 1, tostring(math.ceil(left))
+			elseif t < ready then
+				frac, label = math.clamp((ready - t) / 1.5, 0, 1), ""
+			end
+			s.cd.Size = UDim2.fromOffset(SLOT, math.floor(SLOT * frac))
+			s.cdText.Text = label
+		end
+	end
+end
+
 RunService.Heartbeat:Connect(function(dt)
 	clock += dt
 	meTick_(dt)
+	updateGadgetSlots()
 	for _, r in mateRows do if r.tick then r.tick(dt) end end
 	acc += dt
 	if acc < 0.05 then return end
