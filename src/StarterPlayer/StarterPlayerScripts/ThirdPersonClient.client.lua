@@ -39,8 +39,8 @@ local CFG = {
 	BOB = 0.03,
 	STRIDE_TWIST_DEG = 3.2, -- slim body: a little hip/shoulder counter-twist while running (reads as a longer stride)
 	TURN_LAG_DEG = 1.2, TURN_LAG_MAX = 7,
-	SLIDE_LEAN = 20,    -- v4.1: body leans BACK while sliding (positive = back); MoveAnim now poses the legs + arms, so this is a bit less than before (25)
-	CROUCH_LEAN = 8,
+	SLIDE_LEAN = 0,     -- v4.1: body leans BACK while sliding (positive = back); MoveAnim now poses the legs + arms, so this is a bit less than before (25)
+	CROUCH_LEAN = 0,
 }
 
 local Weapons = require(RS:WaitForChild("WeaponConfig"))
