@@ -29,6 +29,7 @@ local PromoteR, SetLoadoutR, SetSkinR = remotes:WaitForChild("Promote"), remotes
 local Catalog = require(RS:WaitForChild("LobbyCatalog"))
 local Skins = require(RS:WaitForChild("Skins"))
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
+local GM = RS:FindFirstChild("GadgetModels") and require(RS.GadgetModels) or nil -- v4.1: real gadget pictures (new ModuleScript, copy of Breakline's)
 local UI = require(RS:WaitForChild("UIKit")) -- v5.2: shared logo (copy of Breakline's UIKit)
 
 -- ================= theme =================
@@ -294,6 +295,10 @@ end
 local function itemPicture(parent, item, glyphSize)
 	if item.kind == "weapon" and GunModels then
 		gunPicture(parent, item.id)
+		return
+	end
+	if item.kind == "gadget" and GM then -- v4.1: the real model, like the guns
+		GM.Picture(parent, item.id)
 		return
 	end
 	if item.kind == "move" and item.icon then -- v3.8: drawn ability graphic
