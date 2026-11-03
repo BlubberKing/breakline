@@ -107,6 +107,7 @@ local ThrowRemote, DropRemote, NotifyRemote = remote("Throw"), remote("Drop"), r
 local BoxBreakRemote, SoulRemote = remote("BoxBreak"), remote("SoulFX") -- client-side effects: box destroyed / player died
 local ClientReadyRemote, PregameLoadoutRemote = remote("ClientReady"), remote("PregameLoadout") -- client -> server: finished loading / loadout change
 local ResultRemote, ContinueRemote = remote("MatchResult"), remote("Continue")                  -- server -> client: souls breakdown / client -> server: back to lobby
+local CardPickRemote = remote("CardPick") -- v4.3: client -> server: which of the 3 rolled cards you picked (1 / 2 / 3)
 remotes.Parent = RS
 
 local stateFolder = Instance.new("Folder")
@@ -892,6 +893,11 @@ local function beginPlay()
 end
 
 local function resetToLobby()
+	for _, p in Players:GetPlayers() do -- v4.3: the picked card only lasts one match
+		p:SetAttribute("CardOffer", nil)
+		p:SetAttribute("CardPick", nil)
+		p:SetAttribute("MatchCard", nil)
+	end
 	clearBoxes()
 	wallZ = 0
 	moveWall()
@@ -937,7 +943,7 @@ local function onCharacter(player, char)
 			end
 		end
 		if rezCF ~= nil then player:SetAttribute("RezCF", nil) end
-		if root and (phase == "Warp" or phase == "Countdown") then root.Anchored = true end -- frozen until the countdown ends
+		if root and (phase == "Warp" or phase == "Cards" or phase == "Countdown") then root.Anchored = true end -- frozen until the countdown ends (v4.3: + the card pick)
 		-- v3.8: respawning in the middle of a round: you are frozen + untouchable while souls reveal your body bottom-up (RespawnReveal client)
 		if root and char.Parent and phase == "Playing" then
 			local ff = Instance.new("ForceField")
@@ -955,7 +961,7 @@ local function onCharacter(player, char)
 				if ff.Parent then ff:Destroy() end
 				if not char.Parent then return end
 				char:SetAttribute("Revealing", false)
-				local still = phase == "Warp" or phase == "Countdown" or phase == "Pregame" -- a new round started meanwhile: the round code owns the freeze
+				local still = phase == "Warp" or phase == "Cards" or phase == "Countdown" or phase == "Pregame" -- a new round started meanwhile: the round code owns the freeze
 				if root.Parent and not still then root.Anchored = false end
 			end)
 		end
@@ -981,7 +987,7 @@ local function onPlayer(player)
 	player.Team = lobbyTeam
 	if Roster.Reserved then -- rejoin: back on the roster team
 		local t = Roster.TeamOf(player.UserId)
-		if (phase == "Playing" or phase == "Pregame" or phase == "Warp" or phase == "Countdown") and t and teamObjs[t] then player.Team = teamObjs[t] end
+		if (phase == "Playing" or phase == "Pregame" or phase == "Warp" or phase == "Cards" or phase == "Countdown") and t and teamObjs[t] then player.Team = teamObjs[t] end
 	elseif phase == "Playing" then -- late joiner: fill the smaller team if there is room
 		local a, b = #teamObjs[TEAM_A]:GetPlayers(), #teamObjs[TEAM_B]:GetPlayers()
 		local pick = a <= b and TEAM_A or TEAM_B
@@ -1192,6 +1198,67 @@ PregameLoadoutRemote.OnServerEvent:Connect(function(player, l)
 	end
 end)
 
+-- ===================== v4.3: power-up cards (GDD section 4) =====================
+-- After the Warp cutscene: phase "Cards". Every player on a team gets 3 cards drawn from THEIR 32-card deck (profile key "Deck",
+-- built in the lobby CARD INDEX; an invalid / empty deck falls back to Cards.DefaultDeck). Clients play the slot-machine roll
+-- (CardRoll), then have C.CARD_PICK seconds to pick one. No pick = the middle card. The pick is published as the Player
+-- attribute "MatchCard" (card id) for the HUD. Placeholder cards: nothing reads MatchCard for gameplay yet.
+local Cards = require(RS:WaitForChild("Cards"))
+local cardOffers, cardPicked = {}, {}
+local cardsStart = 0
+local function deckOf(p)
+	local col = Cards.Collection(Profiles.Get(p, "Cards"))
+	return Cards.Clean(Profiles.Get(p, "Deck"), col) or Cards.DefaultDeck(col)
+end
+local function setPick(p, i)
+	local offer = cardOffers[p]
+	if not offer or cardPicked[p] then return end
+	cardPicked[p] = i
+	p:SetAttribute("CardPick", i)
+	p:SetAttribute("MatchCard", offer[i])
+end
+local function beginCards()
+	table.clear(cardOffers)
+	table.clear(cardPicked)
+	cardsStart = workspace:GetServerTimeNow()
+	for _, p in Players:GetPlayers() do
+		p:SetAttribute("CardPick", nil)
+		p:SetAttribute("MatchCard", nil)
+		p:SetAttribute("CardOffer", nil)
+		if p.Team and p.Team ~= lobbyTeam then
+			local deck = deckOf(p)
+			local order = {}
+			for i = 1, #deck do order[i] = i end
+			for i = #order, 2, -1 do -- shuffle the deck slots, take the first 3 (3 different slots; duplicates in the deck can still show twice)
+				local j = math.random(1, i)
+				order[i], order[j] = order[j], order[i]
+			end
+			local offer = { deck[order[1]], deck[order[2]], deck[order[3]] }
+			cardOffers[p] = offer
+			p:SetAttribute("CardOffer", HttpService:JSONEncode({ t = cardsStart, cards = offer, deck = deck })) -- deck = filler cards for the spinning reels
+		end
+	end
+	setPhase("Cards", C.CARD_REVEAL + C.CARD_PICK)
+end
+local function allPicked()
+	for p in cardOffers do
+		if p.Parent and not cardPicked[p] then return false end
+	end
+	return true
+end
+local function finishCards()
+	for p in cardOffers do
+		if p.Parent and not cardPicked[p] then setPick(p, 2) end -- nobody picked: the middle card
+	end
+end
+CardPickRemote.OnServerEvent:Connect(function(player, i)
+	if phase ~= "Cards" then return end
+	if i ~= 1 and i ~= 2 and i ~= 3 then return end
+	if workspace:GetServerTimeNow() < cardsStart + C.CARD_REVEAL - 0.6 then return end -- the reels are still rolling
+	setPick(player, i)
+end)
+Players.PlayerRemoving:Connect(function(p) cardOffers[p], cardPicked[p] = nil, nil end)
+
 ContinueRemote.OnServerEvent:Connect(function(player)
 	if phase ~= "Summary" or continued[player] then return end
 	continued[player] = true
@@ -1237,6 +1304,15 @@ task.spawn(function()
 			-- ===== Warp cutscene (everyone respawned + frozen) =====
 			beginWarp()
 			task.wait(C.WARP_TIME)
+			-- ===== v4.3: card roll + pick (everyone still frozen on their spawn) =====
+			beginCards()
+			local c0 = os.clock()
+			while os.clock() - c0 < C.CARD_REVEAL + C.CARD_PICK do
+				task.wait(0.1)
+				if os.clock() - c0 > C.CARD_REVEAL + 0.8 and allPicked() then break end -- everybody locked in: no need to wait
+			end
+			finishCards()
+			task.wait(C.CARD_OUTRO) -- the picked card flies to the HUD
 			setPhase("Countdown", C.COUNTDOWN_TIME)
 			task.wait(C.COUNTDOWN_TIME)
 			beginPlay()
