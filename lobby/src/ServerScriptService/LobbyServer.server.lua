@@ -98,7 +98,45 @@ SetSkinR.OnServerEvent:Connect(function(player, id)
 	Profiles.Set(player, "Skin", id)
 end)
 
-Players.PlayerRemoving:Connect(function(p) lastLoadout[p] = nil lastSkin[p] = nil end)
+-- ===== cards (v4.3: CARD INDEX) =====
+-- Collection (owned copies) + the 32-card deck, saved in the shared profile as "Cards" / "Deck". Breakline rolls 3 cards from "Deck".
+-- The client gets them as JSON attributes (CardsJson, DeckJson). A deck is only saved when it passes Cards.Validate
+-- (exactly 32, max 4 copies, only copies you own), so the saved deck is always playable.
+local Cards = require(RS:WaitForChild("Cards"))
+local lobbyRemotes = RS:WaitForChild("LobbyRemotes")
+local SetDeckR = lobbyRemotes:FindFirstChild("SetDeck") or Instance.new("RemoteEvent")
+SetDeckR.Name = "SetDeck"
+SetDeckR.Parent = lobbyRemotes
+local lastDeck = {}
+local function publishCards(p)
+	local col = Cards.Collection(Profiles.Get(p, "Cards"))
+	local deck = Cards.Clean(Profiles.Get(p, "Deck"), col) or Cards.DefaultDeck(col)
+	p:SetAttribute("CardsJson", HttpService:JSONEncode(col))
+	p:SetAttribute("DeckJson", HttpService:JSONEncode(deck))
+end
+local function cardsOnJoin(p)
+	task.spawn(function()
+		if Profiles.WaitFor(p) then publishCards(p) end
+	end)
+end
+Players.PlayerAdded:Connect(cardsOnJoin)
+for _, p in Players:GetPlayers() do cardsOnJoin(p) end
+SetDeckR.OnServerEvent:Connect(function(player, deck)
+	if os.clock() - (lastDeck[player] or 0) < 0.3 then return end
+	lastDeck[player] = os.clock()
+	if not Profiles.Get(player, "Loadout") then return end -- profile not loaded yet
+	local col = Cards.Collection(Profiles.Get(player, "Cards"))
+	local clean = Cards.Clean(deck, col)
+	if clean then
+		Profiles.Set(player, "Deck", clean)
+	else
+		local _, why = Cards.Validate(deck, col)
+		Party.Notice(player, "Deck not saved: " .. tostring(why or "invalid deck"))
+	end
+	publishCards(player) -- the client always ends up showing what is really saved
+end)
+
+Players.PlayerRemoving:Connect(function(p) lastLoadout[p] = nil lastSkin[p] = nil lastDeck[p] = nil end)
 
 -- ===== queue remote =====
 QueueR.OnServerEvent:Connect(function(player, on, modeId)
