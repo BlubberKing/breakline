@@ -190,6 +190,7 @@ local function refresh()
 	if phase == "Waiting" then main = "WAITING FOR PLAYERS"
 	elseif phase == "Pregame" then main = "PREPARING"
 	elseif phase == "Warp" then main = "DEPLOYING"
+	elseif phase == "Cards" then main = "CHOOSE YOUR CARD"
 	elseif phase == "Countdown" then main = "GET READY"
 	elseif phase == "Summary" then main = "MATCH OVER"
 	elseif phase == "Playing" then
