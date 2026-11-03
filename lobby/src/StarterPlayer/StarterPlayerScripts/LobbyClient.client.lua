@@ -1,3 +1,4 @@
+-- LobbyClient v5.4 (v4.3: CARD INDEX buttons - home HUD above PLAY + play screen top bar; they open the CardIndex LocalScript)
 -- LobbyClient v5.3 (v3.8/v3.9: play-block queue indicator, static skin poses, LobbyMenuOpen flag, ability icons, no souls bullet) "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
 -- v5.2 (GDD v3.7): new slim logo from UIKit (flowing red slash), idle moves only on the squad stage, invite popup no longer
 -- peeks in at the top of the screen on non-16:9 windows (it is hidden, not just parked above the canvas).
@@ -228,6 +229,46 @@ local function circleButton(parent, cx, cy, d)
 	grow(b, 1.08)
 	return b, st, function(on) active = on paint() end
 end
+
+-- ================= v4.3: CARD INDEX button =================
+-- Opens the card index page (CardIndex LocalScript) by setting the Player attribute CardIndexOpen. Shows the deck count (DeckJson).
+-- Three fanned mini cards on the left, CARD INDEX + DECK n / 32 in the middle, chevron on the right.
+local function cardFanIcon(parent, cx, cy, s)
+	for i, rot in { -16, 0, 16 } do
+		local c = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(cx + (i - 2) * s * 0.34, cy + s * 0.62), Size = UDim2.fromOffset(s * 0.62, s * 0.86),
+			Rotation = rot, BackgroundColor3 = (i == 2) and C.red or C.panel3, BorderSizePixel = 0 }, parent)
+		border(c, (i == 2) and C.redHi or C.line2, 1)
+		if i == 2 then
+			new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.42), Size = UDim2.fromOffset(s * 0.2, s * 0.2), Rotation = 45,
+				BackgroundColor3 = WHITE, BorderSizePixel = 0 }, c)
+		end
+	end
+end
+local cardBtnSubs = {}
+local function deckCountText()
+	local ok, d = pcall(function() return HttpService:JSONDecode(player:GetAttribute("DeckJson") or "[]") end)
+	local n = (ok and type(d) == "table") and #d or 0
+	return ("DECK  %d / 32"):format(n)
+end
+local function cardIndexButton(parent, x, y, w, h)
+	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BackgroundTransparency = 0.08, BorderSizePixel = 0,
+		Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h) }, parent)
+	local st = border(b, C.line, 1)
+	hoverable(b, C.panel, C.panel2, st, C.line, C.red)
+	frame(b, 0, 0, 3, h, C.red, 0)
+	cardFanIcon(b, 34, h / 2, math.floor(h * 0.62))
+	lbl(b, "CARD INDEX", math.floor(h * 0.42), 66, math.floor(h * 0.08), w - 110, math.floor(h * 0.5), C.text, "H")
+	local sub = lbl(b, deckCountText(), 11, 67, math.floor(h * 0.6), w - 110, 14, C.dim, "M")
+	table.insert(cardBtnSubs, sub)
+	chevron(b, w - 30, h / 2 - 8, 8, C.dim, 2)
+	grow(b, 1.03)
+	b.MouseButton1Click:Connect(function() player:SetAttribute("CardIndexOpen", true) end)
+	return b
+end
+player:GetAttributeChangedSignal("DeckJson"):Connect(function()
+	local t = deckCountText()
+	for _, l in cardBtnSubs do l.Text = t end
+end)
 
 -- ================= logo: BREAK / LINE (v5.2: UIKit logo) =================
 -- Slim, spaced condensed type; the red slash between the words has a light flowing down it. Same logo as the loading screens.
@@ -473,6 +514,7 @@ local homePlus = circleButton(hudC, RIGHT - CIRCLE / 2, BY + BH / 2, CIRCLE)
 plusIcon(homePlus, 24, C.text)
 -- v3.9: the searching text sits right ABOVE the PLAY block, centred on it (it used to float too far right of the button)
 local hudStatus = lbl(hudC, "", 16, PLAY_X - 60, BY - 40, PLAY_W + 120, 24, C.text, "HM", Enum.TextXAlignment.Center)
+cardIndexButton(hudC, CL_X, BY - 112, CL_W, 58) -- v4.3: CARD INDEX (above the searching text + PLAY)
 
 -- ================= play screen =================
 local screen = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.void, BorderSizePixel = 0, Visible = false,
@@ -690,6 +732,7 @@ end
 -- ----- top bar -----
 makeLogo(stage, 56, 34, 44).ZIndex = 5
 soulsWidget(stage, 1712, 38).ZIndex = 5
+cardIndexButton(stage, 1236, 32, 250, 52).ZIndex = 5 -- v4.3: CARD INDEX in the top bar (left of the souls)
 local closeBtn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(1752, 40),
 	Size = UDim2.fromOffset(112, 36), ZIndex = 5 }, stage)
 local closeLbl = keyHint(closeBtn, "ESC", "BACK", 0, 6)
@@ -1587,6 +1630,7 @@ end)
 
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe or UIS:GetFocusedTextBox() then return end
+	if player:GetAttribute("CardIndexOpen") then return end -- v4.3: the card index handles its own keys
 	if input.KeyCode == Enum.KeyCode.Tab then
 		toggleSkins()
 	elseif input.KeyCode == Enum.KeyCode.Escape then
