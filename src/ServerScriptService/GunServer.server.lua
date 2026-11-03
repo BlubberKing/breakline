@@ -146,7 +146,7 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 			or ch:GetAttribute("Reviving") == true or player:GetAttribute("CarryingSoul") == true) then return end
 	end
 	local ph = MatchState and MatchState:GetAttribute("Phase")
-	if ph == "Waiting" or ph == "Pregame" or ph == "Warp" or ph == "Countdown" or ph == "Summary" then return end
+	if ph == "Waiting" or ph == "Pregame" or ph == "Warp" or ph == "Cards" or ph == "Countdown" or ph == "Summary" then return end
 	local cfg = Weapons.Get(weapon)
 	if typeof(origin) ~= "Vector3" or type(shots) ~= "table" then return end
 	if #shots < 1 or #shots > cfg.Pellets then return end
