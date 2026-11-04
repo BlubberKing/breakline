@@ -32,7 +32,7 @@ G.Items = {
 	},
 	SENTRY = {
 		name = "Sentry", kind = "place", charges = 1, recharge = 80, cooldown = 1.5, speed = 46,
-		health = 170, life = 36, range = 62, rpm = 540, damage = 7, spread = 2.2, turn = 9, armTime = 0.9,
+		health = 170, life = 36, range = 62, rpm = 480, damage = 3.5, spread = 2.4, turn = 9, armTime = 0.9,
 		projSize = 1.3, projColor = Color3.fromRGB(90, 190, 255),
 	},
 	SHIELD = {
