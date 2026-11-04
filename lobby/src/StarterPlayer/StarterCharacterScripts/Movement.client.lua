@@ -1,4 +1,5 @@
--- Movement v3.1 (v3.8: stands down while AbilityMode is set): crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
+-- Movement v3.2 (v4.6: jumps and falls NEVER bleed horizontal speed - no air drag, takeoff speed is kept until you steer or brake; softer fall gravity; lower crouch hip height to match the new half-kneel pose)
+-- (v3.1) (v3.8: stands down while AbilityMode is set): crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
 -- momentum slide (keeps speed on flat, gains downhill, loses a little uphill), slide-out blend, mantle,
 -- momentum jumps (low + snappy, keep your run speed in the air, limited air steering).
 local Players = game:GetService("Players")
@@ -37,18 +38,18 @@ local CFG = {
 
 	-- jump + air (Roblox default jump height is 7.2 = tall and floaty)
 	JUMP_HEIGHT         = 4.6,  -- studs; ledges higher than this are reached with mantle
-	FALL_GRAVITY_MULT   = 1.4,  -- extra gravity on the way down only = snappy, not springy
-	SPRINT_JUMP_BOOST   = 2.5,  -- extra forward speed when jumping at sprint speed
+	FALL_GRAVITY_MULT   = 1.25, -- extra gravity on the way down only (was 1.4; softer so the arc does not look like it drops out from under you)
+	SPRINT_JUMP_BOOST   = 3,  -- extra forward speed when jumping at sprint speed
 	SPRINT_JUMP_FROM    = 24,   -- need at least this speed for the boost
 	AIR_MAX_SPEED       = 62,
 	AIR_ACCEL           = 40,   -- speed gained per second when slower than your run speed
-	AIR_DRAG            = 3,    -- speed lost per second when faster than your run speed (low = keeps momentum)
+	AIR_DRAG            = 0,    -- v4.6: 0 = no speed is lost in the air, whatever you do (was 3: you slowly bled speed after take-off)
 	AIR_TURN            = 3.2,  -- how fast you can steer in the air (rad/s)
 	AIR_BRAKE           = 45,   -- pressing backwards in the air slows you down this fast
 
 	-- crouch
 	CROUCH_TOGGLE       = false, -- false = hold C, true = tap C to toggle
-	CROUCH_HIP_FACTOR   = 0.6,
+	CROUCH_HIP_FACTOR   = 0.52, -- (was 0.6) matches the deeper half-kneel pose in MoveAnim
 	CAM_CROUCH_DROP     = -0.2,
 
 	MANTLE_MIN_H      = 1.4,  -- ledge height above feet (in air)
@@ -197,6 +198,7 @@ local slideDir, slideSpeed, slideTime, slideAir, slideStuck = Vector3.zero, 0, 0
 local slideReadyAt, slideQueuedAt = 0, -1
 local slideFlatTime = 0
 local airV, airT, airStuck = Vector3.zero, 0, 0
+local airKeep = 0
 local mantleData, mantleReadyAt = nil, 0
 local lastJumpReq, lastLedgeCheck = -1, 0
 local wasGrounded = true
@@ -273,6 +275,7 @@ end
 local function startAir(v)
 	airV, airT, airStuck = flat(v), 0, 0
 	if airV.Magnitude > CFG.AIR_MAX_SPEED then airV = airV.Unit * CFG.AIR_MAX_SPEED end
+	airKeep = airV.Magnitude -- v4.6: the speed you left the ground with; steering never lowers it (only braking backwards or hitting a wall does)
 	mode = "air"
 	drivePlanar(airV)
 end
@@ -345,7 +348,7 @@ local function updateAir(dt)
 	-- hit a wall: lose the momentum into it instead of sticking to it
 	local actual = hvel()
 	if airT > 0.08 and airV.Magnitude > 4 and actual.Magnitude < airV.Magnitude * 0.5 then airStuck += dt else airStuck = 0 end
-	if airStuck > 0.05 then airV, airStuck = actual, 0 end
+	if airStuck > 0.05 then airV, airStuck = actual, 0 airKeep = math.min(airKeep, actual.Magnitude) end -- hit a wall: the kept speed goes too
 
 	local speed = airV.Magnitude
 	local dir = speed > 0.5 and airV / speed or nil
@@ -359,12 +362,14 @@ local function updateAir(dt)
 			local angle = math.acos(clamp(dir:Dot(target), -1, 1))
 			if angle > math.rad(135) then -- pressing backwards: brake
 				speed = math.max(speed - CFG.AIR_BRAKE * dt, 0)
+				airKeep = math.min(airKeep, speed)
 			elseif angle > 1e-3 then
 				dir = dir:Lerp(target, math.min(1, CFG.AIR_TURN * dt / angle)).Unit
 			end
 		end
-		if speed < runSpeed then speed = math.min(speed + CFG.AIR_ACCEL * dt, runSpeed)
-		else speed = math.max(speed - CFG.AIR_DRAG * dt, runSpeed) end
+		local floorSpeed = math.max(runSpeed, airKeep) -- v4.6: keep the take-off speed (letting go of sprint in the air no longer slows you down)
+		if speed < floorSpeed then speed = math.min(speed + CFG.AIR_ACCEL * dt, floorSpeed)
+		else speed = math.max(speed - CFG.AIR_DRAG * dt, floorSpeed) end
 	else
 		speed = math.max(speed - CFG.AIR_DRAG * dt, 0) -- no input: keep drifting with your momentum
 	end
