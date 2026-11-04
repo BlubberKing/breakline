@@ -2,17 +2,18 @@
 -- v4.3: draws a Breakline power-up card out of plain GUI frames (no uploaded images needed).
 --   CardArt.Build(parent, cardId, opts) -> holder, api
 --       opts.width    = card width in pixels (height is width * 1.4). Default 250.
---       opts.anim     = false turns the moving bits off (shine, embers, rays, stripes). Default true.
+--       opts.anim     = false turns the moving bits off (embers, rays, stripes, twinkles). Default true.
 --       opts.position / opts.anchor = holder Position / AnchorPoint
 --     api.card (the 250 x 350 card frame, scaled), api.rarity, api.setGlow(on, color)
 --   CardArt.W, CardArt.H = 250, 350 (design size; everything is drawn at this size and scaled with a UIScale)
 -- Look: hand-inked illustrations (wobbly double-pass strokes, cross-hatching, watercolour washes that sit a little off the lines,
 -- burnt paper edges) inside a frame that gets fancier with rarity:
---   COMMON grey paper | UNCOMMON green + vine curls | RARE blue + double frame, gem, line texture, shine
+--   COMMON grey paper | UNCOMMON green + vine curls | RARE blue + double frame, gem, line texture
 --   LEGENDARY gold + sunburst, corner brackets, sparkles | MYTHIC red + flames, rising embers, pulsing glow
 --   DIVINE purple + turning light rays, prism edge, stars | SIGNATURE black / white op-art stripes, red slash, holo foil, split ink art
 -- Every stroke is placed with a random generator seeded by the card id, so a card always looks exactly the same.
 local TweenService = game:GetService("TweenService")
+local TextService = game:GetService("TextService")
 local Cards = require(script.Parent:WaitForChild("Cards"))
 
 local A = {}
@@ -35,6 +36,28 @@ local function stroke(o, col, th, tr)
 	return new("UIStroke", { Color = col, Thickness = th or 1, Transparency = tr or 0, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, o)
 end
 local function loop(o, info, goal) local t = TweenService:Create(o, info, goal) t:Play() return t end
+
+-- v4.4: text that scales WITH the card. TextScaled + UITextSizeConstraint worked in real pixels, so the 16 px cap never grew when the card was
+-- shown big (inspect screen) and the description stayed tiny. Instead we measure at the 250 x 350 design size, pick the biggest TextSize that
+-- fits, and let the card's UIScale scale the plain TextSize (so it grows and shrinks exactly like the rest of the card).
+local fitCache = {}
+local function fitText(label, text, font, maxSize, minSize, w, h, wrapped)
+	local key = text .. "|" .. maxSize .. "|" .. w .. "|" .. h .. "|" .. tostring(wrapped)
+	label.TextScaled = false
+	if fitCache[key] then label.TextSize = fitCache[key] return end
+	local size = minSize
+	for s = maxSize, minSize, -1 do
+		local ok, b = pcall(function()
+			local gp = Instance.new("GetTextBoundsParams")
+			gp.Text, gp.Font, gp.Size, gp.Width = text, font, s, wrapped and w or 10000
+			return TextService:GetTextBoundsAsync(gp)
+		end)
+		if not ok then size = math.min(maxSize, 14) break end
+		if b.X <= w + 0.5 and b.Y <= h + 0.5 then size = s break end
+	end
+	fitCache[key] = size
+	label.TextSize = size
+end
 
 local function pickFont(list, fallback)
 	for _, name in list do
@@ -1357,8 +1380,8 @@ function A.Build(parent, id, opts)
 	local nameCol = rank >= 4 and R.light or rgb(244, 240, 232)
 	if sig then nameCol = WHITE end
 	local nm = new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 3), Size = UDim2.fromOffset(206, 28), Text = string.upper(c.name),
-		FontFace = F.name, TextColor3 = nameCol, TextScaled = true }, plate)
-	new("UITextSizeConstraint", { MaxTextSize = 23, MinTextSize = 10 }, nm)
+		FontFace = F.name, TextColor3 = nameCol }, plate)
+	fitText(nm, nm.Text, F.name, 23, 10, 204, 28, false)
 
 	-- ===== description =====
 	local box = new("Frame", { Position = UDim2.fromOffset(16, 230), Size = UDim2.fromOffset(218, 76), BackgroundColor3 = sig and rgb(246, 246, 244) or rgb(242, 234, 215),
@@ -1366,8 +1389,8 @@ function A.Build(parent, id, opts)
 	corner(box, 3)
 	stroke(box, INK, 1.2, 0.35)
 	local ds = new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(9, 5), Size = UDim2.fromOffset(200, 66), Text = c.desc,
-		FontFace = F.hand, TextColor3 = rgb(46, 36, 30), TextWrapped = true, TextScaled = true }, box)
-	new("UITextSizeConstraint", { MaxTextSize = 16, MinTextSize = 8 }, ds)
+		FontFace = F.hand, TextColor3 = rgb(46, 36, 30), TextWrapped = true }, box)
+	fitText(ds, c.desc, F.hand, 16, 8, 196, 64, true)
 
 	-- ===== rarity footer =====
 	local rt = spaced(R.name)
@@ -1413,19 +1436,7 @@ function A.Build(parent, id, opts)
 			ColorSequenceKeypoint.new(0.75, rgb(120, 170, 255)), ColorSequenceKeypoint.new(1, rgb(230, 130, 255)) }) }, foil)
 		if anim then loop(fg, TweenInfo.new(4.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Offset = Vector2.new(0.6, 0) }) end
 	end
-	if rank >= 3 then
-		local shine = new("Frame", { Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(244, 344), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, card)
-		corner(shine, 8)
-		local peak = rank >= 4 and 0.55 or 0.72
-		local sg = new("UIGradient", { Rotation = 25, Offset = Vector2.new(-1, 0), Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.4, 1), NumberSequenceKeypoint.new(0.5, peak), NumberSequenceKeypoint.new(0.6, 1),
-			NumberSequenceKeypoint.new(1, 1) }) }, shine)
-		if anim then
-			loop(sg, TweenInfo.new(1.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, false, rank >= 4 and 2.2 or 4.5), { Offset = Vector2.new(1, 0) })
-		else
-			shine.Visible = false
-		end
-	end
+	-- (v4.4: the white shine sweep that crossed rare + higher cards every few seconds is gone)
 
 	-- selection glow (pickers + the roll screen)
 	local glowFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 14, 1, 14),
