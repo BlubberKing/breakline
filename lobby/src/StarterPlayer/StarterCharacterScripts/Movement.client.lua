@@ -1,4 +1,4 @@
--- Movement v3.2 (v4.6: jumps and falls NEVER bleed horizontal speed - no air drag, takeoff speed is kept until you steer or brake; softer fall gravity; lower crouch hip height to match the new half-kneel pose)
+-- Movement v3.3 (v4.7: stands down while DASH is active, then carries the dash speed into the air) (v3.2: v4.6: jumps and falls NEVER bleed horizontal speed - no air drag, takeoff speed is kept until you steer or brake; softer fall gravity; lower crouch hip height to match the new half-kneel pose)
 -- (v3.1) (v3.8: stands down while AbilityMode is set): crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
 -- momentum slide (keeps speed on flat, gains downhill, loses a little uphill), slide-out blend, mantle,
 -- momentum jumps (low + snappy, keep your run speed in the air, limited air steering).
@@ -454,10 +454,17 @@ local stateConn = hum.StateChanged:Connect(function(_, new)
 end)
 
 ------------------------------------------------------------------ main loop
+local wasDashing = false
 local stepConn = RunService.Stepped:Connect(function(_, dt)
 	if hum.Health <= 0 then return end
 	-- v3.8: AbilityClient owns the character while it wall-runs / wall-climbs: let go of everything and stand down
-	if char:GetAttribute("AbilityMode") ~= nil then
+	local dashingNow = char:GetAttribute("Dashing") == true -- v4.7: DASH (AbilityClient) owns the character for a split second
+	if wasDashing and not dashingNow and char:GetAttribute("AbilityMode") == nil and not grounded() then
+		wasDashing = false
+		startAir(hvel()) -- the dash ended in the air: keep its speed as air momentum
+	end
+	wasDashing = dashingNow
+	if char:GetAttribute("AbilityMode") ~= nil or dashingNow then
 		if mode ~= "none" then
 			if mode == "slide" then endSlide(false) end
 			release()
