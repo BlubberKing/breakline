@@ -1,4 +1,4 @@
--- CardIndex v1.1 (v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
+-- CardIndex v1.2 (v4.9: PERFORMANCE - only the cards on screen exist. Collection cells are filled when they scroll into view and emptied when they leave, card art comes from a shared template cache (CardArt) and the deck minis are built the same way, so hundreds of cards stay smooth even on a tablet) (was v1.1 v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
 -- (was v1.0) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.3 (GDD section 4.1).
 -- The CARD INDEX page: your card collection on the left, your 32-card DECK on the right.
 -- Opened by the CARD INDEX buttons in LobbyClient (they set the Player attribute CardIndexOpen = true). ESC / BACK closes it.
@@ -14,6 +14,7 @@ local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UIS = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local SetDeckR = RS:WaitForChild("LobbyRemotes"):WaitForChild("SetDeck")
@@ -317,34 +318,61 @@ local function smallSquare(parent, x, y, plus)
 	return b
 end
 
+-- v4.9: a cell is just an empty frame until it scrolls near the screen. fillCell builds its buttons + card art, emptyCell throws them away again.
 local function makeCell(c)
 	local R = Cards.RarityById[c.rarity]
 	local cell = new("Frame", { BackgroundTransparency = 1, LayoutOrder = c.order }, grid)
-	local btn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset((CELL_W - CARD_W) / 2, 6),
-		Size = UDim2.fromOffset(CARD_W, CARD_W * 1.4) }, cell)
-	grow(btn, 1.04)
-	local holderSlot = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, btn)
-	local y = CARD_W * 1.4 + 14
-	local minus = smallSquare(cell, (CELL_W - CARD_W) / 2, y, false)
-	local plus = smallSquare(cell, CELL_W - (CELL_W - CARD_W) / 2 - SQ, y, true)
-	local pips = {}
-	for i = 1, Cards.MAX_COPIES do
-		local p = frame(cell, CELL_W / 2 - 37 + (i - 1) * 20, y, 14, 14, C.panel, 0)
-		p.Rotation = 0
-		border(p, C.line2, 1)
-		pips[i] = p
-	end
-	local own = lbl(cell, "", 17, 36, y + 15, CELL_W - 72, 20, C.text, "H", Enum.TextXAlignment.Center) -- v4.4: only OWNED, bigger
-	local rec = { c = c, R = R, cell = cell, btn = btn, slot = holderSlot, pips = pips, own = own, built = false, minus = minus, plus = plus }
-	btn.MouseButton1Click:Connect(function() openInspect(c.id) end)
-	btn.MouseButton2Click:Connect(function() removeCard(c.id) end)
-	plus.MouseButton1Click:Connect(function() addCard(c.id) end)
-	minus.MouseButton1Click:Connect(function() if not removeCard(c.id) then say("That card is not in your deck.") end end)
+	local rec = { c = c, R = R, cell = cell, alive = false }
 	cells[c.id] = rec
 	return rec
 end
 
-local function paintCell(rec)
+local paintCell -- forward
+local function fillCell(rec)
+	if rec.alive then return end
+	rec.alive = true
+	local c, cell = rec.c, rec.cell
+	local content = new("Frame", { Name = "Content", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, cell)
+	local btn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset((CELL_W - CARD_W) / 2, 6),
+		Size = UDim2.fromOffset(CARD_W, CARD_W * 1.4) }, content)
+	grow(btn, 1.04)
+	local holderSlot = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, btn)
+	local y = CARD_W * 1.4 + 14
+	local minus = smallSquare(content, (CELL_W - CARD_W) / 2, y, false)
+	local plus = smallSquare(content, CELL_W - (CELL_W - CARD_W) / 2 - SQ, y, true)
+	local pips = {}
+	for i = 1, Cards.MAX_COPIES do
+		local p = frame(content, CELL_W / 2 - 37 + (i - 1) * 20, y, 14, 14, C.panel, 0)
+		p.Rotation = 0
+		border(p, C.line2, 1)
+		pips[i] = p
+	end
+	local own = lbl(content, "", 17, 36, y + 15, CELL_W - 72, 20, C.text, "H", Enum.TextXAlignment.Center) -- v4.4: only OWNED, bigger
+	rec.content, rec.btn, rec.slot, rec.pips, rec.own, rec.minus, rec.plus = content, btn, holderSlot, pips, own, minus, plus
+	btn.MouseButton1Click:Connect(function() openInspect(c.id) end)
+	btn.MouseButton2Click:Connect(function() removeCard(c.id) end)
+	plus.MouseButton1Click:Connect(function() addCard(c.id) end)
+	minus.MouseButton1Click:Connect(function() if not removeCard(c.id) then say("That card is not in your deck.") end end)
+	paintCell(rec)
+	-- the art comes from CardArt's template cache (a clone, not a rebuild); the first time a card is seen it is built once
+	rec.token = (rec.token or 0) + 1
+	local my = rec.token
+	task.spawn(function()
+		local holder = CardArt.Build(holderSlot, c.id, { width = CARD_W })
+		if not rec.alive or rec.token ~= my then holder:Destroy() end
+	end)
+end
+
+local function emptyCell(rec)
+	if not rec.alive then return end
+	rec.alive = false
+	rec.token = (rec.token or 0) + 1
+	if rec.content then rec.content:Destroy() end
+	rec.content, rec.btn, rec.slot, rec.pips, rec.own, rec.minus, rec.plus = nil, nil, nil, nil, nil, nil, nil
+end
+
+function paintCell(rec)
+	if not rec.alive then return end
 	local id = rec.c.id
 	local inDeck = Cards.Counts(draft)[id] or 0
 	local owned = collection[id] or 0
@@ -423,7 +451,7 @@ local undoBtn = button(deckP, "UNDO CHANGES", 20 + 188, DH - 58, 176, 42, "ghost
 local clearBtn = button(deckP, "CLEAR", 20 + 376, DH - 58, DW - 40 - 376, 42, "danger", 16)
 for _, b in { fillBtn, undoBtn, clearBtn } do grow(b, 1.04) end
 
-local miniCells = {} -- card id -> { cell, slot, pill, pillT, built }
+local miniCells = {} -- card id -> { id, cell, slot, pill, pillT, artOn, holder }
 local function miniCell(id)
 	local m = miniCells[id]
 	if m then return m end
@@ -446,7 +474,7 @@ local function miniCell(id)
 	btn.MouseButton1Click:Connect(function() openInspect(id) end)
 	btn.MouseButton2Click:Connect(function() removeCard(id) end)
 	mb.MouseButton1Click:Connect(function() removeCard(id) end)
-	m = { cell = cell, slot = slot, pill = pill, pillT = pillT, built = false }
+	m = { id = id, cell = cell, slot = slot, pill = pill, pillT = pillT, artOn = false }
 	miniCells[id] = m
 	return m
 end
@@ -461,11 +489,8 @@ local function paintDeckCards()
 		m.cell.Visible = true
 		m.cell.LayoutOrder = i
 		m.pillT.Text = "x" .. counts[id]
-		if not m.built then
-			m.built = true
-			task.spawn(CardArt.Build, m.slot, id, { width = MINI_W, anim = false }) -- built on first use (Build can yield while it measures text)
-		end
 	end
+	task.defer(updateMiniVisible) -- v4.9: the art of the minis is built / dropped by updateMiniVisible (only the ones on screen)
 	for id, m in miniCells do
 		if not seen[id] then m.cell.Visible = false end
 	end
@@ -702,36 +727,89 @@ function refreshAll()
 end
 
 local built = false
+
+-- v4.9: decide which collection cells are near the screen. Cells inside the window (plus one row of margin) are filled, the rest are emptied.
+local FILL_PER_TICK = 4
+local function updateVisible()
+	if not built then return end
+	local gy, gh = grid.AbsolutePosition.Y, grid.AbsoluteSize.Y
+	local filled = 0
+	for _, rec in cells do
+		local cell = rec.cell
+		local want = false
+		if cell.Visible then
+			local ch = cell.AbsoluteSize.Y
+			local top = cell.AbsolutePosition.Y
+			-- (a cell with no size yet = the layout has not run: wait for the next tick)
+			want = ch > 1 and top + ch > gy - ch * 1.2 and top < gy + gh + ch * 1.2
+		end
+		if want then
+			if not rec.alive and filled < FILL_PER_TICK then
+				fillCell(rec)
+				filled += 1
+			end
+		elseif rec.alive then
+			emptyCell(rec)
+		end
+	end
+	return filled
+end
+
+-- the deck list does the same for its mini cards
+local function updateMiniVisible()
+	if not built or not list then return end
+	local gy, gh = list.AbsolutePosition.Y, list.AbsoluteSize.Y
+	for _, m in miniCells do
+		if m.cell.Visible then
+			local ch = math.max(m.cell.AbsoluteSize.Y, 1)
+			local top = m.cell.AbsolutePosition.Y
+			local want = top + ch > gy - ch and top < gy + gh + ch
+			if want and not m.artOn then
+				m.artOn = true
+				m.token = (m.token or 0) + 1
+				local my = m.token
+				task.spawn(function()
+					local holder = CardArt.Build(m.slot, m.id, { width = MINI_W, anim = false })
+					if not m.artOn or m.token ~= my then holder:Destroy() else m.holder = holder end
+				end)
+			elseif not want and m.artOn then
+				m.artOn = false
+				m.token = (m.token or 0) + 1
+				if m.holder then m.holder:Destroy() m.holder = nil end
+			end
+		elseif m.artOn then
+			m.artOn = false
+			m.token = (m.token or 0) + 1
+			if m.holder then m.holder:Destroy() m.holder = nil end
+		end
+	end
+end
+
 local function buildGrid()
 	if built then return end
 	built = true
 	for _, c in Cards.List do makeCell(c) end
 	rebuildOrder()
 	refreshAll()
-	-- the card art is built a few cards per frame so opening the page never hitches
-	task.spawn(function()
-		local order = visibleOrder()
-		for i, e in order do
-			local rec = cells[e.id]
-			if rec and not rec.built then
-				rec.built = true
-				CardArt.Build(rec.slot, e.id, { width = CARD_W })
-			end
-			if i % 2 == 0 then task.wait() end
-		end
-		for id, rec in cells do
-			if not rec.built then
-				rec.built = true
-				CardArt.Build(rec.slot, id, { width = CARD_W })
-				task.wait()
-			end
-		end
-	end)
+	updateVisible()
+	updateMiniVisible()
 end
 
 -- ================= open / close =================
 local menuWasOpen = nil
 local isOpen = false
+-- v4.9: ten times a second, fill the cells that scrolled into view and empty the ones that left (cheap: a few hundred position reads)
+do
+	local acc = 0
+	RunService.Heartbeat:Connect(function(dt)
+		if not isOpen then return end
+		acc += dt
+		if acc < 0.1 then return end
+		acc = 0
+		updateVisible()
+		updateMiniVisible()
+	end)
+end
 local function open()
 	if isOpen then return end
 	isOpen = true
@@ -762,6 +840,13 @@ local function close(force)
 	end
 	isOpen = false
 	gui.Enabled = false
+	-- v4.9: nothing stays built while the page is closed (the template cache makes opening it again cheap)
+	for _, rec in cells do emptyCell(rec) end
+	for _, m in miniCells do
+		m.artOn = false
+		m.token = (m.token or 0) + 1
+		if m.holder then m.holder:Destroy() m.holder = nil end
+	end
 	player:SetAttribute("LobbyMenuOpen", menuWasOpen)
 	-- cleared a moment later, so the same ESC press is not also handled by LobbyClient (it ignores keys while CardIndexOpen is set)
 	task.delay(0.1, function()
