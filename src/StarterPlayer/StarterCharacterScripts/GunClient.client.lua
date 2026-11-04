@@ -31,7 +31,7 @@ local VM_SCALE = 0.78 -- viewmodel gun size (v3.7: 0.85 -> 0.78, guns read too b
 -- its whole length out in front of you. ADS_EYE_MULT scales the eye distance of irons / red dot / holo (zoom scopes keep theirs);
 -- lower = gun closer to your face. ADS_EYE_MIN keeps it out of the camera's near plane.
 local ADS_EYE_MULT, ADS_EYE_MIN = 0.7, 0.22
-local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 82, 7
+local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 86, 7
 local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
 local MatchCfg = require(RS:WaitForChild("MatchConfig"))
 local function isCarrying() return player:GetAttribute("Carrying") == true end -- holding a Wall Push box: no guns/gadgets
@@ -943,7 +943,8 @@ local function onRender(dt)
 
 	-- damage vignette
 	dmgAlpha = math.max(0, dmgAlpha - dt * 2.2)
-	local low = humanoid.Health < 50 and (1 - humanoid.Health / 50) * 0.5 or 0
+	local hpFrac = humanoid.Health / math.max(humanoid.MaxHealth, 1) -- v4.4: relative (max health is 200 now)
+	local low = hpFrac < 0.5 and (1 - hpFrac / 0.5) * 0.5 or 0
 	local va = math.max(dmgAlpha, low)
 	for _, f in vignettes do f.BackgroundTransparency = 1 - va * 0.6 end
 end
