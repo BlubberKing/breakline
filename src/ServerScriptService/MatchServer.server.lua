@@ -1168,25 +1168,15 @@ local function readyCount()
 end
 
 -- same rules as the lobby's SetLoadout (LobbyServer.cleanLoadout)
-local function cleanLoadout(l)
-	l = type(l) == "table" and l or {}
-	local out = { Gadgets = {}, Reserve = {} }
-	out.Weapon = Catalog.Is(l.Weapon, "weapon") and l.Weapon or Catalog.DefaultWeapon
-	out.Move = Catalog.Is(l.Move, "move") and l.Move or ""
-	for i = 1, 3 do
-		out.Gadgets[i] = Catalog.Is(type(l.Gadgets) == "table" and l.Gadgets[i], "gadget") and l.Gadgets[i] or ""
-		local r = type(l.Reserve) == "table" and l.Reserve[i]
-		out.Reserve[i] = (Catalog.Is(r, "gadget") or Catalog.Is(r, "weapon")) and r or ""
-	end
-	return out
-end
+local LoadoutRules = require(script.Parent:WaitForChild("LoadoutRules")) -- v4.7: ownership from the shop
+local function cleanLoadout(player, l) return LoadoutRules.Clean(player, l) end
 local lastLoadoutAt = {}
 PregameLoadoutRemote.OnServerEvent:Connect(function(player, l)
 	if phase ~= "Pregame" then return end -- loadout is locked once the cutscene starts
 	if os.clock() - (lastLoadoutAt[player] or 0) < 0.12 then return end
 	lastLoadoutAt[player] = os.clock()
 	if type(l) ~= "table" or not Profiles.Get(player, "Loadout") then return end
-	local clean = cleanLoadout(l)
+	local clean = cleanLoadout(player, l)
 	Profiles.Set(player, "Loadout", clean)
 	Profiles.Set(player, "Weapon", clean.Weapon)
 	player:SetAttribute("LoadoutJson", HttpService:JSONEncode(clean))
