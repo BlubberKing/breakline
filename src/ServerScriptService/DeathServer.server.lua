@@ -1,6 +1,6 @@
 -- DeathServer v1 (Script in ServerScriptService) - BREAKLINE place only. NEW in v4.1.
 -- Owns everything about being dead in a match:
---   * DEATH TIMER: you are dead MatchConfig.DEAD_TIME (15 s) and spectate a living teammate. If NO teammate is left alive it is a TEAM WIPE: every dead
+--   * DEATH TIMER: you are dead MatchConfig.DEAD_TIME (25 s) and spectate a living teammate. If NO teammate is left alive it is a TEAM WIPE: every dead
 --     player on that team gets WIPE_TIME (10 s) (the timer RESETS to 10 for all of them, even if you were at 3) and free-roams the map.
 --     (1v1: no teammates, no souls: you are out for V1.RespawnTime and spectate your opponent.)
 --   * Roblox auto-respawn is OFF (MatchServer sets Players.RespawnTime huge): THIS script calls LoadCharacter when the timer ends.
