@@ -1,4 +1,4 @@
--- MoveAnim v3 (v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
+-- MoveAnim v3.1 (v4.7: crouch + slide GROUND CLEARANCE - the lowest part of the body is measured every frame and the body is lifted until nothing sinks into the floor; slide wobble removed (no more shaking right hand / swaying body)) (v3: v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
 -- (v2 header:) MoveAnim v2 (v4.5: smooth distance-driven stride, big arm swing, new slide + dust) - was v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games. NEW in v4.1. Keep the two copies identical.
 -- Real animations for WALKING, RUNNING (sprint), CROUCHING (idle + crouch-walk) and SLIDING, for EVERY player (what you see on other people; in the
 -- Lobby you also see your own). It drives the R15 joint Transforms procedurally AFTER the Animator (RunService.Stepped), blending from whatever the
@@ -29,6 +29,32 @@ local function groundGap(st) -- distance from the root centre straight down to t
 	rayP.FilterDescendantsInstances = ig
 	local r = workspace:Raycast(st.root.Position, Vector3.new(0, -12, 0), rayP)
 	return r and r.Distance or nil
+end
+
+-- v4.7: ground clearance. The lowest point of the (posed) body is compared with the floor under the root; whatever sinks in is lifted back out.
+-- Measured on the previous frame, applied as an integrator, so it settles on "just touching the floor" without ever jittering.
+local function lowestPartY(char)
+	local low = math.huge
+	for _, p in char:GetChildren() do
+		if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+			local cf, sz = p.CFrame, p.Size
+			local ext = (abs(cf.RightVector.Y) * sz.X + abs(cf.UpVector.Y) * sz.Y + abs(cf.LookVector.Y) * sz.Z) * 0.5 * 0.9
+			low = math.min(low, cf.Position.Y - ext)
+		end
+	end
+	return low
+end
+local function updateLift(st, dt)
+	if st.crouch > 0.01 or st.slide > 0.01 then
+		local gap = groundGap(st)
+		if gap then
+			local floorY = st.root.Position.Y - gap
+			local pen = (floorY + 0.05) - lowestPartY(st.char) -- > 0: part of the body is inside the floor
+			st.lift = clamp((st.lift or 0) + pen * math.min(1, dt * 14), 0, 1.6)
+		end
+	else
+		st.lift = approach(st.lift or 0, 0, 12, dt)
+	end
 end
 
 local abilityRemotes = RS:WaitForChild("AbilityRemotes", 15)
@@ -164,6 +190,7 @@ local function frame(st, dt)
 		st.dust.Enabled = on
 		st.dust.Rate = on and clamp(hs * 1.1, 10, 60) or 0
 	end
+	updateLift(st, dt)
 	if st.loco < 0.01 and st.crouch < 0.01 and st.slide < 0.01 and st.arms < 0.01 and st.airW < 0.01 then return end
 
 	-- stride clock follows DISTANCE travelled, so feet match the ground speed and never skate or stutter
@@ -275,7 +302,7 @@ local function frame(st, dt)
 			local eff = gap and (gap - root.Size.Y / 2) or base
 			st.hEff = st.hEff and approach(st.hEff, eff, 20, dt) or eff
 			local delta = clamp((reach - (T + S)) + (base - st.hEff), -0.7, 1.3)
-			blend(st.rootJ, CFrame.new(0, delta, 0) * CF(-rad(7) - rad(2) * mv, 0, s1 * rad(2) * mv), w)
+			blend(st.rootJ, CFrame.new(0, delta + (st.lift or 0), 0) * CF(-rad(7) - rad(2) * mv, 0, s1 * rad(2) * mv), w)
 		end
 		blend(st.waist, CF(-rad(11) + breathe, s1 * rad(5) * mv, 0), w)
 		blend(st.neck, CF(rad(20), -s1 * rad(3) * mv, 0), w)
@@ -291,11 +318,9 @@ local function frame(st, dt)
 	if st.slide > 0.01 then
 		local w = st.slide
 		local sp = clamp(hs / 36, 0, 1.2)
-		st.slideSway = approach(st.slideSway, sin(os.clock() * 5.5) * 0.5 + 0.5, 6, dt)
-		local shake = sin(os.clock() * 29) * 0.01 * sp
-		local sway = (st.slideSway - 0.5) * rad(3)
+		local shake, sway = 0, 0 -- v4.7: no wobble (the shaking right hand / swaying body is gone)
 		-- whole body: reclined (lean back about the hip) and dropped so the back / hip skim the ground
-		if st.rootJ then blend(st.rootJ, CFrame.new(0, -0.15 * k, 0) * CF(rad(50), 0, sway), w) end
+		if st.rootJ then blend(st.rootJ, CFrame.new(0, -0.15 * k + (st.lift or 0), 0) * CF(rad(50), 0, sway), w) end
 		blend(st.waist, CF(rad(8), -rad(6), 0), w)
 		blend(st.neck, CF(-rad(52), rad(4), 0), w) -- keeps the face looking along the slide
 		-- legs: right leg (front) stretched straight out, left leg folded under with the foot behind
@@ -309,7 +334,7 @@ local function frame(st, dt)
 			-- left hand trails flat on the ground out to the side, right hand reaches forward / out for balance
 			blend(st.lSh, CF(-0.55, 0, -rad(62)), w)
 			blend(st.lEl, CF(0.12, 0, 0), w)
-			blend(st.rSh, CF(1.75 + shake * 4, 0, rad(32)), w)
+			blend(st.rSh, CF(1.75, 0, rad(32)), w)
 			blend(st.rEl, CF(0.2, 0, 0), w)
 			if st.lWr then blend(st.lWr, CF(-0.4, 0, 0), w) end
 		end
