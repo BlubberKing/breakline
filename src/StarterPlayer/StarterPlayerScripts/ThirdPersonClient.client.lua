@@ -208,7 +208,7 @@ local function update(st, dt, t, isLocal)
 	if d > math.pi then d -= 2 * math.pi elseif d < -math.pi then d += 2 * math.pi end
 	st.lastYaw = yaw
 	local lagTarget = clamp(-(d / math.max(dt, 1 / 240)) * CFG.TURN_LAG_DEG, -CFG.TURN_LAG_MAX, CFG.TURN_LAG_MAX)
-	st.turnLag = approach(st.turnLag, lagTarget, 10, dt)
+	st.turnLag = approach(st.turnLag, lagTarget * (1 - 0.85 * st.slide), 10, dt) -- v4.7: the gun/hand no longer swings side to side while you steer a slide
 
 	-- walk bob
 	local vel = st.root.AssemblyLinearVelocity
