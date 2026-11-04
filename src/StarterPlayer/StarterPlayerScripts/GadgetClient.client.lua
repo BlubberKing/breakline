@@ -289,14 +289,13 @@ local function buildVM(id)
 	local model = GM.Build(id, nil, { anchored = true, scale = vmScale })
 	if not model then return end
 	model.Parent = folder
-	local glove = Instance.new("Part")
-	glove.Name = "Glove"
-	glove.Size = Vector3.new(0.3, 0.28, 0.34)
-	glove.Color, glove.Material = GLOVE, Enum.Material.SmoothPlastic
+	-- v4.8: a real gloved hand (fingers curl round the item, thumb on the side) built by GadgetModels, and a round sleeve
+	local glove = GM.BuildHand(folder)
 	local sleeve = Instance.new("Part")
 	sleeve.Name = "Sleeve"
+	sleeve.Shape = Enum.PartType.Cylinder
 	sleeve.Color, sleeve.Material = SLEEVE, Enum.Material.SmoothPlastic
-	for _, pt in { glove, sleeve } do
+	for _, pt in { sleeve } do
 		pt.Anchored = true
 		pt.CanCollide, pt.CanQuery, pt.CanTouch, pt.CastShadow = false, false, false, false
 		pt.TopSurface, pt.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
@@ -334,12 +333,12 @@ local function updateVM(dt, now)
 	local cf = camera.CFrame * CFrame.new(pos) * rot
 	vm.model:PivotTo(cf * CFrame.new(0, place and 0.2 * vm.scale or 0, 0))
 	local gloveCF = cf * CFrame.new(-0.03, place and -0.1 or -0.2, 0.01)
-	vm.glove.CFrame = gloveCF
+	vm.glove:PivotTo(gloveCF)
 	local a = gloveCF.Position
 	local b = camera.CFrame * CFrame.new(1.5, -2.4, 0.9).Position
 	local len = (b - a).Magnitude
-	vm.sleeve.Size = Vector3.new(0.3, 0.3, len)
-	vm.sleeve.CFrame = CFrame.lookAt(a, b) * CFrame.new(0, 0, -len / 2)
+	vm.sleeve.Size = Vector3.new(len, 0.3, 0.3)
+	vm.sleeve.CFrame = CFrame.lookAt(a, b) * CFrame.new(0, 0, -len / 2) * CFrame.Angles(0, math.pi / 2, 0)
 end
 
 ------------------------------------------------------------------ equip / use
