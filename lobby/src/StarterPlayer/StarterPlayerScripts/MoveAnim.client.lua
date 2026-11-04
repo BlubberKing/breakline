@@ -1,11 +1,13 @@
--- MoveAnim v2 (v4.5: smooth distance-driven stride, big arm swing, new slide + dust) - was v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games. NEW in v4.1. Keep the two copies identical.
+-- MoveAnim v3 (v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
+-- (v2 header:) MoveAnim v2 (v4.5: smooth distance-driven stride, big arm swing, new slide + dust) - was v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games. NEW in v4.1. Keep the two copies identical.
 -- Real animations for WALKING, RUNNING (sprint), CROUCHING (idle + crouch-walk) and SLIDING, for EVERY player (what you see on other people; in the
 -- Lobby you also see your own). It drives the R15 joint Transforms procedurally AFTER the Animator (RunService.Stepped), blending from whatever the
 -- default animation did, so nothing needs animation assets. AbilityPose (wall run / climb) wins while AbilityMode is set; arms are left to
 -- ThirdPersonClient's IK whenever the character holds a gun (Breakline) and animated here when it does not (Lobby, or a gadget in hand).
 --   WALK    small stride, counter-swinging arms, a little torso twist
 --   RUN     (speed > ~20) big stride with high knees, forward lean, pumping bent arms, head steady
---   CROUCH  deep knee bend + hunched torso; moving = a low shuffle
+--   CROUCH  half-kneel (one foot planted forward, back knee dropped, hunched torso, front arm on the knee); moving = a low stagger
+--   AIR     lead leg driven forward with a bent knee, trailing leg back, torso leaning into the jump, arms pumping; the legs reach down on the way down
 --   SLIDE   leans back, front leg out straight, back leg folded under, arms out for balance, head up
 -- Sender: your own crouch / slide / sprint state is sent to the server (AbilityRemotes.Move -> character attributes MvCrouch / MvSlide / MvSprint) so
 -- everybody else can see it (Breakline also has the Sliding / Crouching attributes from ThirdPersonServer; either source works).
@@ -17,6 +19,17 @@ local player = Players.LocalPlayer
 local rad, sin, cos, abs, clamp, exp, max = math.rad, math.sin, math.cos, math.abs, math.clamp, math.exp, math.max
 local CF = CFrame.Angles
 local function approach(a, b, speed, dt) return a + (b - a) * (1 - exp(-speed * dt)) end
+
+local rayP = RaycastParams.new()
+rayP.FilterType = Enum.RaycastFilterType.Exclude
+rayP.RespectCanCollide = true
+local function groundGap(st) -- distance from the root centre straight down to the floor (nil when there is none under it)
+	local ig = {}
+	for _, p in Players:GetPlayers() do if p.Character then table.insert(ig, p.Character) end end
+	rayP.FilterDescendantsInstances = ig
+	local r = workspace:Raycast(st.root.Position, Vector3.new(0, -12, 0), rayP)
+	return r and r.Distance or nil
+end
 
 local abilityRemotes = RS:WaitForChild("AbilityRemotes", 15)
 local MoveR = abilityRemotes and abilityRemotes:WaitForChild("Move", 10)
@@ -53,7 +66,7 @@ local function setup(char)
 	if not (hum and root and char:FindFirstChild("UpperTorso")) then return nil end
 	local st = {
 		char = char, hum = hum, root = root, phase = 0, loco = 0, run = 0, crouch = 0, slide = 0, moveAmt = 0, speed = 0, air = 0,
-		slideSway = 0, bobSmooth = 0,
+		slideSway = 0, bobSmooth = 0, airW = 0, lead = 1, wasGrounded = true, nextBase = 0,
 		rSh = joint(char, "RightUpperArm", "RightShoulder"), lSh = joint(char, "LeftUpperArm", "LeftShoulder"),
 		rEl = joint(char, "RightLowerArm", "RightElbow"), lEl = joint(char, "LeftLowerArm", "LeftElbow"),
 		rWr = joint(char, "RightHand", "RightWrist"), lWr = joint(char, "LeftHand", "LeftWrist"),
@@ -131,9 +144,19 @@ local function frame(st, dt)
 	st.crouch = approach(st.crouch, (crouch and not busy) and 1 or 0, 11, dt)
 	st.slide = approach(st.slide, (slide and not busy) and 1 or 0, 13, dt)
 	st.moveAmt = approach(st.moveAmt, moving and clamp(hs / 14, 0, 1) or 0, 8, dt)
+	if st.wasGrounded and not grounded then st.lead = (sin(st.phase) >= 0) and 1 or -1 end -- the leg that was forward at take-off leads the jump
+	st.wasGrounded = grounded
+	st.airW = approach(st.airW, (not grounded and not busy and not slide) and 1 or 0, 12, dt)
 	st.arms = approach(st.arms or 0, (not hasGun and not busy and (held or soulCarry or reviving)) and 1 or 0, 14, dt)
 	local sinceThrow = workspace:GetServerTimeNow() - (char:GetAttribute("GadgetThrowAt") or -10)
 	st.throw = approach(st.throw or 0, (sinceThrow >= 0 and sinceThrow < 0.4) and 1 or 0, 22, dt)
+
+	-- v4.6: remember the real standing hip height (used by the crouch fit); measured, so it also holds for other players
+	if st.crouch < 0.02 and st.slide < 0.02 and grounded and os.clock() >= st.nextBase then
+		st.nextBase = os.clock() + 0.5
+		local gap = groundGap(st)
+		if gap then st.baseEff = gap - root.Size.Y / 2 end
+	end
 
 	-- dust while sliding
 	if st.dust then
@@ -141,7 +164,7 @@ local function frame(st, dt)
 		st.dust.Enabled = on
 		st.dust.Rate = on and clamp(hs * 1.1, 10, 60) or 0
 	end
-	if st.loco < 0.01 and st.crouch < 0.01 and st.slide < 0.01 and st.arms < 0.01 then return end
+	if st.loco < 0.01 and st.crouch < 0.01 and st.slide < 0.01 and st.arms < 0.01 and st.airW < 0.01 then return end
 
 	-- stride clock follows DISTANCE travelled, so feet match the ground speed and never skate or stutter
 	local run = st.run
@@ -188,26 +211,79 @@ local function frame(st, dt)
 		end
 	end
 
-	------------------------------------------------ crouch (idle + shuffle)
+	------------------------------------------------ air: sprint-leap pose (no more going limp when you jump)
+	if st.airW > 0.01 then
+		local w = st.airW
+		local fwd = clamp(hs / 22, 0, 1)                                  -- how fast you are going
+		local vy = root.AssemblyLinearVelocity.Y
+		local fall = clamp(-vy / 45, 0, 1)                                -- coming down: legs reach for the ground
+		local rise = clamp(vy / 30, 0, 1)
+		local rightLeads = st.lead == 1
+		local lHipJ, lKneeJ, lAnkJ = rightLeads and st.rHip or st.lHip, rightLeads and st.rKnee or st.lKnee, rightLeads and st.rAnk or st.lAnk
+		local tHipJ, tKneeJ, tAnkJ = rightLeads and st.lHip or st.rHip, rightLeads and st.lKnee or st.rKnee, rightLeads and st.lAnk or st.rAnk
+		blend(lHipJ, CF(0.3 + 0.85 * fwd + 0.15 * rise - 0.4 * fall, 0, 0), w)
+		blend(lKneeJ, CF(-(0.85 + 0.55 * fwd - 0.6 * fall), 0, 0), w)
+		blend(lAnkJ, CF(0.15 + 0.2 * fall, 0, 0), w)
+		blend(tHipJ, CF(-0.1 - 0.55 * fwd + 0.4 * fall, 0, 0), w)
+		blend(tKneeJ, CF(-(0.75 + 0.95 * fwd - 0.45 * fall), 0, 0), w)
+		blend(tAnkJ, CF(-0.35 * fwd, 0, 0), w)
+		-- torso leans into the jump, head stays level, a touch of tuck at the top
+		if st.rootJ then blend(st.rootJ, CF(-rad(3 + 11 * fwd) * (1 - 0.6 * fall), 0, 0), w) end
+		blend(st.waist, CF(-rad(2 + 2 * fwd), 0, 0), w)
+		blend(st.neck, CF(rad(4 + 12 * fwd), 0, 0), w)
+		if not hasGun then
+			-- arms counter the legs like in a run: the arm opposite the lead leg drives forward, the other one back; both lift a bit on the way up
+			local fArm, bArm = 0.5 + 0.95 * fwd + 0.3 * rise, -0.2 - 0.8 * fwd
+			local rS, lS = rightLeads and bArm or fArm, rightLeads and fArm or bArm
+			blend(st.rSh, CF(rS, 0, rad(8)), w)
+			blend(st.lSh, CF(lS, 0, -rad(8)), w)
+			blend(st.rEl, CF(rightLeads and 0.5 or 0.95, 0, 0), w)
+			blend(st.lEl, CF(rightLeads and 0.95 or 0.5, 0, 0), w)
+		end
+	end
+
+	------------------------------------------------ crouch: tactical HALF-KNEEL when standing still (right foot planted forward, left knee dropped,
+	-- back hunched, right hand resting on the knee), a low alternating stagger while moving.
+	-- v4.6: the body height is FITTED to the pose. Movement lowers HipHeight by a fixed amount, but the legs only get shorter by what the pose
+	-- needs, and the old pose was not long enough, so the feet sank into the floor. Now the leg reach of the pose is computed from the real
+	-- UpperLeg / LowerLeg sizes (tall rigs included), compared with how far the root really dropped (measured with a ray, so it also works for
+	-- other players), and the torso is moved up / down by the difference.
 	if st.crouch > 0.01 then
 		local w = st.crouch
 		local mv = st.moveAmt
-		local shuf = 0.3 * mv
+		local kneel = 1 - mv
 		local breathe = sin(os.clock() * 1.7) * rad(1.2)
-		blend(st.rHip, CF(0.78 + s1 * shuf, 0, rad(3)), w)
-		blend(st.lHip, CF(0.78 + s2 * shuf, 0, -rad(3)), w)
-		blend(st.rKnee, CF(-1.25 - pos2(c1) * 0.4 * mv, 0, 0), w)
-		blend(st.lKnee, CF(-1.25 - pos2(c2) * 0.4 * mv, 0, 0), w)
-		blend(st.rAnk, CF(0.38 + 0.1 * pos2(c1) * mv, 0, 0), w)
-		blend(st.lAnk, CF(0.38 + 0.1 * pos2(c2) * mv, 0, 0), w)
-		if st.rootJ then blend(st.rootJ, CFrame.new(0, -0.1 * k, 0) * CF(-rad(8) - rad(2) * mv, 0, s1 * rad(2) * mv), w) end
-		blend(st.waist, CF(-rad(8) + breathe, s1 * rad(5) * mv, 0), w)
-		blend(st.neck, CF(rad(14), -s1 * rad(3) * mv, 0), w)
+		local aR = kneel * 1.40 + mv * (0.95 + 0.38 * s1)          -- hip angles (+ = thigh forward)
+		local bR = kneel * 1.75 + mv * (1.55 + 0.25 * pos2(c1))    -- knee bend (+)
+		local aL = kneel * -0.12 + mv * (0.95 + 0.38 * s2)
+		local bL = kneel * 1.35 + mv * (1.55 + 0.25 * pos2(c2))
+		blend(st.rHip, CF(aR, 0, rad(3)), w)
+		blend(st.lHip, CF(aL, 0, -rad(3)), w)
+		blend(st.rKnee, CF(-bR, 0, 0), w)
+		blend(st.lKnee, CF(-bL, 0, 0), w)
+		blend(st.rAnk, CF(clamp(bR - aR, -0.2, 1.0), 0, 0), w)                              -- front foot flat on the floor
+		blend(st.lAnk, CF(kneel * 0.15 + mv * clamp(bL - aL, -0.2, 1.0), 0, 0), w)         -- back foot tucked (instep down) while kneeling
+		-- body height fitted to the pose
+		if st.rootJ then
+			local ul = char:FindFirstChild("RightUpperLeg")
+			local ll = char:FindFirstChild("RightLowerLeg")
+			local T = ul and ul.Size.Y or 1.2
+			local S = ll and ll.Size.Y or 1.2
+			local reach = math.max(T * cos(aR) + S * cos(aR - bR), T * cos(aL) + S * cos(aL - bL)) -- how far down the lowest part of the legs reaches
+			local gap = groundGap(st)
+			local base = st.baseEff or hum.HipHeight
+			local eff = gap and (gap - root.Size.Y / 2) or base
+			st.hEff = st.hEff and approach(st.hEff, eff, 20, dt) or eff
+			local delta = clamp((reach - (T + S)) + (base - st.hEff), -0.7, 1.3)
+			blend(st.rootJ, CFrame.new(0, delta, 0) * CF(-rad(7) - rad(2) * mv, 0, s1 * rad(2) * mv), w)
+		end
+		blend(st.waist, CF(-rad(11) + breathe, s1 * rad(5) * mv, 0), w)
+		blend(st.neck, CF(rad(20), -s1 * rad(3) * mv, 0), w)
 		if not hasGun then
-			blend(st.rSh, CF(0.3 - s1 * 0.3 * mv, 0, rad(7)), w)
-			blend(st.lSh, CF(0.3 - s2 * 0.3 * mv, 0, -rad(7)), w)
-			blend(st.rEl, CF(0.95 + 0.2 * pos2(-s1) * mv, 0, 0), w)
-			blend(st.lEl, CF(0.95 + 0.2 * pos2(-s2) * mv, 0, 0), w)
+			blend(st.rSh, CF(0.95 * kneel + (0.3 - s1 * 0.3) * mv, 0, rad(8)), w)
+			blend(st.lSh, CF(0.12 * kneel + (0.3 - s2 * 0.3) * mv, 0, -rad(10)), w)
+			blend(st.rEl, CF(0.8 * kneel + (0.95 + 0.2 * pos2(-s1)) * mv, 0, 0), w)
+			blend(st.lEl, CF(0.5 * kneel + (0.95 + 0.2 * pos2(-s2)) * mv, 0, 0), w)
 		end
 	end
 
