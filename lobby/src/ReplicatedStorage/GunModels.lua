@@ -1,3 +1,4 @@
+-- GunModels v2 (v4.7: DETAIL PASSES - every gun got rails, vents, ribs, levers, rings, grain and better material tones; sizes, proportions and all hand / mag / muzzle points are unchanged)
 -- GunModels: procedural gun models + attachable sights. Replaces GunModelBuilder + RifleModel.
 -- Gun space: origin = top of the pistol grip, -Z = downrange, +Y = up. Unit scale ~ one Roblox rifle.
 -- Adding a gun: write Models.<ID> = function(k) ... end using the kit below. It MUST call
@@ -73,6 +74,46 @@ local function newKit()
 	function k.eject(pos) k.pts.Eject = CF(pos) end
 	function k.mount(cf) k.pts.Mount = cf end
 	function k.irons(aimPos, eye) k.pts.IronAim = CF(aimPos); k.ironEye = eye end
+	-- ===== v4.7 detail helpers (used by the DETAIL passes below) =====
+	function k.find(name)
+		for _, d in ipairs(k.parts) do if d.Name == name then return d end end
+	end
+	function k.recolor(name, color, mat)
+		for _, d in ipairs(k.parts) do
+			if d.Name == name then d.Color = color if mat then d.Material = mat end end
+		end
+	end
+	-- the same box on both sides of the gun (x > 0 = distance from the middle)
+	function k.pair(name, size, x, y, z, color, mat, extra)
+		k.box(name, size, CF(-x, y, z), color, mat, extra)
+		k.box(name, size, CF(x, y, z), color, mat, extra)
+	end
+	-- a round band / ring around something that runs along Z
+	function k.band(name, z, dia, len, y, color, mat, x)
+		return k.cylZ(name, len, dia, CF(x or 0, y, z), color, mat)
+	end
+	-- screw / pin heads on both sides of the gun
+	function k.pins(name, x, y, z, dia, color)
+		k.cylX(name, 0.014, dia, CF(x, y, z), color or C.Chrome, METAL)
+		k.cylX(name, 0.014, dia, CF(-x, y, z), color or C.Chrome, METAL)
+	end
+	-- n evenly spaced slots / vents on both sides: z0 = first centre, step along Z (use a negative step to go toward the muzzle)
+	function k.slots(name, x, y, z0, step, n, w, h, color)
+		for i = 0, n - 1 do k.pair(name, V(0.014, h, w), x, y, z0 + i * step, color or C.Black) end
+	end
+	-- a barrel / tube that gets narrower: n stacked cylinders from (z0, d0) to (z1, d1)
+	function k.taper(name, z0, z1, d0, d1, y, n, color, mat, x)
+		local len = math.abs(z1 - z0) / n
+		for i = 0, n - 1 do
+			local t = (i + 0.5) / n
+			k.cylZ(name, len + 0.004, d0 + (d1 - d0) * t, CF(x or 0, y, z0 + (z1 - z0) * t), color, mat)
+		end
+	end
+	function k.remove(name)
+		local kept = {}
+		for _, d in ipairs(k.parts) do if d.Name ~= name then table.insert(kept, d) end end
+		k.parts = kept
+	end
 	return k
 end
 
@@ -93,6 +134,11 @@ local function stdGrip(k, color, z, tilt)
 	k.box("TriggerGuard", V(0.04, 0.035, 0.36), CF(0, 0.08, z - 0.26), C.Dark)
 	k.box("Trigger", V(0.035, 0.12, 0.045), P(0, 0.14, z - 0.2, -12), C.Metal)
 	k.grip(g)
+	-- v4.7: finger grooves, backstrap, base cap, front post of the trigger guard
+	for i = 0, 2 do k.box("GripGroove", V(0.206, 0.024, 0.035), g * CF(0, -0.12 + i * 0.09, -0.15), C.Dark) end
+	k.box("GripBackstrap", V(0.17, 0.4, 0.04), g * CF(0, -0.02, 0.17), C.Dark)
+	k.box("GripCap", V(0.215, 0.03, 0.34), g * CF(0, -0.27, 0), C.Dark)
+	k.box("GuardFront", V(0.04, 0.16, 0.035), CF(0, 0.14, z - 0.425), C.Dark)
 end
 
 -- ================= GUNS =================
@@ -464,7 +510,269 @@ function Models.MAGNUM(k)
 	k.view = { X = 0.45, Y = -0.8, Z = -1.3, SprintRot = V(-40, 20, 10) }
 end
 
+
+-- ================= DETAIL PASSES (v4.7) =================
+-- The base models above fix every size, proportion and hand / mag / muzzle point. These passes only ADD small parts on top (rails, vents, ribs, pins,
+-- levers, rings, grain) and re-tone a few materials, so the guns read like a modeller made them. Nothing here moves a point or changes a base
+-- dimension; mag details are in the "mag" group (they move with the magazine on reload), slide / bolt / pump / cover details are in "cycle" / "cover".
+-- A gun without a pass here simply keeps its base model.
+local Detail = {}
+local Cx = C
+Cx.Gun = Color3.fromRGB(58, 62, 70)
+Cx.GunLight = Color3.fromRGB(98, 104, 114)
+Cx.Chrome = Color3.fromRGB(172, 176, 184)
+Cx.Black = Color3.fromRGB(9, 9, 11)
+Cx.Brass = Color3.fromRGB(205, 165, 72)
+Cx.WoodLight = Color3.fromRGB(142, 90, 52)
+Cx.WoodDark = Color3.fromRGB(88, 52, 30)
+Cx.Rubber = Color3.fromRGB(26, 26, 29)
+Cx.Stipple = Color3.fromRGB(38, 39, 44)
+
+local function magRibs(k, frame, n, y0, dy, w, d)
+	k.group = "mag"
+	for i = 0, n - 1 do k.box("MagRib", V(w, 0.016, d), frame * CF(0, y0 + i * dy, 0), C.Black) end
+	k.group = "gun"
+end
+local function padRidges(k, z, y0, dy, n, w, tilt)
+	for i = 0, n - 1 do k.box("PadRidge", V(w, 0.012, 0.075), P(0, y0 + i * dy, z, tilt or 0), C.Black) end
+end
+local function muzzleSlots(k, y, z, w)
+	k.box("MuzzleSlotH", V(w, 0.016, 0.11), CF(0, y, z), C.Black)
+	k.box("MuzzleSlotV", V(0.016, w, 0.11), CF(0, y, z), C.Black)
+end
+
+-- M4A1
+function Detail.VX9(k)
+	k.recolor("UpperReceiver", C.Gun, METAL); k.recolor("Barrel", C.GunLight, METAL); k.recolor("MuzzleDevice", C.Gun, METAL); k.recolor("ButtPad", C.Rubber)
+	k.pair("UpperEdge", V(0.012, 0.012, 1.0), 0.104, 0.597, -0.3, C.GunLight, METAL)
+	k.box("PortCover", V(0.01, 0.075, 0.2), CF(0.12, 0.515, -0.21), C.Gun, METAL)
+	k.box("ForwardAssist", V(0.04, 0.07, 0.07), CF(0.128, 0.47, 0.03), C.Gun, METAL)
+	k.box("MagRelease", V(0.035, 0.06, 0.07), CF(0.117, 0.27, -0.5), C.Chrome, METAL)
+	k.box("BoltCatch", V(0.025, 0.08, 0.045), CF(-0.115, 0.36, -0.18), C.Chrome, METAL)
+	k.box("SelectorLever", V(0.016, 0.03, 0.11), CF(-0.119, 0.33, 0.09), C.Chrome, METAL)
+	k.cylX("SelectorPivot", 0.016, 0.055, CF(-0.119, 0.33, 0.14), C.Chrome, METAL)
+	k.pins("TakedownPin", 0.112, 0.4, -0.62, 0.045)
+	k.pins("TakedownPin", 0.112, 0.38, 0.17, 0.045)
+	k.band("DeltaRing", -1.07, 0.23, 0.05, 0.5, C.Gun, METAL)
+	k.band("HandguardCap", -2.04, 0.21, 0.05, 0.5, C.Black)
+	for i = 0, 5 do k.band("HandguardGroove", -1.22 - i * 0.16, 0.206, 0.014, 0.5, C.Black) end
+	k.band("GasBlock", -2.12, 0.12, 0.12, 0.5, C.Black)
+	k.band("BarrelBand", -2.3, 0.1, 0.035, 0.5, C.Gun, METAL)
+	k.band("BarrelBand", -2.42, 0.1, 0.035, 0.5, C.Gun, METAL)
+	k.band("MuzzleRing", -2.53, 0.13, 0.04, 0.5, C.Black)
+	muzzleSlots(k, 0.5, -2.67, 0.13)
+	k.band("CastleNut", 0.23, 0.135, 0.05, 0.5, C.Gun, METAL)
+	for i = 0, 2 do k.band("BufferRing", 0.38 + i * 0.12, 0.112, 0.025, 0.5, C.Black) end
+	k.box("StockRail", V(0.09, 0.04, 0.38), CF(0, 0.255, 0.9), C.Black)
+	k.box("StockCheek", V(0.12, 0.03, 0.3), CF(0, 0.575, 0.88), C.Gun)
+	padRidges(k, 1.12, 0.27, 0.07, 5, 0.19)
+	magRibs(k, P(0, -0.05, -0.58, 10), 5, -0.17, 0.075, 0.156, 0.2)
+end
+
+-- AK-47
+function Detail.KR47(k)
+	k.recolor("LowerGuard", C.WoodLight, WOOD); k.recolor("UpperGuard", C.WoodDark, WOOD); k.recolor("Stock", C.WoodLight, WOOD)
+	k.recolor("Receiver", C.Gun, METAL); k.recolor("DustCover", C.Body, METAL); k.recolor("Selector", C.Chrome, METAL); k.recolor("Mag", C.Stipple); k.recolor("MagLow", C.Stipple)
+	for i = 0, 3 do
+		k.pins("Rivet", 0.103, 0.28, -0.75 + i * 0.3, 0.03, C.GunLight)
+		k.pins("Rivet", 0.103, 0.4, -0.7 + i * 0.3, 0.03, C.GunLight)
+	end
+	k.box("Trunnion", V(0.21, 0.27, 0.12), CF(0, 0.335, -0.88), C.Gun, METAL)
+	k.box("RearTang", V(0.15, 0.09, 0.2), CF(0, 0.5, 0.26), C.Body)
+	for i = 0, 4 do k.box("CoverRib", V(0.198, 0.106, 0.03), CF(0, 0.52, -0.66 + i * 0.2), C.Gun, METAL) end
+	k.cylZ("GuideRod", 0.14, 0.032, CF(0, 0.505, 0.26), C.Chrome, METAL)
+	k.box("SelectorTab", V(0.04, 0.03, 0.05), CF(0.12, 0.395, 0.0), C.Chrome, METAL)
+	for i = 0, 2 do k.pair("WoodGrain", V(0.012, 0.012, 0.66), 0.11, 0.31 + i * 0.05, -1.27, C.WoodDark, WOOD) end
+	k.box("FrontFerrule", V(0.23, 0.22, 0.035), CF(0, 0.36, -1.63), C.Gun, METAL)
+	k.box("RearFerrule", V(0.225, 0.22, 0.03), CF(0, 0.36, -0.91), C.Gun, METAL)
+	k.band("GasClamp", -1.72, 0.1, 0.04, 0.57, C.Black)
+	k.band("GasClamp", -2.08, 0.1, 0.04, 0.57, C.Black)
+	k.band("BarrelBand", -1.9, 0.09, 0.035, 0.45, C.Gun, METAL)
+	k.band("BarrelBand", -2.4, 0.09, 0.035, 0.45, C.Gun, METAL)
+	k.cylZ("CleaningRod", 0.95, 0.026, CF(0, 0.385, -2.05), C.Chrome, METAL)
+	k.band("RodCap", -2.54, 0.045, 0.03, 0.385, C.Black)
+	k.box("BayonetLug", V(0.05, 0.07, 0.09), CF(0, 0.4, -2.64), C.Black)
+	k.band("BrakeBase", -2.72, 0.1, 0.03, 0.45, C.Gun, METAL)
+	k.box("BrakeSlot", V(0.13, 0.016, 0.1), CF(0, 0.45, -2.8), C.Black)
+	for i = 0, 2 do
+		for _, sx in ipairs({ -1, 1 }) do k.box("StockGrain", V(0.012, 0.012, 0.66), P(sx * 0.087, 0.22 + i * 0.05, 0.67, 6), C.WoodDark, WOOD) end
+	end
+	-- magazine: smooth the banana + ribs
+	k.group = "mag"
+	k.box("MagMid", V(0.14, 0.14, 0.255), P(0, -0.09, -0.665, 16), C.Stipple)
+	for _, yy in ipairs({ -0.1, 0, 0.1 }) do
+		k.box("MagRib", V(0.146, 0.016, 0.2), P(0, 0.06, -0.62, 8) * CF(0, yy, 0), C.Black)
+		k.box("MagRib", V(0.146, 0.016, 0.2), P(0, -0.22, -0.72, 24) * CF(0, yy, 0), C.Black)
+	end
+	k.group = "gun"
+end
+
+-- FAMAS
+function Detail.HX3(k)
+	k.recolor("Spine", C.Gun, METAL); k.recolor("ButtPad", C.Rubber)
+	k.pair("SidePlate", V(0.012, 0.2, 1.0), 0.093, 0.375, -0.2, C.Gun, METAL)
+	k.slots("Vent", 0.092, 0.37, -0.8, -0.055, 3, 0.03, 0.15)
+	k.box("ChargeSlot", V(0.03, 0.02, 0.5), CF(0, 0.565, -0.1), C.Black)
+	k.box("Selector", V(0.016, 0.04, 0.12), CF(-0.099, 0.3, 0.2), C.Chrome, METAL)
+	k.cylX("MagRelease", 0.02, 0.05, CF(0.099, 0.2, 0.2), C.Chrome, METAL)
+	k.pins("BodyPin", 0.095, 0.46, -0.55, 0.035)
+	k.pins("BodyPin", 0.095, 0.3, 0.45, 0.035)
+	k.band("GasBlock", -1.02, 0.1, 0.1, 0.42, C.Black)
+	k.band("BarrelBand", -1.2, 0.085, 0.03, 0.42, C.Gun, METAL)
+	k.band("FlashRing", -1.33, 0.115, 0.03, 0.42, C.Gun, METAL)
+	muzzleSlots(k, 0.42, -1.41, 0.105)
+	k.box("CheekPad", V(0.12, 0.025, 0.3), CF(0, 0.58, 0.38), C.Rubber)
+	padRidges(k, 0.6, 0.24, 0.065, 5, 0.19)
+	k.box("SlingLug", V(0.03, 0.05, 0.05), CF(0, 0.12, -0.95), C.Gun, METAL)
+	magRibs(k, P(0, 0.05, 0.4, 8), 4, -0.14, 0.09, 0.136, 0.2)
+end
+
+-- MP7
+function Detail.WASP(k)
+	k.recolor("Suppressor", C.Gun, METAL); k.recolor("ButtPlate", C.Rubber)
+	for i = 0, 3 do k.band("SuppBand", -1.36 - i * 0.14, 0.128, 0.03, 0.4, C.Black) end
+	k.band("SuppMount", -1.27, 0.14, 0.05, 0.4, C.Gun, METAL)
+	k.band("SuppCap", -1.8, 0.126, 0.05, 0.4, C.Black)
+	k.slots("Vent", 0.092, 0.38, -0.9, -0.08, 4, 0.04, 0.12)
+	k.box("EjectPort", V(0.014, 0.08, 0.18), CF(0.1, 0.46, -0.28), C.Black)
+	k.pins("HingePin", 0.11, 0.44, 0.18, 0.05)
+	k.pins("BodyPin", 0.102, 0.34, -0.5, 0.035)
+	k.box("SelectorLever", V(0.016, 0.03, 0.1), CF(-0.102, 0.34, 0.0), C.Chrome, METAL)
+	for i = 0, 3 do k.box("GripRidge", V(0.106, 0.016, 0.126), P(0, 0.2, -1.0, -8) * CF(0, -0.08 + i * 0.055, 0), C.Black) end
+	padRidges(k, 0.84, 0.3, 0.06, 4, 0.18)
+	magRibs(k, P(0, -0.08, -0.6, 4), 4, -0.15, 0.09, 0.136, 0.16)
+end
+
+-- M249
+function Detail.ANVIL(k)
+	k.recolor("Receiver", C.Gun, METAL); k.recolor("HeatShield", C.GunLight, METAL); k.recolor("ButtPad", C.Rubber)
+	k.group = "cover"
+	k.box("CoverLatch", V(0.1, 0.05, 0.06), CF(0, 0.6, -0.6), C.Black)
+	for i = 0, 3 do k.box("CoverRib", V(0.246, 0.085, 0.03), CF(0, 0.57, -0.5 + i * 0.15), C.Gun, METAL) end
+	k.group = "gun"
+	for i = 0, 2 do
+		k.pins("Rivet", 0.123, 0.46, -0.85 + i * 0.4, 0.035, C.GunLight)
+		k.pins("Rivet", 0.123, 0.3, -0.85 + i * 0.4, 0.035, C.GunLight)
+	end
+	k.box("EjectPort", V(0.014, 0.1, 0.26), CF(0.122, 0.4, -0.1), C.Black)
+	k.slots("Vent", 0.112, 0.36, -1.1, -0.08, 5, 0.04, 0.12)
+	for i = 0, 7 do k.box("ShieldVent", V(0.1, 0.012, 0.04), CF(0, 0.527, -1.3 - i * 0.08), C.Black) end
+	for i = 0, 4 do k.band("BarrelFin", -2.0 - i * 0.1, 0.15, 0.025, 0.42, C.Gun, METAL) end
+	muzzleSlots(k, 0.42, -2.82, 0.15)
+	k.pair("BipodFoot", V(0.06, 0.05, 0.07), 0.07, 0.25, -2.27, C.Black)
+	k.box("StockGroove", V(0.186, 0.012, 0.5), CF(0, 0.25, 0.72), C.Black)
+	k.box("StockGroove", V(0.186, 0.012, 0.5), CF(0, 0.39, 0.72), C.Black)
+	padRidges(k, 1.12, 0.16, 0.07, 5, 0.2)
+	k.group = "mag"
+	for i = 0, 3 do
+		k.box("BoxRib", V(0.012, 0.3, 0.03), CF(-0.03 + 0.176, 0, -0.7 + i * 0.1), C.Black)
+		k.box("BoxRib", V(0.012, 0.3, 0.03), CF(-0.03 - 0.176, 0, -0.7 + i * 0.1), C.Black)
+	end
+	k.box("BoxHandle", V(0.2, 0.03, 0.04), CF(-0.03, 0.195, -0.72), C.Black)
+	k.box("BeltStub", V(0.06, 0.07, 0.3), CF(-0.03, 0.2, -0.55), C.Brass, METAL)
+	k.group = "gun"
+end
+
+-- M14 EBR
+function Detail.LONGSHOT(k)
+	k.recolor("Barrel", C.GunLight, METAL); k.recolor("ButtPad", C.Rubber)
+	k.box("HandguardRail", V(0.1, 0.03, 0.8), CF(0, 0.495, -1.38), C.Black)
+	for i = 0, 5 do k.box("RailTooth", V(0.12, 0.016, 0.045), CF(0, 0.51, -1.05 - i * 0.12), C.Black) end
+	for i = 0, 4 do k.box("Mlok", V(0.07, 0.012, 0.09), CF(0, 0.28, -1.0 - i * 0.17), C.Black) end
+	k.slots("BrakePort", 0.062, 0.4, -2.78, -0.07, 3, 0.03, 0.08)
+	k.band("GasBlock", -1.9, 0.11, 0.1, 0.4, C.Black)
+	k.band("BarrelBand", -2.2, 0.1, 0.035, 0.4, C.Gun, METAL)
+	k.band("BarrelBand", -2.5, 0.1, 0.035, 0.4, C.Gun, METAL)
+	k.box("OpRodChannel", V(0.012, 0.04, 0.6), CF(0.102, 0.43, -0.8), C.Black)
+	k.pins("CheekScrew", 0.072, 0.48, 0.62, 0.03, C.Chrome)
+	k.pins("ReceiverPin", 0.103, 0.3, -0.7, 0.035)
+	k.pins("ReceiverPin", 0.103, 0.3, 0.1, 0.035)
+	padRidges(k, 1.17, 0.12, 0.07, 5, 0.2)
+	magRibs(k, P(0, 0.02, -0.62, 4), 4, -0.13, 0.085, 0.156, 0.2)
+end
+
+-- AWP
+function Detail.HALO50(k)
+	k.recolor("Receiver", C.Gun, METAL); k.recolor("Barrel", C.GunLight, METAL); k.recolor("ButtPad", C.Rubber)
+	for _, sx in ipairs({ -1, 1 }) do k.box("Flute", V(0.014, 0.02, 1.1), CF(sx * 0.05, 0.42, -2.55), C.Black) end
+	k.box("Flute", V(0.02, 0.014, 1.1), CF(0, 0.47, -2.55), C.Black)
+	k.slots("BrakePort", 0.082, 0.42, -3.38, -0.07, 3, 0.04, 0.09)
+	k.slots("Mlok", 0.102, 0.28, -1.15, -0.14, 5, 0.09, 0.05)
+	k.box("EjectPort", V(0.014, 0.09, 0.3), CF(0.098, 0.43, -0.15), C.Black)
+	k.box("Spacer", V(0.19, 0.4, 0.016), CF(0, 0.28, 1.2), C.Black)
+	k.box("Spacer", V(0.19, 0.4, 0.016), CF(0, 0.28, 1.226), C.WoodDark)
+	k.pins("CheekKnob", 0.09, 0.5, 0.62, 0.05)
+	k.box("MonopodFoot", V(0.12, 0.03, 0.1), CF(0, -0.055, 1.1), C.Black)
+	k.band("BarrelBand", -2.0, 0.11, 0.04, 0.42, C.Gun, METAL)
+	k.group = "cycle"
+	k.band("BoltShroud", 0.47, 0.105, 0.1, 0.42, C.Black)
+	k.group = "mag"
+	for i = 0, 2 do k.box("MagRib", V(0.146, 0.014, 0.3), CF(0, 0.02 + i * 0.06, -0.45), C.Black) end
+	k.group = "gun"
+end
+
+-- Remington 870
+function Detail.BREACHER(k)
+	k.recolor("Receiver", C.Gun, METAL); k.recolor("Barrel", C.GunLight, METAL); k.recolor("ButtPad", C.Rubber)
+	k.box("EjectPort", V(0.014, 0.09, 0.3), CF(0.1, 0.42, -0.15), C.Black)
+	k.pins("Pin", 0.103, 0.45, -0.55, 0.035)
+	k.pins("Pin", 0.103, 0.3, 0.05, 0.035)
+	k.box("VentRib", V(0.04, 0.014, 1.5), CF(0, 0.53, -1.5), C.GunLight, METAL)
+	k.band("MagCap", -1.97, 0.125, 0.06, 0.33, C.Chrome, METAL)
+	k.box("TubeClamp", V(0.1, 0.22, 0.05), CF(0, 0.4, -1.3), C.Black)
+	k.band("BarrelBand", -1.0, 0.11, 0.04, 0.47, C.Gun, METAL)
+	padRidges(k, 0.99, 0.15, 0.07, 4, 0.2, 6)
+	k.box("StockCheek", V(0.12, 0.03, 0.4), P(0, 0.475, 0.5, 6), C.Rubber)
+	k.group = "cycle"
+	k.cylZ("ActionBar", 0.45, 0.028, CF(0.07, 0.34, -0.98), C.Chrome, METAL)
+	k.cylZ("ActionBar", 0.45, 0.028, CF(-0.07, 0.34, -0.98), C.Chrome, METAL)
+	k.group = "gun"
+end
+
+-- Glock 17
+function Detail.V9(k)
+	local g = P(0, -0.05, 0.04, -18)
+	k.recolor("Slide", C.Gun, METAL); k.recolor("Frame", C.Polymer)
+	k.remove("Serrations")
+	k.group = "cycle"
+	for i = 0, 4 do k.box("SlideSerr", V(0.168, 0.11, 0.014), CF(0, 0.4, 0.04 + i * 0.035), C.Black) end
+	for i = 0, 2 do k.box("SlideSerr", V(0.168, 0.11, 0.014), CF(0, 0.4, -0.46 - i * 0.04), C.Black) end
+	k.group = "gun"
+	k.box("SlideStop", V(0.02, 0.03, 0.12), CF(-0.08, 0.29, -0.12), C.Chrome, METAL)
+	k.box("TakedownLever", V(0.02, 0.035, 0.07), CF(-0.08, 0.26, -0.28), C.Chrome, METAL)
+	k.box("MagRelease", V(0.02, 0.04, 0.045), CF(0.078, 0.19, 0.0), C.Black)
+	for i = 0, 1 do k.box("RailSlot", V(0.146, 0.014, 0.03), CF(0, 0.188, -0.5 - i * 0.07), C.Black) end
+	for r = 0, 3 do
+		for c = 0, 2 do
+			for _, sx in ipairs({ -1, 1 }) do k.box("GripDot", V(0.012, 0.026, 0.026), g * CF(sx * 0.077, -0.16 + r * 0.08, -0.07 + c * 0.07), C.Black) end
+		end
+	end
+	k.box("Backstrap", V(0.1, 0.4, 0.03), g * CF(0, -0.03, 0.15), C.Dark)
+	k.box("MagFlare", V(0.17, 0.03, 0.3), g * CF(0, -0.255, 0.0), C.Black)
+	magRibs(k, g * CF(0, -0.12, 0.01), 3, -0.12, 0.08, 0.126, 0.16)
+end
+
+-- .44 Magnum
+function Detail.MAGNUM(k)
+	local g = P(0, -0.03, 0.08, -20)
+	k.recolor("Barrel", C.Chrome, METAL)
+	k.pins("FrameScrew", 0.078, 0.38, -0.08, 0.035, C.Black)
+	k.pins("FrameScrew", 0.078, 0.28, -0.33, 0.035, C.Black)
+	k.box("CylRelease", V(0.03, 0.05, 0.07), CF(-0.09, 0.36, 0.03), C.Chrome, METAL)
+	k.box("Crown", V(0.11, 0.13, 0.025), CF(0, 0.43, -1.305), C.Black)
+	k.cylZ("RodTip", 0.03, 0.06, CF(0, 0.33, -1.19), C.Chrome, METAL)
+	k.box("GripPanel", V(0.156, 0.3, 0.18), g * CF(0, -0.02, -0.02), C.WoodDark, WOOD)
+	k.cylX("Medallion", 0.012, 0.07, g * CF(0.078, 0.1, 0), C.Brass, METAL)
+	k.cylX("Medallion", 0.012, 0.07, g * CF(-0.078, 0.1, 0), C.Brass, METAL)
+	k.box("GripCap", V(0.16, 0.03, 0.28), g * CF(0, -0.255, 0), C.Steel, METAL)
+	k.group = "mag"
+	k.cylZ("CylRing", 0.02, 0.3, CF(0, 0.36, -0.04), C.Steel, METAL)
+	k.cylZ("CylRing", 0.02, 0.3, CF(0, 0.36, -0.36), C.Steel, METAL)
+	k.group = "gun"
+end
+
 GunModels.Models = Models
+GunModels.Detail = Detail
 
 -- ================= SIGHTS =================
 -- Each optic: Display name, Mag (zoom, nil = use the gun's ADSFov), Eye (aim distance), Overlay (full-screen scope)
@@ -549,6 +857,8 @@ function GunModels.Describe(modelId, sightId)
 	local fn = Models[modelId] or Models.VX9
 	local k = newKit()
 	fn(k)
+	local pass = Models[modelId] and Detail[modelId] -- v4.7 detail pass (adds parts on top of the base model)
+	if pass then k.group, k.tag = "gun", nil pass(k) k.group, k.tag = "gun", nil end
 	local sight = Sights[sightId] or Sights.Iron
 	local aim, eye = k.pts.IronAim, k.ironEye or 0.45
 	if sight.Build then
