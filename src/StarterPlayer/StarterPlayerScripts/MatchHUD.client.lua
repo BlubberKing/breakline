@@ -1,4 +1,4 @@
--- MatchHUD v3.3 (v4.4: blue SHIELD bar above your health bar, hit flash + shake on both bars when they lose points, bars follow MaxHealth 200)
+-- MatchHUD v3.4 (v4.7: shield bar removed, 250 white health) (v3.3: v4.4: blue SHIELD bar above your health bar, hit flash + shake on both bars when they lose points, bars follow MaxHealth 200)
 -- (v3.2) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
 -- v3.2 polish: rounded health segments with a white 'damage trail' that drains behind the real value, low-health pulse, team-colored
 -- name tick, soft corner shading so white text reads on any map, rounded selected gun slot, ammo that pops on change, reload bar that
@@ -135,11 +135,12 @@ end
 -- you (bottom, large)
 local SH_BLUE = Color3.fromRGB(80, 170, 255)
 local meName = text(squad, player.DisplayName, 30, 0, 1080 - 44 - 150, 420, 34, F_BOLD)
-local meHP = text(squad, "200", 34, 0, 1080 - 44 - 108, 80, 36, F_BOLD)
-local meMax = text(squad, "/ 200", 22, 66, 1080 - 44 - 100, 80, 28, F_MED, nil, DIM)
+local meHP = text(squad, "250", 34, 0, 1080 - 44 - 108, 80, 36, F_BOLD)
+local meMax = text(squad, "/ 250", 22, 66, 1080 - 44 - 100, 80, 28, F_MED, nil, DIM)
 -- v4.4: SHIELD (100) = the thin blue bar right above the health bar
-local meShBar, meShTick, meShFlash = segBar(squad, 0, 1080 - 44 - 54, 10, 38, 9, 4)
-local meShNum = text(squad, "100", 16, 10 * 42 + 2, 1080 - 44 - 58, 60, 18, F_BOLD, Enum.TextXAlignment.Left, SH_BLUE)
+local function noop() end -- v4.7: the shield is gone (250 white health for everybody)
+local meShBar, meShTick, meShFlash = noop, noop, noop
+local meShNum = { Text = "", TextTransparency = 1 }
 local meBar, meTick, meFlash = segBar(squad, 0, 1080 - 44 - 38, 10, 38, 22, 4)
 local meTick_ = function(dt) meTick(dt) meShTick(dt) end
 -- team-colored tick left of your name + a thin underline that pulses when you are low
@@ -176,7 +177,7 @@ end
 local function hpOf(p)
 	local ch = p.Character
 	local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-	if not hum then return 0, 200 end
+	if not hum then return 0, 250 end
 	return math.max(0, hum.Health), math.max(1, hum.MaxHealth)
 end
 local function shieldOf(p)
