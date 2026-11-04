@@ -1,4 +1,4 @@
--- LobbyClient v5.4 (v4.3: CARD INDEX buttons - home HUD above PLAY + play screen top bar; they open the CardIndex LocalScript)
+-- LobbyClient v5.5 (v4.7: loadout pickers only list items you own) (v5.4: v4.3: CARD INDEX buttons - home HUD above PLAY + play screen top bar; they open the CardIndex LocalScript)
 -- LobbyClient v5.3 (v3.8/v3.9: play-block queue indicator, static skin poses, LobbyMenuOpen flag, ability icons, no souls bullet) "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
 -- v5.2 (GDD v3.7): new slim logo from UIKit (flowing red slash), idle moves only on the squad stage, invite popup no longer
 -- peeks in at the top of the screen on non-16:9 windows (it is hidden, not just parked above the canvas).
@@ -948,13 +948,19 @@ local PICK_SUBS = {
 	reserve = "SWAP WITH YOUR ACTIVE LOADOUT WHILE DEAD",
 	skin = "PICK AN OUTFIT  //  WORN IN THE LOBBY, ON THE STAGE AND IN THE MATCH",
 }
-local function itemsFor(kind)
-	if kind == "move" then return Catalog.Moves end
-	if kind == "weapon" then return Catalog.Weapons end
-	if kind == "gadget" then return Catalog.Gadgets end
+-- v5.5 (v4.7 SHOP): only items you own show up here (buy more in the shop)
+local function ownedOnly(list)
 	local l = {}
-	for _, i in Catalog.Weapons do table.insert(l, i) end
-	for _, i in Catalog.Gadgets do table.insert(l, i) end
+	for _, i in list do if Catalog.Owns(player, i.id) then table.insert(l, i) end end
+	return l
+end
+local function itemsFor(kind)
+	if kind == "move" then return ownedOnly(Catalog.Moves) end
+	if kind == "weapon" then return ownedOnly(Catalog.Weapons) end
+	if kind == "gadget" then return ownedOnly(Catalog.Gadgets) end
+	local l = {}
+	for _, i in ownedOnly(Catalog.Weapons) do table.insert(l, i) end
+	for _, i in ownedOnly(Catalog.Gadgets) do table.insert(l, i) end
 	return l
 end
 
