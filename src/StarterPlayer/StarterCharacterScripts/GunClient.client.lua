@@ -227,6 +227,7 @@ barFill.BorderSizePixel = 0; barFill.Size = UDim2.fromScale(1, 1); barFill.Paren
 local WEAPON, cfg, INTERVAL, sight
 local built, partsList, cfList = nil, {}, {}
 local IDENT = CFrame.identity
+local CYL_TURN = CFrame.Angles(0, math.pi / 2, 0) -- v4.8: the left sleeve + cuff are cylinders now (their long axis is X), so they get this turn after lookAt
 local ReloadAnims = require(RS:WaitForChild("ReloadAnims"))
 local reloadAnim -- per-gun reload (ReloadAnims.lua), rebuilt on equip
 local OFFSCREEN = CFrame.new(0, -500, 0)
@@ -872,9 +873,9 @@ local function onRender(dt)
 			i += 1
 			if g.Dyn == "sleeve" then
 				local len = built.SleeveLen
-				cfList[i] = gunCF * CFrame.lookAt(handPos + armDir * (0.15 + len / 2), handPos + armDir * (1 + len / 2))
+				cfList[i] = gunCF * CFrame.lookAt(handPos + armDir * (0.15 + len / 2), handPos + armDir * (1 + len / 2)) * (g.Cyl and CYL_TURN or IDENT)
 			elseif g.Dyn == "cuff" then
-				cfList[i] = gunCF * CFrame.lookAt(handPos + armDir * 0.2, handPos + armDir)
+				cfList[i] = gunCF * CFrame.lookAt(handPos + armDir * 0.2, handPos + armDir) * (g.Cyl and CYL_TURN or IDENT)
 			else
 				cfList[i] = leftCF * g.Offset
 			end
