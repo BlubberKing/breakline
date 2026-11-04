@@ -214,7 +214,7 @@ function K.Logo(parent, size, props, mode)
 end
 
 -- ===== ability icons (v3.8): small drawn graphics for the 4 movement abilities =====
--- K.AbilityIcon(parent, id, size, color) -> Frame (size x size). id = "DJUMP" | "MJUMP" | "WRUN" | "WCLIMB".
+-- K.AbilityIcon(parent, id, size, color) -> Frame (size x size). id = "DASH" | "DJUMP" | "MJUMP" | "WRUN" | "WCLIMB".
 -- Built from thin rotated bars so they stay crisp at any size. Color defaults to white.
 local function ibar(parent, size, x1, y1, x2, y2, th, col)
 	local dx, dy = (x2 - x1) * size, (y2 - y1) * size
@@ -230,7 +230,13 @@ function K.AbilityIcon(parent, id, size, color)
 	local th = math.max(2, math.floor(size * 0.09))
 	local function B(x1, y1, x2, y2, c, t) return ibar(h, size, x1, y1, x2, y2, t or th, c or color) end
 	local function chevronUp(cx, cy, w, c) B(cx - w, cy + w * 0.7, cx, cy, c); B(cx + w, cy + w * 0.7, cx, cy, c) end
-	if id == "DJUMP" then -- two stacked chevrons
+	if id == "DASH" then -- speed lines trailing a bold arrow
+		B(0.1, 0.3, 0.46, 0.3, color:Lerp(Color3.new(0, 0, 0), 0.45), math.max(1, th - 1))
+		B(0.04, 0.5, 0.58, 0.5)
+		B(0.16, 0.7, 0.46, 0.7, color:Lerp(Color3.new(0, 0, 0), 0.45), math.max(1, th - 1))
+		B(0.62, 0.5, 0.9, 0.5)
+		B(0.9, 0.5, 0.72, 0.28); B(0.9, 0.5, 0.72, 0.72)
+	elseif id == "DJUMP" then -- two stacked chevrons
 		chevronUp(0.5, 0.32, 0.26)
 		chevronUp(0.5, 0.64, 0.26, color:Lerp(Color3.new(0, 0, 0), 0.35))
 	elseif id == "MJUMP" then -- big arrow over a coiled base
