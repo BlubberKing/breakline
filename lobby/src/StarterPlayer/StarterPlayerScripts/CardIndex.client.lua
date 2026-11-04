@@ -1,9 +1,10 @@
--- CardIndex v1.0 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.3 (GDD section 4.1).
+-- CardIndex v1.1 (v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
+-- (was v1.0) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.3 (GDD section 4.1).
 -- The CARD INDEX page: your card collection on the left, your 32-card DECK on the right.
 -- Opened by the CARD INDEX buttons in LobbyClient (they set the Player attribute CardIndexOpen = true). ESC / BACK closes it.
---   Collection : every card you own, filter by rarity, sort by rarity or name. Under each card: [-]  in-deck pips  [+].
+--   Collection : every card you own, filter by rarity, sort by rarity or name. Under each card: [-]  red in-deck boxes + OWNED n  [+].
 --                Click a card to inspect it big (add / remove there too, < > or arrow keys to browse).
---   Deck       : n / 32 counter, rarity mix bar, the list of cards in it (click a row = inspect, [-] = take one out),
+--   Deck       : n / 32 counter, rarity mix bar, the cards in it as a grid of mini cards with an xN count (click = inspect, right click or [-] = take one out),
 --                AUTO FILL / CLEAR / UNDO CHANGES.
 --   (?)        : the deck rules (from Cards.RULES) and the 7 rarities.
 -- Saving: the deck saves by itself the moment it is valid (exactly 32 cards). The server re-checks it (LobbyServer, SetDeck remote).
@@ -95,9 +96,10 @@ local function diamond(parent, cx, cy, s, col)
 		BackgroundColor3 = col, BorderSizePixel = 0 }, parent)
 end
 -- small +/- sign drawn from bars
-local function signIcon(parent, plus, col)
-	new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(12, 2), BackgroundColor3 = col, BorderSizePixel = 0 }, parent)
-	if plus then new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(2, 12), BackgroundColor3 = col, BorderSizePixel = 0 }, parent) end
+local function signIcon(parent, plus, col, len)
+	len = len or 12
+	new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(len, 2), BackgroundColor3 = col, BorderSizePixel = 0 }, parent)
+	if plus then new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(2, len), BackgroundColor3 = col, BorderSizePixel = 0 }, parent) end
 end
 local function rarityTint(R) -- readable rarity colour on the dark UI
 	if R.id == "signature" then return WHITE end
@@ -305,11 +307,12 @@ new("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 20)
 
 local cells = {} -- id -> cell record
 local openInspect -- forward
+local SQ = 28 -- v4.4: the +/- buttons are a little smaller (was 32)
 local function smallSquare(parent, x, y, plus)
-	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel2, BorderSizePixel = 0, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(32, 32) }, parent)
+	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel2, BorderSizePixel = 0, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(SQ, SQ) }, parent)
 	local st = border(b, C.line, 1)
 	hoverable(b, C.panel2, plus and C.red or C.panel3, st, C.line, plus and C.redHi or C.line2)
-	signIcon(b, plus, C.text)
+	signIcon(b, plus, C.text, 10)
 	grow(b, 1.08)
 	return b
 end
@@ -321,21 +324,18 @@ local function makeCell(c)
 		Size = UDim2.fromOffset(CARD_W, CARD_W * 1.4) }, cell)
 	grow(btn, 1.04)
 	local holderSlot = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, btn)
-	local badge = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 6, 0, -6), Size = UDim2.fromOffset(40, 26), BackgroundColor3 = C.red, BorderSizePixel = 0, Visible = false }, btn)
-	border(badge, BLACK, 1.5)
-	local badgeT = lbl(badge, "", 15, 0, 0, 40, 26, WHITE, "H", Enum.TextXAlignment.Center)
 	local y = CARD_W * 1.4 + 14
 	local minus = smallSquare(cell, (CELL_W - CARD_W) / 2, y, false)
-	local plus = smallSquare(cell, CELL_W - (CELL_W - CARD_W) / 2 - 32, y, true)
+	local plus = smallSquare(cell, CELL_W - (CELL_W - CARD_W) / 2 - SQ, y, true)
 	local pips = {}
 	for i = 1, Cards.MAX_COPIES do
-		local p = frame(cell, CELL_W / 2 - 37 + (i - 1) * 20, y + 2, 14, 14, C.panel, 0)
+		local p = frame(cell, CELL_W / 2 - 37 + (i - 1) * 20, y, 14, 14, C.panel, 0)
 		p.Rotation = 0
 		border(p, C.line2, 1)
 		pips[i] = p
 	end
-	local own = lbl(cell, "", 10, 40, y + 19, CELL_W - 80, 13, C.mute, "M", Enum.TextXAlignment.Center)
-	local rec = { c = c, R = R, cell = cell, btn = btn, slot = holderSlot, badge = badge, badgeT = badgeT, pips = pips, own = own, built = false, minus = minus, plus = plus }
+	local own = lbl(cell, "", 17, 36, y + 15, CELL_W - 72, 20, C.text, "H", Enum.TextXAlignment.Center) -- v4.4: only OWNED, bigger
+	local rec = { c = c, R = R, cell = cell, btn = btn, slot = holderSlot, pips = pips, own = own, built = false, minus = minus, plus = plus }
 	btn.MouseButton1Click:Connect(function() openInspect(c.id) end)
 	btn.MouseButton2Click:Connect(function() removeCard(c.id) end)
 	plus.MouseButton1Click:Connect(function() addCard(c.id) end)
@@ -355,9 +355,7 @@ local function paintCell(rec)
 		p.BackgroundColor3 = on and C.red or C.panel
 		p:FindFirstChildOfClass("UIStroke").Color = on and C.redHi or C.line2
 	end
-	rec.own.Text = ("IN DECK %d / %d   //   OWNED %d"):format(inDeck, cap, owned)
-	rec.badge.Visible = inDeck > 0
-	rec.badgeT.Text = "x" .. inDeck
+	rec.own.Text = ("OWNED %d"):format(owned)
 	local full = #draft >= Cards.DECK_SIZE
 	rec.plus.AutoButtonColor = false
 	rec.plus.BackgroundTransparency = (full or inDeck >= cap) and 0.6 or 0
@@ -409,10 +407,15 @@ local mixLegend = new("Frame", { Position = UDim2.fromOffset(20, 210), Size = UD
 new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 14), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center }, mixLegend)
 frame(deckP, 20, 238, DW - 40, 1, C.line, 0)
 
-local list = new("ScrollingFrame", { Position = UDim2.fromOffset(12, 246), Size = UDim2.fromOffset(DW - 24, DH - 246 - 70), BackgroundTransparency = 1, BorderSizePixel = 0,
-	ScrollBarThickness = 4, ScrollBarImageColor3 = C.line2, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y }, deckP)
-new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, list)
-new("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 6) }, list)
+-- v4.4: the deck is shown as a grid of mini CARDS (one per distinct card, with an xN count) instead of stacked name rows
+local MINI_W = 104
+local MINI_H = math.floor(MINI_W * 1.4)
+local list = new("ScrollingFrame", { Position = UDim2.fromOffset(12, 246), Size = UDim2.fromOffset(DW - 24, DH - 246 - 86), BackgroundTransparency = 1, BorderSizePixel = 0,
+	ScrollBarThickness = 4, ScrollBarImageColor3 = C.line2, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y }, deckP)
+new("UIGridLayout", { CellSize = UDim2.fromOffset(MINI_W, MINI_H), CellPadding = UDim2.fromOffset(9, 12), SortOrder = Enum.SortOrder.LayoutOrder,
+	HorizontalAlignment = Enum.HorizontalAlignment.Center }, list)
+new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 12) }, list)
+lbl(deckP, "CLICK A CARD TO INSPECT   //   RIGHT CLICK OR [-] TO TAKE ONE OUT", 11, 20, DH - 80, DW - 40, 14, C.mute, "M")
 local emptyHint = lbl(deckP, "YOUR DECK IS EMPTY\nADD CARDS FROM YOUR COLLECTION", 16, 0, 420, DW, 60, C.mute, "HM", Enum.TextXAlignment.Center)
 
 local fillBtn = button(deckP, "AUTO FILL", 20, DH - 58, 176, 42, "ghost", 16)
@@ -420,7 +423,54 @@ local undoBtn = button(deckP, "UNDO CHANGES", 20 + 188, DH - 58, 176, 42, "ghost
 local clearBtn = button(deckP, "CLEAR", 20 + 376, DH - 58, DW - 40 - 376, 42, "danger", 16)
 for _, b in { fillBtn, undoBtn, clearBtn } do grow(b, 1.04) end
 
-local rowPool = {}
+local miniCells = {} -- card id -> { cell, slot, pill, pillT, built }
+local function miniCell(id)
+	local m = miniCells[id]
+	if m then return m end
+	local cell = new("Frame", { BackgroundTransparency = 1 }, list)
+	local slot = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, cell)
+	local btn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 3 }, cell)
+	local pill = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -5), Size = UDim2.fromOffset(40, 24), BackgroundColor3 = C.red, BorderSizePixel = 0, ZIndex = 4 }, cell)
+	border(pill, BLACK, 1.5)
+	local pillT = lbl(pill, "", 16, 0, 0, 40, 24, WHITE, "H", Enum.TextXAlignment.Center)
+	pillT.ZIndex = 5
+	local mb = new("TextButton", { Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 4), Size = UDim2.fromOffset(24, 24),
+		BackgroundColor3 = C.bg, BackgroundTransparency = 0.15, BorderSizePixel = 0, ZIndex = 6 }, cell)
+	local mst = border(mb, C.line2, 1)
+	hoverable(mb, C.bg, C.red, mst, C.line2, C.redHi)
+	signIcon(mb, false, C.text, 10)
+	for _, ch in mb:GetChildren() do if ch:IsA("Frame") then ch.ZIndex = 7 end end
+	local cellScale = new("UIScale", { Scale = 1 }, cell)
+	btn.MouseEnter:Connect(function() tween(cellScale, GROW, { Scale = 1.05 }) end)
+	btn.MouseLeave:Connect(function() tween(cellScale, GROW, { Scale = 1 }) end)
+	btn.MouseButton1Click:Connect(function() openInspect(id) end)
+	btn.MouseButton2Click:Connect(function() removeCard(id) end)
+	mb.MouseButton1Click:Connect(function() removeCard(id) end)
+	m = { cell = cell, slot = slot, pill = pill, pillT = pillT, built = false }
+	miniCells[id] = m
+	return m
+end
+
+local function paintDeckCards()
+	local counts = Cards.Counts(draft)
+	local distinct, seen = {}, {}
+	for _, id in sortedDeck(draft) do if not seen[id] then seen[id] = true table.insert(distinct, id) end end
+	emptyHint.Visible = #distinct == 0
+	for i, id in distinct do
+		local m = miniCell(id)
+		m.cell.Visible = true
+		m.cell.LayoutOrder = i
+		m.pillT.Text = "x" .. counts[id]
+		if not m.built then
+			m.built = true
+			task.spawn(CardArt.Build, m.slot, id, { width = MINI_W, anim = false }) -- built on first use (Build can yield while it measures text)
+		end
+	end
+	for id, m in miniCells do
+		if not seen[id] then m.cell.Visible = false end
+	end
+end
+
 local function paintDeck()
 	local n = #draft
 	countBig.Text = tostring(n)
@@ -466,49 +516,7 @@ local function paintDeck()
 			t.TextXAlignment = Enum.TextXAlignment.Left
 		end
 	end
-	-- rows (one per distinct card, highest rarity first)
-	local distinct, seen = {}, {}
-	for _, id in sortedDeck(draft) do if not seen[id] then seen[id] = true table.insert(distinct, id) end end
-	emptyHint.Visible = #distinct == 0
-	for i, id in distinct do
-		local row = rowPool[i]
-		if not row then
-			local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 48), LayoutOrder = i }, list)
-			local st = border(b, C.line, 1)
-			hoverable(b, C.panel, C.panel2, st, C.line, C.line2)
-			local strip = frame(b, 0, 0, 5, 48, C.red, 0)
-			local gemD = diamond(b, 24, 24, 12, C.red)
-			border(gemD, BLACK, 1)
-			local name = lbl(b, "", 19, 42, 5, 300, 24, C.text, "H")
-			name.TextTruncate = Enum.TextTruncate.AtEnd
-			local rar = lbl(b, "", 10, 43, 29, 300, 13, C.dim, "MB")
-			local cnt = lbl(b, "", 24, 0, 0, 0, 48, C.text, "H", Enum.TextXAlignment.Right)
-			cnt.AnchorPoint = Vector2.new(1, 0)
-			cnt.Position = UDim2.new(1, -58, 0, 0)
-			cnt.Size = UDim2.fromOffset(60, 48)
-			local mb = new("TextButton", { Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(34, 34),
-				BackgroundColor3 = C.panel2, BorderSizePixel = 0 }, b)
-			local mst = border(mb, C.line, 1)
-			hoverable(mb, C.panel2, C.panel3, mst, C.line, C.red)
-			signIcon(mb, false, C.text)
-			row = { b = b, strip = strip, gem = gemD, name = name, rar = rar, cnt = cnt, mb = mb }
-			b.MouseButton1Click:Connect(function() if row.id then openInspect(row.id) end end)
-			mb.MouseButton1Click:Connect(function() if row.id then removeCard(row.id) end end)
-			rowPool[i] = row
-		end
-		local c = Cards.ById[id]
-		local R = Cards.RarityById[c.rarity]
-		row.id = id
-		row.b.Visible = true
-		row.b.LayoutOrder = i
-		row.strip.BackgroundColor3 = R.id == "signature" and WHITE or R.body
-		row.gem.BackgroundColor3 = R.id == "signature" and WHITE or R.body
-		row.name.Text = string.upper(c.name)
-		row.rar.Text = R.name
-		row.rar.TextColor3 = rarityTint(R)
-		row.cnt.Text = "x" .. Cards.Counts(draft)[id]
-	end
-	for i = #distinct + 1, #rowPool do rowPool[i].b.Visible = false rowPool[i].id = nil end
+	paintDeckCards()
 end
 
 -- ================= inspect (big card) =================
@@ -538,7 +546,7 @@ local ipNext = button(ip, ">", 630, 600, 58, 48, "ghost", 26)
 lbl(ip, "BROWSE", 11, 700, 617, 200, 14, C.mute, "MB")
 local ipClose = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(1110, 24), Size = UDim2.fromOffset(130, 30) }, ip)
 keyHint(ipClose, "ESC", "CLOSE", 0, 3)
-local ipCard, ipId = nil, nil
+local ipCard, ipId, ipToken = nil, nil, 0
 local ipBlock = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, ip) -- clicks on the panel do not close it
 
 local function paintInspect()
@@ -570,11 +578,17 @@ end
 function openInspect(id)
 	if not Cards.Is(id) then return end
 	if id ~= ipId then
-		if ipCard then ipCard:Destroy() end
-		ipCard = CardArt.Build(ipCardSlot, id, { width = 426 })
+		if ipCard then ipCard:Destroy() ipCard = nil end
 		ipId = id
-		local sc = new("UIScale", { Scale = 0.92 }, ipCard)
-		tween(sc, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
+		ipToken += 1
+		local my = ipToken
+		task.spawn(function() -- (CardArt.Build can yield while it measures the description text)
+			local holder = CardArt.Build(ipCardSlot, id, { width = 426 })
+			if my ~= ipToken then holder:Destroy() return end
+			ipCard = holder
+			local sc = new("UIScale", { Scale = 0.92 }, holder)
+			tween(sc, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
+		end)
 	end
 	insp.Visible = true
 	paintInspect()
