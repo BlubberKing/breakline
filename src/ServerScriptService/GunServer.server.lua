@@ -10,6 +10,7 @@ local MatchCfg = require(RS:WaitForChild("MatchConfig"))
 local BoxDamage = ServerStorage:WaitForChild("BoxDamage", 30) -- BindableEvent made by MatchServer
 local GadgetDamage = ServerStorage:WaitForChild("GadgetDamage", 30) -- BindableEvent made by GadgetServer (v4.0: bubble shields)
 local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
+local Vitals = require(script.Parent:WaitForChild("Vitals")) -- v4.4: 200 health + 100 shield (damage hits the shield first)
 local MatchState = RS:WaitForChild("MatchState", 30) -- made by MatchServer; guns only work while the match is live
 
 local remotes = Instance.new("Folder")
@@ -220,11 +221,10 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 	-- one damage number per target per shot (shotgun pellets are added together)
 	for model, h in hits do
 		if h.hum.Health > 0 then
-			local before = h.hum.Health
-			h.hum:TakeDamage(h.dmg)
+			local dealt = Vitals.Damage(h.hum, h.dmg) -- shield first, then health
 			local killed = h.hum.Health <= 0
 			if h.player then -- match stats for the souls screen (MatchServer resets them every round)
-				player:SetAttribute("StatDamage", (player:GetAttribute("StatDamage") or 0) + math.min(h.dmg, before))
+				player:SetAttribute("StatDamage", (player:GetAttribute("StatDamage") or 0) + dealt)
 				if killed then player:SetAttribute("StatKills", (player:GetAttribute("StatKills") or 0) + 1) end
 			end
 			HitConfirm:FireClient(player, model, h.head, killed, math.floor(h.dmg + 0.5), h.pos)
