@@ -1,4 +1,5 @@
--- MatchHUD v3.2 (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
+-- MatchHUD v3.3 (v4.4: blue SHIELD bar above your health bar, hit flash + shake on both bars when they lose points, bars follow MaxHealth 200)
+-- (v3.2) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
 -- v3.2 polish: rounded health segments with a white 'damage trail' that drains behind the real value, low-health pulse, team-colored
 -- name tick, soft corner shading so white text reads on any map, rounded selected gun slot, ammo that pops on change, reload bar that
 -- glows. Same Finals layout + same attributes as v3.1.
@@ -84,6 +85,8 @@ local squad = new("Frame", { Position = UDim2.fromOffset(48, 0), Size = UDim2.fr
 local function segBar(parent, x, y, n, segW, segH, gap)
 	local segs = {}
 	local ghostFrac, targetFrac = 1, 1
+	local flashAmt = 0
+	local baseColor = WHITE
 	for i = 1, n do
 		local back = rect(parent, x + (i - 1) * (segW + gap), y, segW, segH, Color3.new(0, 0, 0), 0.5)
 		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, back)
@@ -91,13 +94,13 @@ local function segBar(parent, x, y, n, segW, segH, gap)
 		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, ghost)
 		local fill = rect(back, 0, 0, segW, segH, WHITE, 0)
 		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, fill)
-		segs[i] = { back = back, ghost = ghost, fill = fill, w = segW }
+		segs[i] = { back = back, ghost = ghost, fill = fill, w = segW, x = x + (i - 1) * (segW + gap), y = y }
 	end
 	local function paint(frac, color)
 		for i, sg in segs do
 			local f = math.clamp(frac * n - (i - 1), 0, 1)
 			sg.fill.Size = UDim2.fromOffset(math.floor(sg.w * f + 0.5), sg.fill.Size.Y.Offset)
-			sg.fill.BackgroundColor3 = color or WHITE
+			sg.fill.BackgroundColor3 = (color or WHITE):Lerp(Color3.new(1, 1, 1), flashAmt * 0.85) -- v4.4: hit flash
 			local g = math.clamp(ghostFrac * n - (i - 1), 0, 1)
 			sg.ghost.Size = UDim2.fromOffset(math.floor(sg.w * g + 0.5), sg.ghost.Size.Y.Offset)
 		end
@@ -111,22 +114,36 @@ local function segBar(parent, x, y, n, segW, segH, gap)
 		paint(frac, lastColor)
 	end
 	local function tick(dt)
+		local dirty = false
 		if ghostFrac > targetFrac then
 			ghostFrac = math.max(targetFrac, ghostFrac - dt * 0.35)
-			paint(targetFrac, lastColor)
+			dirty = true
 		end
+		if flashAmt > 0 then
+			flashAmt = math.max(0, flashAmt - dt * 3.2)
+			dirty = true
+			-- little shake of the whole bar while the hit flash fades
+			local k = math.sin(os.clock() * 70) * flashAmt * 2.5
+			for _, sg in segs do sg.back.Position = UDim2.fromOffset(sg.x + k, sg.y) end
+		end
+		if dirty then paint(targetFrac, lastColor) end
 	end
-	return set, tick
+	local function flash() flashAmt = 1 end
+	return set, tick, flash
 end
 
 -- you (bottom, large)
-local meName = text(squad, player.DisplayName, 30, 0, 1080 - 44 - 124, 420, 34, F_BOLD)
-local meHP = text(squad, "100", 34, 0, 1080 - 44 - 82, 80, 36, F_BOLD)
-local meMax = text(squad, "/ 100", 22, 66, 1080 - 44 - 74, 80, 28, F_MED, nil, DIM)
-local meBar, meTick = segBar(squad, 0, 1080 - 44 - 38, 10, 38, 22, 4)
-local meTick_ = meTick
+local SH_BLUE = Color3.fromRGB(80, 170, 255)
+local meName = text(squad, player.DisplayName, 30, 0, 1080 - 44 - 150, 420, 34, F_BOLD)
+local meHP = text(squad, "200", 34, 0, 1080 - 44 - 108, 80, 36, F_BOLD)
+local meMax = text(squad, "/ 200", 22, 66, 1080 - 44 - 100, 80, 28, F_MED, nil, DIM)
+-- v4.4: SHIELD (100) = the thin blue bar right above the health bar
+local meShBar, meShTick, meShFlash = segBar(squad, 0, 1080 - 44 - 54, 10, 38, 9, 4)
+local meShNum = text(squad, "100", 16, 10 * 42 + 2, 1080 - 44 - 58, 60, 18, F_BOLD, Enum.TextXAlignment.Left, SH_BLUE)
+local meBar, meTick, meFlash = segBar(squad, 0, 1080 - 44 - 38, 10, 38, 22, 4)
+local meTick_ = function(dt) meTick(dt) meShTick(dt) end
 -- team-colored tick left of your name + a thin underline that pulses when you are low
-local meAccent = rect(squad, -16, 1080 - 44 - 120, 6, 28, WHITE, 0)
+local meAccent = rect(squad, -16, 1080 - 44 - 146, 6, 28, WHITE, 0)
 new("UICorner", { CornerRadius = UDim.new(0, 3) }, meAccent)
 local meGlow = rect(squad, 0, 1080 - 44 - 12, 10 * 42 - 4, 3, RED, 1)
 new("UICorner", { CornerRadius = UDim.new(0, 2) }, meGlow)
@@ -135,7 +152,7 @@ new("UICorner", { CornerRadius = UDim.new(0, 2) }, meGlow)
 local mateRows = {}
 local function mateRow(i)
 	if mateRows[i] then return mateRows[i] end
-	local y = 1080 - 44 - 124 - i * 62
+	local y = 1080 - 44 - 150 - i * 62
 	local row = new("Frame", { Position = UDim2.fromOffset(0, y), Size = UDim2.fromOffset(420, 58), BackgroundTransparency = 1 }, squad)
 	local name = text(row, "", 22, 0, 0, 360, 26, F_BOLD)
 	local dead = text(row, "DOWN", 14, 0, 0, 360, 26, F_BOLD, Enum.TextXAlignment.Right, RED)
@@ -159,8 +176,13 @@ end
 local function hpOf(p)
 	local ch = p.Character
 	local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-	if not hum then return 0, 100 end
+	if not hum then return 0, 200 end
 	return math.max(0, hum.Health), math.max(1, hum.MaxHealth)
+end
+local function shieldOf(p)
+	local ch = p.Character
+	local max = ch and ch:GetAttribute("MaxShield") or 0
+	return ch and ch:GetAttribute("Shield") or 0, max
 end
 
 -- ================= bottom-right: item selection =================
@@ -333,6 +355,7 @@ local function updateGadgetSlots()
 	end
 end
 
+local lastHp, lastSh = nil, nil
 RunService.Heartbeat:Connect(function(dt)
 	clock += dt
 	meTick_(dt)
@@ -348,6 +371,14 @@ RunService.Heartbeat:Connect(function(dt)
 	meMax.Text = "/ " .. tostring(math.floor(max))
 	meMax.Position = UDim2.fromOffset(meHP.TextBounds.X + 8, meMax.Position.Y.Offset)
 	meBar(hp / max, (hp / max <= 0.3) and RED or WHITE)
+	-- v4.4: shield bar + hit flashes (a bar flashes white and shakes whenever it loses points; the white ghost behind it drains slowly)
+	local sh, shMax = shieldOf(player)
+	meShBar(shMax > 0 and sh / shMax or 0, SH_BLUE)
+	meShNum.Text = shMax > 0 and tostring(math.ceil(sh)) or ""
+	meShNum.TextTransparency = sh > 0 and 0 or 0.6
+	if lastHp and hp < lastHp - 0.01 then meFlash() end
+	if lastSh and sh < lastSh - 0.01 then meShFlash() end
+	lastHp, lastSh = hp, sh
 	meAccent.BackgroundColor3 = teamColor3()
 	local low = hp > 0 and hp / max <= 0.3
 	meGlow.BackgroundTransparency = low and (0.35 + 0.4 * (0.5 + 0.5 * math.sin(clock * 9))) or 1
