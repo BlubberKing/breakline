@@ -54,7 +54,7 @@ timerLbl.Font = FONT
 timerLbl.TextSize = 62
 timerLbl.TextXAlignment = Enum.TextXAlignment.Left
 timerLbl.TextColor3 = Color3.new(1, 1, 1)
-timerLbl.Text = "15"
+timerLbl.Text = "25"
 timerLbl.Parent = bar
 local timerCap = Instance.new("TextLabel")
 timerCap.BackgroundTransparency = 1
@@ -366,7 +366,7 @@ RunService.RenderStepped:Connect(function(dt)
 
 	local now = workspace:GetServerTimeNow()
 	local ends = player:GetAttribute("DeathEnds") or now
-	local total = math.max(player:GetAttribute("DeathTotal") or 15, 0.1)
+	local total = math.max(player:GetAttribute("DeathTotal") or 25, 0.1)
 	local left = math.max(ends - now, 0)
 	local sec = math.ceil(left)
 	if sec ~= lastSec then
