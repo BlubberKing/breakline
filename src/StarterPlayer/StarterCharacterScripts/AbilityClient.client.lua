@@ -1,8 +1,9 @@
--- AbilityClient v2 (LocalScript in StarterPlayer > StarterCharacterScripts) - BOTH games. Keep the two copies identical.
+-- AbilityClient v2.1 (v4.7: NEW movement ability DASH - press F to dash forward fast in the direction you move (or look when standing still). 3 charges, each used charge takes 10 s to come back, one after the other.) (v2: LocalScript in StarterPlayer > StarterCharacterScripts) - BOTH games. Keep the two copies identical.
 -- v4.0: wall run + wall climb rebuilt. They now START BY THEMSELVES (no SPACE needed), look like a person running / climbing
 -- (upright body, lean, camera roll, ledge vault, dust; the limb animation lives in AbilityPose) and feel better.
--- The 4 movement abilities. You can wear ONE (loadout slot MOVE, saved as Loadout.Move; read from the Player attribute "LoadoutJson"):
+-- The 5 movement abilities. You can wear ONE (loadout slot MOVE, saved as Loadout.Move; read from the Player attribute "LoadoutJson"):
 --   DJUMP  Double Jump  - press SPACE again in the air. Cooldown after use.
+--   DASH   Dash         - F (gamepad Y): burst of speed in the direction you move / look. 3 charges; every charge you use needs DASH_RECHARGE (10 s) to come back.
 --   MJUMP  Mega Jump    - HOLD SPACE on the ground: a charge bar fills (bottom middle), release = launch, higher the longer you held.
 --                         A quick tap is a normal jump. Cooldown after the launch.
 --   WRUN   Wall Run     - SPRINT INTO A WALL and you run UP it (fast at first, the push runs out after ~1.1s, then you vault over the
@@ -71,6 +72,12 @@ local CFG = {
 	WC_AUTO_REACH = 1.9,    -- walk-into-wall grab reach
 	WC_AUTO_HOLD = 0.14,    -- seconds you must push into the wall before you grab it
 	WC_COOLDOWN = 3.5,
+	-- dash
+	DASH_SPEED = 92,        -- studs/s at the start of the dash
+	DASH_TIME = 0.24,       -- seconds the dash lasts (speed eases out)
+	DASH_EXIT = 34,         -- speed you keep when it ends
+	DASH_CHARGES = 3,
+	DASH_RECHARGE = 10,     -- seconds per charge
 	-- shared
 	HOLD_SIDE = 1.45,       -- how far the root floats off the wall (running along it)
 	HOLD_FACE = 1.75,       -- ... when facing the wall (up-run / climb)
@@ -79,9 +86,9 @@ local CFG = {
 	ROLL_DEG = 6,           -- camera roll while running along a wall
 }
 
-local NAMES = { DJUMP = "DOUBLE JUMP", MJUMP = "MEGA JUMP", WRUN = "WALL RUN", WCLIMB = "WALL CLIMB" }
-local HINTS = { DJUMP = "SPACE IN AIR", MJUMP = "HOLD SPACE", WRUN = "SPRINT INTO A WALL", WCLIMB = "WALK INTO A WALL" }
-local ICON_COL = { DJUMP = Color3.fromRGB(90, 210, 255), MJUMP = Color3.fromRGB(255, 200, 60), WRUN = Color3.fromRGB(255, 120, 90), WCLIMB = Color3.fromRGB(120, 230, 150) }
+local NAMES = { DASH = "DASH", DJUMP = "DOUBLE JUMP", MJUMP = "MEGA JUMP", WRUN = "WALL RUN", WCLIMB = "WALL CLIMB" }
+local HINTS = { DASH = "F  TO DASH", DJUMP = "SPACE IN AIR", MJUMP = "HOLD SPACE", WRUN = "SPRINT INTO A WALL", WCLIMB = "WALK INTO A WALL" }
+local ICON_COL = { DASH = Color3.fromRGB(150, 235, 255), DJUMP = Color3.fromRGB(90, 210, 255), MJUMP = Color3.fromRGB(255, 200, 60), WRUN = Color3.fromRGB(255, 120, 90), WCLIMB = Color3.fromRGB(120, 230, 150) }
 local clamp, rad, cos, sin = math.clamp, math.rad, math.cos, math.sin
 local function approach(a, b, speed, dt) return a + (b - a) * (1 - math.exp(-speed * dt)) end
 
@@ -104,6 +111,7 @@ local canClimb, climbProbeT, autoT = false, 0, 0
 local lastPress = 0
 local filterT = 0
 local alive = true
+local dashCharges, dashNext, dashing = CFG.DASH_CHARGES, 0, false
 local rollNow = 0
 local alignCF = nil -- v4.1: the smoothed body rotation while attached / standing back up (slerped, so it can never flip or spin)
 
@@ -392,6 +400,75 @@ local function doubleJump()
 	boost(vy)
 end
 
+-- ================= dash =================
+local function dashDir()
+	local md = flat(hum.MoveDirection)
+	if md.Magnitude > 0.1 then return md.Unit end
+	local l = flat(camera.CFrame.LookVector)
+	if l.Magnitude > 0.05 then return l.Unit end
+	return lastLook
+end
+
+local function dashStreaks(dir)
+	local right = dir:Cross(Vector3.yAxis)
+	for i = 1, 5 do
+		local off = right * ((i - 3) * 0.55) + Vector3.new(0, (math.random() - 0.5) * 2.4, 0)
+		local p = Instance.new("Part")
+		p.Anchored, p.CanCollide, p.CanQuery, p.CanTouch, p.CastShadow = true, false, false, false, false
+		p.Material = Enum.Material.Neon
+		p.Color = ICON_COL.DASH
+		p.Transparency = 0.35
+		p.Size = Vector3.new(0.12, 0.12, 5)
+		p.CFrame = CFrame.lookAt(root.Position + off - dir * 1.5, root.Position + off + dir)
+		p.Parent = workspace
+		TweenService:Create(p, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Transparency = 1, Size = Vector3.new(0.02, 0.02, 11), CFrame = p.CFrame * CFrame.new(0, 0, -3) }):Play()
+		Debris:AddItem(p, 0.4)
+	end
+end
+
+local function doDash()
+	if move ~= "DASH" or not alive or dashing or mode or hum.Health <= 0 or dashCharges <= 0 then return end
+	if blocked() or char:GetAttribute("Mantling") == true then return end
+	local dir = dashDir()
+	local now = os.clock()
+	dashCharges -= 1
+	if dashNext == 0 then dashNext = now + CFG.DASH_RECHARGE end -- the timer only runs while a charge is missing
+	dashing = true
+	char:SetAttribute("Dashing", true) -- Movement stands down (releases its drivers) while this is set
+	playSound("Dash")
+	ring(feetPos(), 7, ICON_COL.DASH)
+	dashStreaks(dir)
+	local lvDash = Instance.new("LinearVelocity")
+	lvDash.Name = "DashDriver"
+	lvDash.Attachment0 = att
+	lvDash.RelativeTo = Enum.ActuatorRelativeTo.World
+	lvDash.ForceLimitMode = Enum.ForceLimitMode.Magnitude
+	lvDash.MaxForce = root.AssemblyMass * 4000
+	lvDash.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
+	lvDash.PrimaryTangentAxis = Vector3.xAxis
+	lvDash.SecondaryTangentAxis = Vector3.zAxis
+	lvDash.PlaneVelocity = Vector2.new(dir.X, dir.Z) * CFG.DASH_SPEED
+	lvDash.Parent = root
+	local t0 = os.clock()
+	task.spawn(function()
+		while alive and hum.Health > 0 and not mode do
+			local t = (os.clock() - t0) / CFG.DASH_TIME
+			if t >= 1 then break end
+			local sp = CFG.DASH_EXIT + (CFG.DASH_SPEED - CFG.DASH_EXIT) * (1 - t) ^ 1.6
+			lvDash.PlaneVelocity = Vector2.new(dir.X, dir.Z) * sp
+			RunService.Heartbeat:Wait()
+		end
+		lvDash:Destroy()
+		if alive and hum.Health > 0 then
+			local v = root.AssemblyLinearVelocity
+			root.AssemblyLinearVelocity = Vector3.new(dir.X * CFG.DASH_EXIT, v.Y, dir.Z * CFG.DASH_EXIT)
+		end
+		dashing = false
+		pcall(function() char:SetAttribute("Dashing", nil) end)
+	end)
+end
+
 local function startCharge()
 	charging, chargeStart = true, os.clock()
 	char:SetAttribute("AbilitySlow", CFG.MJ_CHARGE_SLOW)
@@ -492,6 +569,10 @@ UIS.InputBegan:Connect(function(input, gpe)
 	if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
 		if move ~= "MJUMP" then onJumpPress() end
 	end
+end)
+UIS.InputBegan:Connect(function(input, gpe)
+	if gpe then return end
+	if input.KeyCode == Enum.KeyCode.F or input.KeyCode == Enum.KeyCode.ButtonY then doDash() end
 end)
 UIS.JumpRequest:Connect(function()
 	if UIS.TouchEnabled and not UIS.KeyboardEnabled then onJumpPress() end
@@ -666,6 +747,10 @@ end
 local function update(dt)
 	if hum.Health <= 0 or not alive then return end
 	local now = os.clock()
+	if dashCharges < CFG.DASH_CHARGES and dashNext > 0 and now >= dashNext then
+		dashCharges += 1
+		dashNext = dashCharges < CFG.DASH_CHARGES and (dashNext + CFG.DASH_RECHARGE) or 0 -- next charge starts counting when this one lands
+	end
 	filterT += dt
 	if filterT > 0.5 then filterT = 0 refreshFilter() end
 
@@ -777,6 +862,18 @@ local barGrad = UI.new("UIGradient", { Color = ColorSequence.new(K.soul, K.soulP
 local barLbl = UI.new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 128), Size = UDim2.fromOffset(420, 16), Text = "",
 	TextSize = 12, FontFace = F.MB, TextColor3 = K.text, TextStrokeTransparency = 0.5 }, holder)
 
+-- dash: three charge pips under the icon (each fills while its charge is coming back)
+local dashPips, dashCount = {}, nil
+for i = 1, 3 do
+	local back = UI.new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(210 + (i - 2) * 76, 96), Size = UDim2.fromOffset(68, 9),
+		BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false }, holder)
+	UI.new("UIStroke", { Color = K.line2, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, back)
+	local fill = UI.new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = ICON_COL.DASH, BorderSizePixel = 0, ZIndex = 2 }, back)
+	dashPips[i] = { back = back, fill = fill }
+end
+dashCount = UI.new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromScale(1, 1), Size = UDim2.fromOffset(24, 20),
+	Text = "", TextSize = 16, FontFace = F.H, TextColor3 = K.text, TextStrokeTransparency = 0.4, ZIndex = 5 }, box)
+
 local builtFor = nil
 local function buildIcon()
 	for _, c in iconHolder:GetChildren() do c:Destroy() end
@@ -808,6 +905,23 @@ RunService.RenderStepped:Connect(function()
 		cdOverlay.Size = UDim2.fromScale(1, 0)
 		cdText.Text = ""
 		boxStroke.Color = ICON_COL[move]
+	end
+	-- dash pips + count
+	for i, pip in dashPips do
+		pip.back.Visible = move == "DASH"
+		if move == "DASH" then
+			local f = 0
+			if i <= dashCharges then f = 1
+			elseif i == dashCharges + 1 and dashNext > 0 then f = clamp(1 - (dashNext - now) / CFG.DASH_RECHARGE, 0, 1) end
+			pip.fill.Size = UDim2.fromScale(f, 1)
+			pip.fill.BackgroundTransparency = f >= 1 and 0 or 0.35
+		end
+	end
+	dashCount.Text = move == "DASH" and tostring(dashCharges) or ""
+	if move == "DASH" then
+		cdOverlay.Size = UDim2.fromScale(1, 0)
+		cdText.Text = ""
+		boxStroke.Color = dashCharges > 0 and ICON_COL.DASH or K.line2
 	end
 	-- hint line
 	local h = HINTS[move]
@@ -847,6 +961,7 @@ player:GetAttributeChangedSignal("LoadoutJson"):Connect(function()
 	if mode then exitMode(nil) end
 	if charging then endCharge() end
 	move, cdEnd, usedDJ, stamina, exhausted = m, 0, false, 1, false
+	dashCharges, dashNext = CFG.DASH_CHARGES, 0
 end)
 
 local function cleanup()
@@ -859,6 +974,7 @@ local function cleanup()
 	pcall(function() driver:Destroy() align:Destroy() att:Destroy() end)
 	pcall(function() gui:Destroy() end)
 	pcall(function() char:SetAttribute("AbilitySlow", nil) end)
+	pcall(function() char:SetAttribute("Dashing", nil) end)
 end
 hum.Died:Connect(cleanup)
 char.AncestryChanged:Connect(function(_, parent) if not parent then cleanup() end end)
