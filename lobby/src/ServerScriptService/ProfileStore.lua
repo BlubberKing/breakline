@@ -1,4 +1,4 @@
--- ProfileStore (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
+-- ProfileStore v2 (v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
 -- One DataStore record per player, shared by both places. Only the keys you CHANGED are written (so the two places never overwrite each other).
 --   Profiles.WaitFor(player)            -> waits until the profile is loaded, returns the data table (or nil)
 --   Profiles.Get(player, key)           -> value
@@ -10,6 +10,7 @@
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 
 local store = DataStoreService:GetDataStore("BreaklineProfile_v1")
 
@@ -27,6 +28,8 @@ local DEFAULTS = {
 	Skin = "OPERATOR",         -- equipped skin (ReplicatedStorage.Skins). New players start with the default skin.
 	SkinsOwned = {},           -- reserved: skins bought in the shop later (all 3 starter skins are free for now)
 	Cards = {}, Deck = {},     -- reserved for the card system
+	Owned = {},                -- v4.7 SHOP: ids of every gun / gadget / movement ability you own (LobbyCatalog ids). Mirrored as the attribute OwnedJson.
+	StarterDone = false,       -- v4.7: true once the new-player pick (1 weapon + 1 movement) was made
 }
 
 local M = {}
@@ -53,6 +56,7 @@ end
 local function mirror(player, k, v)
 	-- Weapon / Sight are NOT mirrored: GunServer owns those attributes in the match (mirroring "" used to wipe your gun = no damage)
 	if k == "Weapon" or k == "Sight" then return end
+	if k == "Owned" and type(v) == "table" then player:SetAttribute("OwnedJson", HttpService:JSONEncode(v)) end -- v4.7
 	if type(v) == "number" or type(v) == "string" or type(v) == "boolean" then player:SetAttribute(k, v) end
 	if k == "XP" and Levels and type(v) == "number" then player:SetAttribute("Level", (Levels.FromXp(v))) end
 end
