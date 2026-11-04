@@ -46,7 +46,7 @@ C.REVEAL_TIME  = C.REVEAL_BUILD + C.REVEAL_DIVE
 C.REZ_FINISH   = 0.55 -- after a revive the body is already ~85% built (it was building the whole 8 s), this is the rest + the dive
 
 -- ===== v4.1 death screen + souls =====
-C.DEAD_TIME = 15  -- seconds you are dead (you spectate a living teammate)
+C.DEAD_TIME = 25  -- seconds you are dead (you spectate a living teammate). v4.4: 25 (was 15)
 C.WIPE_TIME = 10  -- team wipe (nobody left to spectate): EVERYONE on the team is dead for this long and free-roams the map
 C.REZ_TIME  = 8   -- seconds a teammate has to hold the revive prompt on your soul
 C.SOUL = {
