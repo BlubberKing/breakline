@@ -48,18 +48,8 @@ local HttpService = game:GetService("HttpService")
 local SetLoadoutR = RS:WaitForChild("LobbyRemotes"):WaitForChild("SetLoadout")
 local lastLoadout = {}
 
-local function cleanLoadout(l)
-	l = type(l) == "table" and l or {}
-	local out = { Gadgets = {}, Reserve = {} }
-	out.Weapon = Catalog.Is(l.Weapon, "weapon") and l.Weapon or Catalog.DefaultWeapon
-	out.Move = Catalog.Is(l.Move, "move") and l.Move or ""
-	for i = 1, 3 do
-		out.Gadgets[i] = Catalog.Is(type(l.Gadgets) == "table" and l.Gadgets[i], "gadget") and l.Gadgets[i] or ""
-		local r = type(l.Reserve) == "table" and l.Reserve[i]
-		out.Reserve[i] = (Catalog.Is(r, "gadget") or Catalog.Is(r, "weapon")) and r or ""
-	end
-	return out
-end
+local Rules = require(script.Parent:WaitForChild("LoadoutRules")) -- v4.7: what a loadout may contain (ownership from the shop)
+local function cleanLoadout(p, l) return Rules.Clean(p, l) end
 
 local function publishLoadout(p, l)
 	p:SetAttribute("LoadoutJson", HttpService:JSONEncode(l))
@@ -69,7 +59,7 @@ Players.PlayerAdded:Connect(function(p)
 	task.spawn(function()
 		local d = Profiles.WaitFor(p)
 		if not d then return end
-		local l = cleanLoadout(d.Loadout)
+		local l = cleanLoadout(p, d.Loadout)
 		if type(d.Weapon) == "string" and Catalog.Is(d.Weapon, "weapon") and (type(d.Loadout) ~= "table" or d.Loadout.Weapon == nil) then l.Weapon = d.Weapon end
 		publishLoadout(p, l)
 	end)
@@ -79,7 +69,7 @@ SetLoadoutR.OnServerEvent:Connect(function(player, l)
 	if os.clock() - (lastLoadout[player] or 0) < 0.15 then return end
 	lastLoadout[player] = os.clock()
 	if type(l) ~= "table" then return end
-	local clean = cleanLoadout(l)
+	local clean = cleanLoadout(player, l)
 	if not Profiles.Get(player, "Loadout") then return end -- profile not loaded yet
 	Profiles.Set(player, "Loadout", clean)
 	Profiles.Set(player, "Weapon", clean.Weapon) -- what Breakline reads
@@ -142,6 +132,7 @@ Players.PlayerRemoving:Connect(function(p) lastLoadout[p] = nil lastSkin[p] = ni
 QueueR.OnServerEvent:Connect(function(player, on, modeId)
 	if os.clock() - (lastQueue[player] or 0) < 1 then return end
 	lastQueue[player] = os.clock()
+	if Profiles.Get(player, "StarterDone") ~= true then Party.Notice(player, "Pick your starting gear first.") return end -- v4.7
 	if PC.BREAKLINE_PLACE_ID == 0 then Party.Notice(player, "Set BREAKLINE_PLACE_ID in PlaceConfig first.") return end
 
 	modeId = (modeId == "1v1") and "1v1" or "breakline"
