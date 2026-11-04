@@ -1,8 +1,14 @@
 -- CardArt (ModuleScript in ReplicatedStorage) - BOTH games (Lobby + Breakline). Keep the two copies identical (Lobby is the master).
 -- v4.3: draws a Breakline power-up card out of plain GUI frames (no uploaded images needed).
+-- v4.9 PERFORMANCE: every static card (anim = false) is drawn ONCE and kept as a template; Build then hands out CLONES of it (a clone of ~400 GUI objects is
+--   many times cheaper than drawing them again, and it needs no text measuring). Small cards (<= 260 px, the collection grid + deck minis) use the LITE
+--   drawing: the same picture without the faint second pen pass, with fewer paper grains and a sparser hatch (nothing else moves, the random seed is
+--   unchanged). Animated cards (inspect view, card roll) are still built fresh. The cache keeps the 36 most recently used templates.
 --   CardArt.Build(parent, cardId, opts) -> holder, api
 --       opts.width    = card width in pixels (height is width * 1.4). Default 250.
---       opts.anim     = false turns the moving bits off (embers, rays, stripes, twinkles). Default true.
+--       opts.anim     = false turns the moving bits off (embers, rays, stripes, twinkles). Default true. Static cards come from the template cache.
+--       opts.lod      = "full" | "lite" | "micro" (default when anim = false: lite up to 260 px wide, micro up to 130 px; "micro" also skips hair-thin strokes)
+--       opts.cache    = false forces a fresh build
 --       opts.position / opts.anchor = holder Position / AnchorPoint
 --     api.card (the 250 x 350 card frame, scaled), api.rarity, api.setGlow(on, color)
 --   CardArt.W, CardArt.H = 250, 350 (design size; everything is drawn at this size and scaled with a UIScale)
@@ -84,8 +90,8 @@ end
 -- ======================================================================================
 local Ctx = {}
 Ctx.__index = Ctx
-local function newCtx(parent, seed, ink)
-	return setmetatable({ p = parent, r = Random.new(seed), ink = ink or INK }, Ctx)
+local function newCtx(parent, seed, ink, lite)
+	return setmetatable({ p = parent, r = Random.new(seed), ink = ink or INK, lite = lite }, Ctx)
 end
 function Ctx:j(a) return (self.r:NextNumber() * 2 - 1) * a end
 
@@ -94,6 +100,7 @@ function Ctx:seg(x1, y1, x2, y2, w, col, tr)
 	local dx, dy = x2 - x1, y2 - y1
 	local len = math.sqrt(dx * dx + dy * dy)
 	if len < 0.25 then return end
+	if self.lite == 2 and w < 1.7 then return end -- v4.9 MICRO (deck minis, ~100 px): hair-thin strokes are under half a pixel there, skip them
 	local f = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2),
 		Size = UDim2.fromOffset(len + w * 0.55, w), Rotation = math.deg(math.atan2(dy, dx)), BackgroundColor3 = col or self.ink,
 		BackgroundTransparency = tr or 0, BorderSizePixel = 0 }, self.p)
@@ -118,7 +125,12 @@ function Ctx:line(x1, y1, x2, y2, w, o)
 		self:seg(x1, y1, x2, y2, w, col, tr)
 	end
 	if not (o and o.single) and len > 18 and self.r:NextNumber() < 0.3 then
-		self:seg(x1 + self:j(1), y1 + self:j(1), x2 + self:j(1), y2 + self:j(1), math.max(1, w * 0.45), col, math.min(0.92, tr + 0.55))
+		if self.lite then
+			-- v4.9 LITE: the faint second pen pass is barely visible at card-grid size, so it is not drawn (its random numbers are still used, so nothing else moves)
+			self:j(1); self:j(1); self:j(1); self:j(1)
+		else
+			self:seg(x1 + self:j(1), y1 + self:j(1), x2 + self:j(1), y2 + self:j(1), math.max(1, w * 0.45), col, math.min(0.92, tr + 0.55))
+		end
 	end
 end
 local function single(o) return { single = true, col = o and o.col, tr = o and o.tr } end
@@ -224,7 +236,7 @@ function Ctx:hatch(x, y, w, h, ang, gap, wt, tr, col)
 	local sub = newCtx(clip, self.r:NextInteger(1, 99999), self.ink)
 	local d = math.sqrt(w * w + h * h)
 	local ca, sa = math.cos(math.rad(ang)), math.sin(math.rad(ang))
-	for off = -d / 2, d / 2, gap do
+	for off = -d / 2, d / 2, (self.lite and gap * 1.4 or gap) do
 		local mx, my = w / 2 - sa * off, h / 2 + ca * off
 		sub:seg(mx - ca * d / 2, my - sa * d / 2, mx + ca * d / 2, my + sa * d / 2, wt or 1, col, tr or 0.45)
 	end
@@ -1155,8 +1167,9 @@ local function backdrop(d, R, sig)
 	d:wash(111, 70, 200, 124, wc, 0.62)
 	d:wash(66, 48, 112, 70, wc, 0.7, -12)
 	if not sig then d:wash(162, 100, 120, 80, R.body, 0.84, 8) end
-	for _ = 1, 26 do
-		d:dot(d.r:NextNumber() * AW, d.r:NextNumber() * AH, 0.45 + d.r:NextNumber() * 0.8, d.ink, 0.5 + d.r:NextNumber() * 0.4)
+	for i = 1, 26 do
+		local x, y, r, tr = d.r:NextNumber() * AW, d.r:NextNumber() * AH, 0.45 + d.r:NextNumber() * 0.8, 0.5 + d.r:NextNumber() * 0.4
+		if not d.lite or i % 3 == 0 then d:dot(x, y, r, d.ink, tr) end -- LITE: every third paper speckle (they are under 2 px at grid size)
 	end
 end
 
@@ -1168,9 +1181,9 @@ local function burnEdges(parent, col)
 	end
 end
 
-local function paintArt(window, c, R, seed, ink, paper)
+local function paintArt(window, c, R, seed, ink, paper, lite)
 	window.BackgroundColor3 = paper
-	local d = newCtx(window, seed, ink)
+	local d = newCtx(window, seed, ink, lite)
 	backdrop(d, R, c.rarity == "signature")
 	local painter = P[c.art] or P.coin
 	local ok, err = pcall(painter, d, R)
@@ -1179,8 +1192,8 @@ local function paintArt(window, c, R, seed, ink, paper)
 end
 
 -- corner flourishes / brackets drawn on the card (outside the art window)
-local function corners(card, R, rank, seed)
-	local d = newCtx(card, seed + 3, R.light)
+local function corners(card, R, rank, seed, lite)
+	local d = newCtx(card, seed + 3, R.light, lite)
 	if rank == 2 then
 		for _, cfg in { { 16, 16, 0 }, { 234, 16, 90 }, { 234, 334, 180 }, { 16, 334, 270 } } do
 			local x, y, a = cfg[1], cfg[2], cfg[3]
@@ -1238,7 +1251,7 @@ local function twinkles(parent, n, col, rng, anim, area)
 	end
 end
 
-function A.Build(parent, id, opts)
+local function buildFresh(parent, id, opts, lite)
 	opts = opts or {}
 	local c = Cards.ById[id] or Cards.List[1]
 	local R = Cards.RarityById[c.rarity]
@@ -1265,18 +1278,21 @@ function A.Build(parent, id, opts)
 	-- ===== rarity texture (clipped, inset so the rounded corners stay clean) =====
 	local tex = new("Frame", { Position = UDim2.fromOffset(4, 4), Size = UDim2.fromOffset(242, 342), BackgroundTransparency = 1, ClipsDescendants = true }, card)
 	if not sig then
-		for _ = 1, 50 do
+		for i = 1, 50 do
 			local light = rng:NextNumber() < 0.5
 			local s = 1 + rng:NextInteger(0, 1)
-			new("Frame", { Position = UDim2.fromOffset(rng:NextNumber() * 242, rng:NextNumber() * 342), Size = UDim2.fromOffset(s, s),
-				BackgroundColor3 = light and R.light or R.deep, BackgroundTransparency = 0.55 + rng:NextNumber() * 0.3, BorderSizePixel = 0 }, tex)
+			local px, py, tr = rng:NextNumber() * 242, rng:NextNumber() * 342, 0.55 + rng:NextNumber() * 0.3
+			if not lite or i % 4 == 0 then -- LITE: every fourth paper grain (the random numbers are all still drawn)
+				new("Frame", { Position = UDim2.fromOffset(px, py), Size = UDim2.fromOffset(s, s),
+					BackgroundColor3 = light and R.light or R.deep, BackgroundTransparency = tr, BorderSizePixel = 0 }, tex)
+			end
 		end
 	end
 	if rank == 2 then
-		local d = newCtx(tex, seed + 5, R.light)
+		local d = newCtx(tex, seed + 5, R.light, lite)
 		for i = 0, 3 do d:curve({ -10, 40 + i * 90, 60, 20 + i * 90, 140, 60 + i * 90, 252, 30 + i * 90 }, 1, { tr = 0.8 }) end
 	elseif rank == 3 then
-		local d = newCtx(tex, seed + 5, R.light)
+		local d = newCtx(tex, seed + 5, R.light, lite)
 		d:hatch(0, 0, 242, 342, 60, 7, 1, 0.86, R.light)
 	elseif rank == 4 or rank == 6 then
 		local rays = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(121, 100), Size = UDim2.fromOffset(620, 620),
@@ -1340,7 +1356,7 @@ function A.Build(parent, id, opts)
 		outline.Thickness = 3
 		if anim then loop(g, TweenInfo.new(5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), { Rotation = 360 }) end
 	end
-	corners(card, R, rank, seed)
+	corners(card, R, rank, seed, lite)
 
 	-- ===== art window =====
 	local paper = sig and rgb(246, 246, 244) or PAPER:Lerp(R.light, 0.2)
@@ -1349,17 +1365,17 @@ function A.Build(parent, id, opts)
 	if sig then
 		local left = new("Frame", { Size = UDim2.fromOffset(AW / 2, AH), BackgroundTransparency = 1, ClipsDescendants = true }, art)
 		local lc = new("Frame", { Size = UDim2.fromOffset(AW, AH), BackgroundColor3 = paper, BorderSizePixel = 0 }, left)
-		paintArt(lc, c, R, seed, INK, paper)
+		paintArt(lc, c, R, seed, INK, paper, lite)
 		local right = new("Frame", { Position = UDim2.fromOffset(AW / 2, 0), Size = UDim2.fromOffset(AW / 2, AH), BackgroundTransparency = 1, ClipsDescendants = true }, art)
 		local rc = new("Frame", { Position = UDim2.fromOffset(-AW / 2, 0), Size = UDim2.fromOffset(AW, AH), BackgroundColor3 = rgb(16, 16, 18), BorderSizePixel = 0 }, right)
-		paintArt(rc, c, R, seed, rgb(236, 236, 232), rgb(16, 16, 18))
+		paintArt(rc, c, R, seed, rgb(236, 236, 232), rgb(16, 16, 18), lite)
 	else
-		paintArt(art, c, R, seed, INK, paper)
+		paintArt(art, c, R, seed, INK, paper, lite)
 		burnEdges(art, rgb(120, 82, 48):Lerp(R.deep, 0.35))
 	end
 	stroke(art, INK, 2)
 	do -- rough hand-inked border over the clean one
-		local d = newCtx(card, seed + 7, INK)
+		local d = newCtx(card, seed + 7, INK, lite)
 		d:line(12, 13, 238, 12.5, 1.6)
 		d:line(237.5, 12, 238.5, 184, 1.6)
 		d:line(238, 183, 12, 183.5, 1.6)
@@ -1439,10 +1455,11 @@ function A.Build(parent, id, opts)
 	-- (v4.4: the white shine sweep that crossed rare + higher cards every few seconds is gone)
 
 	-- selection glow (pickers + the roll screen)
-	local glowFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 14, 1, 14),
+	local glowFrame = new("Frame", { Name = "SelGlow", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 14, 1, 14),
 		BackgroundTransparency = 1, Visible = false }, card)
 	corner(glowFrame, 14)
 	local glowStroke = stroke(glowFrame, R.glow, 4, 0.1)
+	glowStroke.Name = "SelGlowStroke"
 
 	local api = { card = card, rarity = R, data = c }
 	function api.setGlow(on, col)
@@ -1450,6 +1467,93 @@ function A.Build(parent, id, opts)
 		if col then glowStroke.Color = col end
 	end
 	return holder, api
+end
+
+-- ======================================================================================
+-- v4.9 template cache
+-- ======================================================================================
+local TEMPLATE_MAX = 36
+local templates, tplOrder, tplBuilding = {}, {}, {}
+local function touch(key)
+	local i = table.find(tplOrder, key)
+	if i then table.remove(tplOrder, i) end
+	table.insert(tplOrder, key)
+end
+local function evict()
+	while #tplOrder > TEMPLATE_MAX do
+		local k = table.remove(tplOrder, 1)
+		local t = templates[k]
+		templates[k] = nil
+		if t then t:Destroy() end
+	end
+end
+local function getTemplate(id, lite)
+	local key = id .. ":" .. tostring(lite or "full")
+	local t = templates[key]
+	if t then touch(key) return t end
+	if tplBuilding[key] then -- another thread is drawing it right now (the first draw can yield while it measures text)
+		local t0 = os.clock()
+		while tplBuilding[key] and os.clock() - t0 < 5 do task.wait() end
+		t = templates[key]
+		if t then touch(key) return t end
+		return nil
+	end
+	tplBuilding[key] = true
+	local ok, holder = pcall(buildFresh, nil, id, { width = A.W, anim = false }, lite)
+	tplBuilding[key] = nil
+	if not ok or not holder then
+		warn("[CardArt] template failed for", id, holder)
+		return nil
+	end
+	holder.Name = "CardTemplate"
+	templates[key] = holder
+	touch(key)
+	evict()
+	return holder
+end
+
+function A.Build(parent, id, opts)
+	opts = opts or {}
+	local width = opts.width or A.W
+	local anim = opts.anim ~= false
+	-- level of detail: false = full, 1 = lite, 2 = micro
+	local lite = false
+	if opts.lod == "micro" then lite = 2
+	elseif opts.lod == "lite" then lite = 1
+	elseif opts.lod == nil and not anim then
+		if width <= 130 then lite = 2 elseif width <= 260 then lite = 1 end
+	end
+	if anim or opts.cache == false then
+		return buildFresh(parent, id, opts, lite)
+	end
+	local tpl = getTemplate(id, lite)
+	if not tpl then return buildFresh(parent, id, opts, lite) end
+	local c = Cards.ById[id] or Cards.List[1]
+	local R = Cards.RarityById[c.rarity]
+	local holder = tpl:Clone()
+	holder.Name = "Card_" .. c.id
+	holder.Size = UDim2.fromOffset(width, width * A.H / A.W)
+	holder.Position = opts.position or UDim2.new()
+	holder.AnchorPoint = opts.anchor or Vector2.zero
+	local card = holder:FindFirstChild("Card")
+	local us = card and card:FindFirstChildOfClass("UIScale")
+	if us then us.Scale = width / A.W end
+	holder.Parent = parent
+	local glowFrame = card and card:FindFirstChild("SelGlow")
+	local glowStroke = glowFrame and glowFrame:FindFirstChild("SelGlowStroke")
+	local api = { card = card, rarity = R, data = c }
+	function api.setGlow(on, col)
+		if glowFrame then glowFrame.Visible = on and true or false end
+		if col and glowStroke then glowStroke.Color = col end
+	end
+	return holder, api
+end
+
+-- drops every cached template (call it if you ever change the card art at run time)
+function A.ClearCache()
+	for _, t in templates do t:Destroy() end
+	table.clear(templates)
+	table.clear(tplOrder)
 end
 
 return A
