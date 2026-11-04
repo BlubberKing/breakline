@@ -421,12 +421,14 @@ local function runPregame(token)
 		selected = t
 		paintAll()
 		local items = {}
-		if t.kind == "weapon" then for _, it in Catalog.Weapons do table.insert(items, it) end
-		elseif t.kind == "move" then for _, it in Catalog.Moves do table.insert(items, it) end
-		elseif t.kind == "gadget" then for _, it in Catalog.Gadgets do table.insert(items, it) end
+		-- v4.7: only what you own (bought in the lobby shop)
+		local function addOwned(list) for _, it in list do if Catalog.Owns(player, it.id) then table.insert(items, it) end end end
+		if t.kind == "weapon" then addOwned(Catalog.Weapons)
+		elseif t.kind == "move" then addOwned(Catalog.Moves)
+		elseif t.kind == "gadget" then addOwned(Catalog.Gadgets)
 		else
-			for _, it in Catalog.Gadgets do table.insert(items, it) end
-			for _, it in Catalog.Weapons do table.insert(items, it) end
+			addOwned(Catalog.Gadgets)
+			addOwned(Catalog.Weapons)
 		end
 		local CW, CH = 118, 142
 		local w = math.min(1500, #items * (CW + 10) + 40 + (t.kind ~= "weapon" and (CW + 10) or 0))
