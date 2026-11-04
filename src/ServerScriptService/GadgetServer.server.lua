@@ -22,6 +22,7 @@ local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local Cfg = require(RS:WaitForChild("GadgetConfig"))
 local GM = require(RS:WaitForChild("GadgetModels"))
+local Vitals = require(game:GetService("ServerScriptService"):WaitForChild("Vitals")) -- v4.4: shield + 200 health
 local MatchState = RS:WaitForChild("MatchState", 30)
 local BoxDamage = SS:WaitForChild("BoxDamage", 30)
 
@@ -100,11 +101,10 @@ end
 -- damage a humanoid on behalf of `owner` (stats for the souls screen + hit confirm + damage indicator)
 local function hurt(owner, targetPlayer, hum, dmg, hitPos)
 	if hum.Health <= 0 or dmg <= 0 then return end
-	local before = hum.Health
-	hum:TakeDamage(dmg)
+	local dealt = Vitals.Damage(hum, dmg) -- shield first, then health (sentries have no shield and just take it)
 	local killed = hum.Health <= 0
 	if owner and targetPlayer and targetPlayer ~= owner then
-		owner:SetAttribute("StatDamage", (owner:GetAttribute("StatDamage") or 0) + math.min(dmg, before))
+		owner:SetAttribute("StatDamage", (owner:GetAttribute("StatDamage") or 0) + dealt)
 		if killed then owner:SetAttribute("StatKills", (owner:GetAttribute("StatKills") or 0) + 1) end
 	end
 	if owner and owner.Parent and targetPlayer ~= owner then
@@ -323,6 +323,9 @@ local function buildSentry(owner, pos, facing)
 		if s.owner == owner then s.dieNow = true end
 	end
 	table.insert(sentries, rec)
+	-- v4.4: the sentry's Humanoid has its state machine off (EvaluateStateMachine = false), so Humanoid.Died never fired and a "dead" sentry kept
+	-- shooting. Watch the health directly (HealthChanged here + a check in the per-frame loop below).
+	hum.HealthChanged:Connect(function(h) if h <= 0 then rec.dieNow, rec.killed = true, true end end)
 	hum.Died:Connect(function() rec.dieNow, rec.killed = true, true end)
 	return rec
 end
@@ -453,7 +456,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	local cfg = Cfg.Items.SENTRY
 	for _, s in table.clone(sentries) do
 		if not s.alive then continue end
-		if s.dieNow or now >= s.dieAt or not s.owner.Parent then killSentry(s) continue end
+		if s.dieNow or s.hum.Health <= 0 or now >= s.dieAt or not s.owner.Parent then killSentry(s) continue end
 		local armed = now >= s.armAt
 		if armed and now >= s.nextScan then
 			s.nextScan = now + 0.1
