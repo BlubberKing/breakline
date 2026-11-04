@@ -4,11 +4,15 @@ local C = {}
 
 -- ===== match flow =====
 C.MIN_PLAYERS  = 1   -- players needed to start a round (raise to 2-6 for live games; 1 lets you test alone)
--- Flow: Waiting (loading screen) -> Pregame -> Warp (cutscene) -> Countdown -> Playing -> SlowMo -> Result (winner cutscene) -> Summary (souls screen)
+-- Flow: Waiting (loading screen) -> Pregame -> Warp (cutscene) -> Cards (v4.3: roll + pick a power-up card) -> Countdown -> Playing -> SlowMo -> Result (winner cutscene) -> Summary (souls screen)
 C.READY_TIMEOUT  = 40  -- seconds to wait for slow clients to finish loading before starting without them
 C.PREGAME_TIME   = 20  -- pre-game screen (loadout + clock)
 C.WARP_TIME      = 9   -- soul flight + run-in cutscene (MatchFlow is timed to this: do not shorten below ~8)
 C.COUNTDOWN_TIME = 3   -- 3-2-1 on the map, everybody frozen
+-- v4.3 card pick (phase "Cards", right after the run-in): the 3 reels pop in 0.5 s apart and roll, then you have CARD_PICK seconds.
+C.CARD_REVEAL    = 2.8 -- roll time: CardRoll lands the reels at about 1.65 / 2.15 / 2.65 s (do not go below 2.7)
+C.CARD_PICK      = 10  -- seconds to pick once the last reel has landed. No pick = the middle card.
+C.CARD_OUTRO     = 1.0 -- after the pick: the card flies to your HUD, then the countdown starts
 C.SLOWMO_TIME    = 2.6 -- the moment the round is decided everything slows down (movement, shooting, falling) for this long, then the winner cutscene
 C.SLOWMO_SCALE   = 0.1 -- how slow it gets (0.1 = ten times slower)
 C.SLOWMO_RAMP    = 0.5 -- seconds to ease from normal speed down to SLOWMO_SCALE
