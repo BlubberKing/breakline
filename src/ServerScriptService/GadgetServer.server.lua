@@ -291,14 +291,29 @@ local function buildSentry(owner, pos, facing)
 	local headPos = pos + desc.HeadPivot
 	local pivotInv = CFrame.new(desc.HeadPivot):Inverse()
 	local parts, eye, base = {}, nil, nil -- parts = { part, offset from the turning head }
+	-- v4.8: the head has ~75 detail parts now. Only ONE of them (the head body) is moved every frame; all the others are welded to it, so the
+	-- server sends one CFrame per frame instead of 75.
+	local headRoot, headRootOff, headParts = nil, nil, {}
 	for _, d in desc.Parts do
 		local isHead = d.Group == "head"
 		local cf = isHead and (CFrame.lookAt(headPos, headPos + facing) * (pivotInv * d.CF)) or (CFrame.new(pos) * d.CF)
 		local p = mkPart({ Name = d.Name, Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = cf, Color = d.Color, Material = d.Material,
 			CanQuery = true, CanCollide = d.Collide == true }, model)
-		if isHead then table.insert(parts, { p, pivotInv * d.CF }) end
+		if isHead then
+			if d.Name == "Body" and not headRoot then headRoot, headRootOff = p, pivotInv * d.CF else table.insert(headParts, p) end
+		end
 		if d.Name == "Eye" then eye = p end
 		if d.Name == "BaseDisc" then base = p end
+	end
+	if headRoot then
+		table.insert(parts, { headRoot, headRootOff })
+		for _, p in headParts do
+			p.Massless = true
+			local w = Instance.new("WeldConstraint")
+			w.Part0, w.Part1 = headRoot, p
+			w.Parent = p
+			p.Anchored = false
+		end
 	end
 	local muzzleOff = CFrame.new(desc.Muzzle - desc.HeadPivot)
 	local hum = Instance.new("Humanoid")
