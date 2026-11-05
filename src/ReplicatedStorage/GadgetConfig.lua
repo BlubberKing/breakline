@@ -9,24 +9,24 @@
 --   charges   : how many you carry (full again after every respawn)
 --   recharge  : seconds until ONE used charge comes back
 --   cooldown  : seconds before you can throw the next one
---   speed     : throw speed in studs/s
+--   speed     : throw speed in studs/s (v4.9: throwables ~115, see G.Throw for gravity / inherit / underhand)
 local G = {}
 
 G.Keys = { "Two", "Three", "Four" } -- loadout gadget slots 1 / 2 / 3 (matches the pre-game dock keys 2 / 3 / 4)
 
 G.Items = {
 	FRAG = {
-		name = "Frag Grenade", kind = "throw", charges = 2, recharge = 24, cooldown = 0.9, speed = 72,
+		name = "Frag Grenade", kind = "throw", charges = 2, recharge = 24, cooldown = 0.9, speed = 118,
 		fuse = 2.3, radius = 17, damage = 120, selfMult = 0.5, boxDamage = 260, shieldDamage = 220,
 		projSize = 0.95, projColor = Color3.fromRGB(70, 92, 62),
 	},
 	SMOKE = {
-		name = "Smoke", kind = "throw", charges = 2, recharge = 30, cooldown = 0.9, speed = 64,
+		name = "Smoke", kind = "throw", charges = 2, recharge = 30, cooldown = 0.9, speed = 110,
 		fuse = 1.0, radius = 15, duration = 13,
 		projSize = 1.0, projColor = Color3.fromRGB(150, 160, 175),
 	},
 	FLASH = {
-		name = "Flashbang", kind = "throw", charges = 2, recharge = 22, cooldown = 0.9, speed = 68,
+		name = "Flashbang", kind = "throw", charges = 2, recharge = 22, cooldown = 0.9, speed = 114,
 		fuse = 1.25, range = 75, maxTime = 3.8,
 		projSize = 0.9, projColor = Color3.fromRGB(250, 235, 140),
 	},
@@ -49,9 +49,18 @@ G.Items = {
 
 -- v4.1 throwing
 G.Throw = {
-	Up = 0.16,        -- extra upward angle added to your aim (server + the preview line use the same number)
-	EquipTime = 0.28, -- seconds the swap animation takes (you cannot throw before it is done)
-	Windup = 0.12,    -- seconds between the click and the grenade leaving the hand
+	Up = 0.1,          -- extra upward angle added to your aim (server + the preview line use the same number). v4.9: 0.16 -> 0.1 (flatter, stronger)
+	EquipTime = 0.28,  -- seconds the swap animation takes (you cannot throw before it is done)
+	Windup = 0.12,     -- seconds between the release and the grenade leaving the hand (the arm whips forward meanwhile, for everybody)
+	-- v4.9 stronger throws: before, ~70 studs/s against full Roblox gravity (196) only carried ~13 studs - it plopped out of your hand.
+	Gravity = 78,      -- gravity on a thrown item while it FLIES (studs/s^2). After its first bounce it gets normal gravity again.
+	Inherit = 0.6,     -- share of your own run velocity added to the throw (sprint-throws go further). Was 0.35.
+	Side = 0.45,       -- studs to the right of your head the item starts (it leaves your throwing hand, not your eyes)
+	Start = 1.6,       -- studs in front of your head it starts
+	Bounce = 0.36,     -- speed kept on a bounce (preview line; the part uses Elasticity below)
+	Elasticity = 0.3,
+	UnderMult = 0.42,  -- RIGHT CLICK (when you are not aiming a throw) = short underhand toss: this share of the speed ...
+	UnderUp = 0.3,     -- ... and this much extra upward angle
 }
 
 return G
