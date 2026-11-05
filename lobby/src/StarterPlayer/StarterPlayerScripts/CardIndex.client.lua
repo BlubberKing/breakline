@@ -1,4 +1,4 @@
--- CardIndex v1.2 (v4.9: PERFORMANCE - only the cards on screen exist. Collection cells are filled when they scroll into view and emptied when they leave, card art comes from a shared template cache (CardArt) and the deck minis are built the same way, so hundreds of cards stay smooth even on a tablet) (was v1.1 v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
+-- CardIndex v1.3 (v4.9b: the collection grid really uses static cards now - it built fresh ANIMATED cards before, which was the lag - and baked sprite-sheet cards when CardArt.SHEETS is filled in) (was v1.2 v4.9: PERFORMANCE - only the cards on screen exist. Collection cells are filled when they scroll into view and emptied when they leave, card art comes from a shared template cache (CardArt) and the deck minis are built the same way, so hundreds of cards stay smooth even on a tablet) (was v1.1 v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
 -- (was v1.0) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.3 (GDD section 4.1).
 -- The CARD INDEX page: your card collection on the left, your 32-card DECK on the right.
 -- Opened by the CARD INDEX buttons in LobbyClient (they set the Player attribute CardIndexOpen = true). ESC / BACK closes it.
@@ -328,6 +328,7 @@ local function makeCell(c)
 end
 
 local paintCell -- forward
+local updateMiniVisible -- forward (v4.9b fix: the deck list called it before it existed, so task.defer got nil and errored)
 local function fillCell(rec)
 	if rec.alive then return end
 	rec.alive = true
@@ -358,7 +359,9 @@ local function fillCell(rec)
 	rec.token = (rec.token or 0) + 1
 	local my = rec.token
 	task.spawn(function()
-		local holder = CardArt.Build(holderSlot, c.id, { width = CARD_W })
+		-- v4.9 LAG FIX: this used to build a fresh ANIMATED card (anim defaulted to true), so the template cache was never used and every card
+		-- that scrolled in drew 300-700 frames + looping tweens. Static now: a baked sprite-sheet image (CardArt.SHEETS) or a cached clone.
+		local holder = CardArt.Build(holderSlot, c.id, { width = CARD_W, anim = false })
 		if not rec.alive or rec.token ~= my then holder:Destroy() end
 	end)
 end
@@ -532,6 +535,11 @@ local function paintDeck()
 			if R.id == "signature" then
 				new("UIGradient", { Rotation = 0, Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, WHITE), ColorSequenceKeypoint.new(0.5, WHITE),
 					ColorSequenceKeypoint.new(0.51, BLACK), ColorSequenceKeypoint.new(1, BLACK) }) }, seg)
+			elseif R.wash then
+				seg.BackgroundColor3 = WHITE
+				local kp = {}
+				for k, cl in R.wash do table.insert(kp, ColorSequenceKeypoint.new((k - 1) / (#R.wash - 1), cl)) end
+				new("UIGradient", { Color = ColorSequence.new(kp) }, seg)
 			end
 			x += w
 			local item = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 16), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = i }, mixLegend)
@@ -658,7 +666,7 @@ for i, text in Cards.RULES do
 	t.TextYAlignment = Enum.TextYAlignment.Center
 end
 lbl(rp, "RARITIES  //  LOWEST TO HIGHEST", 11, 38, 460, 500, 14, C.dim, "MB")
-local RS_W = math.floor((848 - 6 * 10) / 7)
+local RS_W = math.floor((848 - (#Cards.Rarities - 1) * 10) / #Cards.Rarities) -- v4.9: 8 rarities (Epic added)
 for i, R in Cards.Rarities do
 	local x = 36 + (i - 1) * (RS_W + 10)
 	local sw = frame(rp, x, 484, RS_W, 120, R.body, 0)
@@ -671,6 +679,11 @@ for i, R in Cards.Rarities do
 				BackgroundColor3 = WHITE, BorderSizePixel = 0 }, clip)
 		end
 		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(200, 5), Rotation = -58, BackgroundColor3 = C.red, BorderSizePixel = 0 }, clip)
+	elseif R.wash then -- v4.9 DIVINE: watercolour rainbow swatch
+		sw.BackgroundColor3 = WHITE
+		local kp = {}
+		for k, cl in R.wash do table.insert(kp, ColorSequenceKeypoint.new((k - 1) / (#R.wash - 1), cl:Lerp(WHITE, 0.35))) end
+		new("UIGradient", { Rotation = 62, Color = ColorSequence.new(kp) }, sw)
 	else
 		new("UIGradient", { Rotation = 90, Color = ColorSequence.new(R.body:Lerp(R.light, 0.2), R.deep) }, sw)
 	end
@@ -729,26 +742,28 @@ end
 local built = false
 
 -- v4.9: decide which collection cells are near the screen. Cells inside the window (plus one row of margin) are filled, the rest are emptied.
-local FILL_PER_TICK = 4
+local FILL_PER_TICK = 6 -- v4.9b: static / baked cards are cheap now
 local function updateVisible()
 	if not built then return end
 	local gy, gh = grid.AbsolutePosition.Y, grid.AbsoluteSize.Y
 	local filled = 0
 	for _, rec in cells do
 		local cell = rec.cell
-		local want = false
+		local want, keep = false, false
 		if cell.Visible then
 			local ch = cell.AbsoluteSize.Y
 			local top = cell.AbsolutePosition.Y
 			-- (a cell with no size yet = the layout has not run: wait for the next tick)
 			want = ch > 1 and top + ch > gy - ch * 1.2 and top < gy + gh + ch * 1.2
+			-- v4.9b: a filled cell is only emptied once it is 3 rows away, so scrolling up and down does not rebuild the same cards over and over
+			keep = ch > 1 and top + ch > gy - ch * 3 and top < gy + gh + ch * 3
 		end
 		if want then
 			if not rec.alive and filled < FILL_PER_TICK then
 				fillCell(rec)
 				filled += 1
 			end
-		elseif rec.alive then
+		elseif rec.alive and not keep then
 			emptyCell(rec)
 		end
 	end
@@ -756,7 +771,7 @@ local function updateVisible()
 end
 
 -- the deck list does the same for its mini cards
-local function updateMiniVisible()
+function updateMiniVisible()
 	if not built or not list then return end
 	local gy, gh = list.AbsolutePosition.Y, list.AbsoluteSize.Y
 	for _, m in miniCells do
