@@ -186,6 +186,20 @@ local function teleportGroup(code, list)
 	if #go == 0 then return end
 	local opts = Instance.new("TeleportOptions")
 	opts.ReservedServerAccessCode = code
+	-- v4.9: every player's party member ids ride along, so Breakline can outline your party (TeamOutline). Cosmetic only, never trusted for gameplay.
+	local partyMap = {}
+	for _, p in go do
+		local raw = p:GetAttribute("PartyMembers")
+		local ids = {}
+		if type(raw) == "string" then
+			local okJ, list = pcall(function() return HttpService:JSONDecode(raw) end)
+			if okJ and type(list) == "table" then
+				for _, m in list do if type(m) == "table" and tonumber(m.id) then table.insert(ids, tonumber(m.id)) end end
+			end
+		end
+		partyMap[tostring(p.UserId)] = ids
+	end
+	pcall(function() opts:SetTeleportData({ party = partyMap }) end)
 	local ok, err = pcall(function() TeleportService:TeleportAsync(PC.BREAKLINE_PLACE_ID, go, opts) end)
 	if not ok then
 		warn("[Lobby] teleport failed:", err)
