@@ -101,7 +101,7 @@ function M.Collection(saved)
 	for _, c in M.List do out[c.id] = STARTER_COPIES[c.rarity] or 1 end
 	if type(saved) == "table" then
 		for id, n in saved do
-			if M.Is(id) and type(n) == "number" then out[id] = math.max(out[id], math.floor(n)) end
+			if M.Is(id) and type(n) == "number" then out[id] = math.max(out[id] + 1, math.floor(n)) end
 		end
 	end
 	return out
