@@ -9,6 +9,7 @@
 --       opts.anim     = false turns the moving bits off (embers, rays, stripes, twinkles). Default true. Static cards come from the template cache.
 --       opts.lod      = "full" | "lite" | "micro" (default when anim = false: lite up to 260 px wide, micro up to 130 px; "micro" also skips hair-thin strokes)
 --       opts.cache    = false forces a fresh build
+--       opts.baked    = false skips the baked sprite-sheet card (v4.9; static cards use it automatically once A.SHEETS has ids)
 --       opts.position / opts.anchor = holder Position / AnchorPoint
 --     api.card (the 250 x 350 card frame, scaled), api.rarity, api.setGlow(on, color)
 --   CardArt.W, CardArt.H = 250, 350 (design size; everything is drawn at this size and scaled with a UIScale)
@@ -16,7 +17,8 @@
 -- burnt paper edges) inside a frame that gets fancier with rarity:
 --   COMMON grey paper | UNCOMMON green + vine curls | RARE blue + double frame, gem, line texture
 --   LEGENDARY gold + sunburst, corner brackets, sparkles | MYTHIC red + flames, rising embers, pulsing glow
---   DIVINE purple + turning light rays, prism edge, stars | SIGNATURE black / white op-art stripes, red slash, holo foil, split ink art
+--   EPIC purple + faceted amethyst light, crystal corners, violet gem (v4.9)
+--   DIVINE watercolour rainbow paper + blooms, pastel prism edge, stars (v4.9) | SIGNATURE black / white op-art stripes, red slash, holo foil, split ink art
 -- Every stroke is placed with a random generator seeded by the card id, so a card always looks exactly the same.
 local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
@@ -24,6 +26,84 @@ local Cards = require(script.Parent:WaitForChild("Cards"))
 
 local A = {}
 A.W, A.H = 250, 350
+
+-- ======================================================================================
+-- v4.9 BAKED CARDS (the real lag fix). Every static card (collection grid, deck minis, reels) can be ONE ImageLabel cut out of a sprite sheet
+-- (4 sheets, 8 cards each, 1000 x 700) instead of 300-700 GUI frames. Only the name / description / rarity text stays live on top.
+-- HOW TO TURN IT ON: upload BreaklineCards_1.png .. BreaklineCards_4.png (Studio > Asset Manager > Bulk Import, or Creator Hub > Decals),
+-- copy each image's asset id and paste the numbers below (same order). Leave a 0 and that sheet's cards are simply drawn the old way.
+-- If you ever change a card's art / rarity or add a card, the sheets must be re-baked (ask the AI: "re-bake the card sheets"); cards that are not
+-- in BAKED_MAP (or whose rarity changed since the bake) automatically fall back to the drawn version, so nothing ever breaks.
+-- ======================================================================================
+A.SHEETS = { 0, 0, 0, 0 } -- <<< paste the 4 image ids here, e.g. { 1234567890, 1234567891, 1234567892, 1234567893 }
+local BAKED_RARITY = { -- rarity each card had when it was baked (a changed rarity = draw it the old way until re-baked)
+	steady_hands = "common",
+	light_feet = "common",
+	thick_skin = "common",
+	deep_pockets = "common",
+	long_breath = "common",
+	box_hugger = "common",
+	ember_heart = "common",
+	scrap_plating = "common",
+	lucky_coin = "common",
+	ghost_step = "uncommon",
+	menders_thread = "uncommon",
+	hot_barrel = "uncommon",
+	magnet_palms = "uncommon",
+	grave_candle = "uncommon",
+	scouts_eye = "uncommon",
+	skeleton_key = "uncommon",
+	paper_crane = "uncommon",
+	tidebreaker = "rare",
+	moonlit_reload = "rare",
+	hollow_point = "rare",
+	stormcaller = "epic",
+	lantern_keeper = "epic",
+	glass_cannon = "epic",
+	crown_of_line = "legendary",
+	sun_eater = "legendary",
+	golden_hour = "legendary",
+	oathblade = "legendary",
+	red_serpent = "mythic",
+	bloodmoon_pact = "mythic",
+	halo_of_ash = "divine",
+	seraphs_eye = "divine",
+	the_breakline = "signature",
+}
+local BAKED_MAP = { -- card id = { sheet, x, y } (each card is 250 x 350 on its sheet)
+	steady_hands = { 1, 0, 0 },
+	light_feet = { 1, 250, 0 },
+	thick_skin = { 1, 500, 0 },
+	deep_pockets = { 1, 750, 0 },
+	long_breath = { 1, 0, 350 },
+	box_hugger = { 1, 250, 350 },
+	ember_heart = { 1, 500, 350 },
+	scrap_plating = { 1, 750, 350 },
+	lucky_coin = { 2, 0, 0 },
+	ghost_step = { 2, 250, 0 },
+	menders_thread = { 2, 500, 0 },
+	hot_barrel = { 2, 750, 0 },
+	magnet_palms = { 2, 0, 350 },
+	grave_candle = { 2, 250, 350 },
+	scouts_eye = { 2, 500, 350 },
+	skeleton_key = { 2, 750, 350 },
+	paper_crane = { 3, 0, 0 },
+	tidebreaker = { 3, 250, 0 },
+	moonlit_reload = { 3, 500, 0 },
+	hollow_point = { 3, 750, 0 },
+	stormcaller = { 3, 0, 350 },
+	lantern_keeper = { 3, 250, 350 },
+	glass_cannon = { 3, 500, 350 },
+	crown_of_line = { 3, 750, 350 },
+	sun_eater = { 4, 0, 0 },
+	golden_hour = { 4, 250, 0 },
+	oathblade = { 4, 500, 0 },
+	red_serpent = { 4, 750, 0 },
+	bloodmoon_pact = { 4, 0, 350 },
+	halo_of_ash = { 4, 250, 350 },
+	seraphs_eye = { 4, 500, 350 },
+	the_breakline = { 4, 750, 350 },
+}
 local AW, AH = 222, 168 -- art window
 
 local rgb = Color3.fromRGB
@@ -78,6 +158,11 @@ local F = {
 	mono = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Bold),
 }
 A.Fonts = F
+
+-- v4.9: the frame styles were written for 7 rarities (1 common .. 7 signature). EPIC was added between Rare and Legendary, so the
+-- drawing code keeps using the old style numbers and Epic gets its own 3.5 (everything Rare has, plus its own crystal facets / corners / gem).
+local STYLE = { common = 1, uncommon = 2, rare = 3, epic = 3.5, legendary = 4, mythic = 5, divine = 6, signature = 7 }
+A.Style = STYLE
 
 local function seedOf(s)
 	local h = 7
@@ -1206,8 +1291,19 @@ local function corners(card, R, rank, seed, lite)
 			local lx, ly = L(9, 9)
 			d:leaf(lx, ly, 10, 5, a + 45, 1.2, { tr = 0.15 }, false)
 		end
+	elseif rank == 3.5 then
+		-- EPIC: little amethyst crystal clusters in the corners
+		for _, cfg in { { 18, 18, 1, 1 }, { 232, 18, -1, 1 }, { 232, 332, -1, -1 }, { 18, 332, 1, -1 } } do
+			local x, y, sx, sy = cfg[1], cfg[2], cfg[3], cfg[4]
+			for k, sh in { { 0, 0, 13, 45 }, { 7, -2, 8, 20 }, { -2, 7, 8, 70 } } do
+				local cx, cy = x + sx * sh[1], y + sy * sh[2]
+				local ang = math.rad(sx > 0 and (sy > 0 and sh[4] or -sh[4]) or (sy > 0 and 180 - sh[4] or 180 + sh[4]))
+				local tx, ty = cx + math.cos(ang) * sh[3], cy + math.sin(ang) * sh[3]
+				d:line(cx, cy, tx, ty, k == 1 and 3 or 2.2, { single = true, col = k == 1 and R.light or R.glow, tr = 0.05 })
+			end
+		end
 	elseif rank >= 4 then
-		local col = (rank == 4 and R.deep) or (rank == 5 and rgb(255, 204, 90)) or (rank == 6 and R.light) or rgb(226, 38, 48)
+		local col = (rank == 4 and R.deep) or (rank == 5 and rgb(255, 204, 90)) or (rank == 6 and WHITE) or rgb(226, 38, 48)
 		for _, cfg in { { 9, 9, 1, 1 }, { 241, 9, -1, 1 }, { 241, 341, -1, -1 }, { 9, 341, 1, -1 } } do
 			local x, y, sx, sy = cfg[1], cfg[2], cfg[3], cfg[4]
 			new("Frame", { Position = UDim2.fromOffset(math.min(x, x + sx * 24), y - (sy < 0 and 3 or 0)), Size = UDim2.fromOffset(24, 3), BackgroundColor3 = col, BorderSizePixel = 0 }, card)
@@ -1221,8 +1317,8 @@ end
 
 local function gem(card, R, rank)
 	local size = rank >= 4 and 20 or 15
-	local col = (rank == 3 and rgb(120, 200, 255)) or (rank == 4 and rgb(255, 240, 170)) or (rank == 5 and rgb(255, 70, 70))
-		or (rank == 6 and rgb(220, 170, 255)) or rgb(226, 38, 48)
+	local col = (rank == 3 and rgb(120, 200, 255)) or (rank == 3.5 and rgb(196, 120, 255)) or (rank == 4 and rgb(255, 240, 170)) or (rank == 5 and rgb(255, 70, 70))
+		or (rank == 6 and rgb(255, 190, 230)) or rgb(226, 38, 48)
 	if rank >= 4 then
 		local glow = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(125, 14), Size = UDim2.fromOffset(46, 22),
 			BackgroundColor3 = col, BackgroundTransparency = 0.6, BorderSizePixel = 0 }, card)
@@ -1230,7 +1326,13 @@ local function gem(card, R, rank)
 	end
 	local g = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(125, 14), Size = UDim2.fromOffset(size, size), Rotation = 45,
 		BackgroundColor3 = WHITE, BorderSizePixel = 0 }, card)
-	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(WHITE, col) }, g)
+	if rank == 6 then -- DIVINE gem: watercolour rainbow
+		local w = R.wash
+		new("UIGradient", { Rotation = 45, Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, w[1]), ColorSequenceKeypoint.new(0.3, w[3]),
+			ColorSequenceKeypoint.new(0.6, w[4]), ColorSequenceKeypoint.new(1, w[6]) }) }, g)
+	else
+		new("UIGradient", { Rotation = 90, Color = ColorSequence.new(WHITE, col) }, g)
+	end
 	stroke(g, INK, 1.6)
 	local core = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(size * 0.4, size * 0.4),
 		BackgroundColor3 = WHITE, BackgroundTransparency = 0.25, BorderSizePixel = 0 }, g)
@@ -1255,7 +1357,7 @@ local function buildFresh(parent, id, opts, lite)
 	opts = opts or {}
 	local c = Cards.ById[id] or Cards.List[1]
 	local R = Cards.RarityById[c.rarity]
-	local rank = R.rank
+	local rank = STYLE[c.rarity] or 1
 	local sig = c.rarity == "signature"
 	local width = opts.width or A.W
 	local anim = opts.anim ~= false
@@ -1270,6 +1372,14 @@ local function buildFresh(parent, id, opts, lite)
 	local outline = stroke(card, INK, 2.5)
 	if sig then
 		card.BackgroundColor3 = rgb(14, 14, 16)
+	elseif rank == 6 then
+		-- DIVINE: soft watercolour rainbow paper (pastel, light, not a hard full-saturation rainbow)
+		card.BackgroundColor3 = WHITE
+		local w = R.wash
+		local function pale(cl, k) return cl:Lerp(rgb(255, 250, 242), k) end
+		new("UIGradient", { Rotation = 62, Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, pale(w[1], 0.45)), ColorSequenceKeypoint.new(0.2, pale(w[2], 0.45)), ColorSequenceKeypoint.new(0.4, pale(w[3], 0.4)),
+			ColorSequenceKeypoint.new(0.6, pale(w[4], 0.45)), ColorSequenceKeypoint.new(0.8, pale(w[5], 0.45)), ColorSequenceKeypoint.new(1, pale(w[6], 0.4)) }) }, card)
 	else
 		new("UIGradient", { Rotation = 90, Color = ColorSequence.new({
 			ColorSequenceKeypoint.new(0, R.body:Lerp(R.light, 0.22)), ColorSequenceKeypoint.new(0.55, R.body), ColorSequenceKeypoint.new(1, R.deep) }) }, card)
@@ -1294,14 +1404,42 @@ local function buildFresh(parent, id, opts, lite)
 	elseif rank == 3 then
 		local d = newCtx(tex, seed + 5, R.light, lite)
 		d:hatch(0, 0, 242, 342, 60, 7, 1, 0.86, R.light)
-	elseif rank == 4 or rank == 6 then
+	elseif rank == 3.5 then
+		-- EPIC: faceted amethyst light - long crossing facet lines + a soft violet glow at the top
+		local d = newCtx(tex, seed + 5, R.light, lite)
+		for i = 0, 7 do
+			local x = -40 + i * 46 + d:j(10)
+			d:seg(x, -10, x + 150 + d:j(30), 352, 1, R.light, 0.84)
+			d:seg(x + 120, -10, x - 60 + d:j(30), 352, 1, R.glow, 0.88)
+		end
+		d:wash(121, 60, 300, 160, R.glow, 0.78)
+		d:wash(121, 330, 260, 90, R.deep, 0.6)
+	elseif rank == 6 then
+		-- DIVINE: overlapping watercolour blooms in six soft colours, wet edges, a few pigment speckles
+		local d = newCtx(tex, seed + 5, R.deep, lite)
+		local w = R.wash
+		for i = 1, 14 do
+			local col = w[(i - 1) % #w + 1]
+			local cx, cy = d.r:NextNumber() * 242, d.r:NextNumber() * 342
+			local bw, bh = 70 + d.r:NextNumber() * 110, 50 + d.r:NextNumber() * 90
+			local rot = d.r:NextNumber() * 180
+			d:wash(cx, cy, bw, bh, col, 0.62 + d.r:NextNumber() * 0.12, rot)
+			if not lite or i % 2 == 0 then
+				d:wash(cx + d:j(12), cy + d:j(12), bw * 0.55, bh * 0.5, col:Lerp(WHITE, 0.25), 0.7, rot + 20) -- lighter bloom in the middle
+			end
+		end
+		for i = 1, 18 do
+			local col = w[(i - 1) % #w + 1]
+			local x, y = d.r:NextNumber() * 242, d.r:NextNumber() * 342
+			if not lite or i % 3 == 0 then d:dot(x, y, 1 + d.r:NextNumber() * 2.2, col:Lerp(INK, 0.15), 0.35) end
+		end
+	elseif rank == 4 then
 		local rays = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(121, 100), Size = UDim2.fromOffset(620, 620),
 			BackgroundTransparency = 1 }, tex)
 		for i = 0, 8 do
-			new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(620, rank == 4 and 18 or 24),
-				Rotation = i * 20, BackgroundColor3 = R.light, BackgroundTransparency = rank == 4 and 0.8 or 0.84, BorderSizePixel = 0 }, rays)
+			new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(620, 18),
+				Rotation = i * 20, BackgroundColor3 = R.light, BackgroundTransparency = 0.8, BorderSizePixel = 0 }, rays)
 		end
-		if rank == 6 and anim then loop(rays, TweenInfo.new(36, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), { Rotation = 360 }) end
 	elseif rank == 5 then
 		local d = newCtx(tex, seed + 5, rgb(255, 150, 60))
 		for i = 0, 6 do
@@ -1338,7 +1476,7 @@ local function buildFresh(parent, id, opts, lite)
 	-- ===== inner frame lines =====
 	local in1 = new("Frame", { Position = UDim2.fromOffset(7, 7), Size = UDim2.fromOffset(236, 336), BackgroundTransparency = 1 }, card)
 	corner(in1, 6)
-	stroke(in1, sig and WHITE or R.light, 1, sig and 0.2 or 0.45)
+	stroke(in1, (sig or rank == 6) and WHITE or R.light, rank == 6 and 1.5 or 1, sig and 0.2 or (rank == 6 and 0.1 or 0.45))
 	if rank >= 3 then
 		local in2 = new("Frame", { Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(230, 330), BackgroundTransparency = 1 }, card)
 		corner(in2, 5)
@@ -1350,9 +1488,15 @@ local function buildFresh(parent, id, opts, lite)
 		local gs = stroke(glow, R.glow, 2.5, 0.2)
 		if anim then loop(gs, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Transparency = 0.85 }) end
 	end
+	if rank == 3.5 then
+		local glow = new("Frame", { Position = UDim2.fromOffset(5, 5), Size = UDim2.fromOffset(240, 340), BackgroundTransparency = 1 }, card)
+		corner(glow, 7)
+		stroke(glow, R.glow, 1.5, 0.35)
+	end
 	if rank == 6 then
-		local g = new("UIGradient", { Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, rgb(190, 130, 255)), ColorSequenceKeypoint.new(0.35, rgb(255, 220, 140)),
-			ColorSequenceKeypoint.new(0.65, rgb(150, 220, 255)), ColorSequenceKeypoint.new(1, rgb(190, 130, 255)) }) }, outline)
+		local w = R.wash
+		local g = new("UIGradient", { Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, w[1]), ColorSequenceKeypoint.new(0.2, w[2]),
+			ColorSequenceKeypoint.new(0.4, w[3]), ColorSequenceKeypoint.new(0.6, w[4]), ColorSequenceKeypoint.new(0.8, w[5]), ColorSequenceKeypoint.new(1, w[6]) }) }, outline)
 		outline.Thickness = 3
 		if anim then loop(g, TweenInfo.new(5, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, -1), { Rotation = 360 }) end
 	end
@@ -1432,7 +1576,8 @@ local function buildFresh(parent, id, opts, lite)
 
 	-- ===== moving bits =====
 	if rank == 4 then twinkles(card, 4, WHITE, rng, anim, { 20, 20, 210, 160 }) end
-	if rank == 6 then twinkles(card, 6, rgb(255, 240, 200), rng, anim, { 14, 14, 222, 320 }) end
+	if rank == 6 then twinkles(card, 6, WHITE, rng, anim, { 14, 14, 222, 320 }) end
+	if rank == 3.5 then twinkles(card, 3, R.light, rng, anim, { 20, 20, 210, 160 }) end
 	if rank == 5 and anim then
 		for _ = 1, 10 do
 			local x = 10 + rng:NextNumber() * 222
@@ -1462,6 +1607,63 @@ local function buildFresh(parent, id, opts, lite)
 	glowStroke.Name = "SelGlowStroke"
 
 	local api = { card = card, rarity = R, data = c }
+	function api.setGlow(on, col)
+		glowFrame.Visible = on and true or false
+		if col then glowStroke.Color = col end
+	end
+	return holder, api
+end
+
+-- ======================================================================================
+-- v4.9 baked card: one ImageLabel from the sheet + the live text (about 8 objects instead of 300-700)
+-- ======================================================================================
+local function bakedImage(id)
+	local m = BAKED_MAP[id]
+	local c = Cards.ById[id]
+	if not m or not c or BAKED_RARITY[id] ~= c.rarity then return nil end
+	local sheet = tonumber(A.SHEETS[m[1]])
+	if not sheet or sheet <= 0 then return nil end
+	return "rbxassetid://" .. sheet, m[2], m[3]
+end
+function A.IsBaked(id) return bakedImage(id) ~= nil end
+
+local function buildBaked(parent, id, opts)
+	local img, ox, oy = bakedImage(id)
+	if not img then return nil end
+	local c = Cards.ById[id]
+	local R = Cards.RarityById[c.rarity]
+	local rank = STYLE[c.rarity] or 1
+	local sig = c.rarity == "signature"
+	local width = opts.width or A.W
+	local holder = new("Frame", { Name = "Card_" .. c.id, BackgroundTransparency = 1, Size = UDim2.fromOffset(width, width * A.H / A.W),
+		Position = opts.position or UDim2.new(), AnchorPoint = opts.anchor or Vector2.zero })
+	local card = new("Frame", { Name = "Card", Size = UDim2.fromOffset(A.W, A.H), BackgroundTransparency = 1 }, holder)
+	new("UIScale", { Scale = width / A.W }, card)
+	new("ImageLabel", { Name = "Face", BackgroundTransparency = 1, Size = UDim2.fromOffset(A.W, A.H), Image = img,
+		ImageRectOffset = Vector2.new(ox, oy), ImageRectSize = Vector2.new(A.W, A.H) }, card)
+	local nameCol = rank >= 4 and R.light or rgb(244, 240, 232)
+	if sig then nameCol = WHITE end
+	local nm = new("TextLabel", { Name = "CardName", BackgroundTransparency = 1, Position = UDim2.fromOffset(22, 193), Size = UDim2.fromOffset(206, 28),
+		Text = string.upper(c.name), FontFace = F.name, TextColor3 = nameCol }, card)
+	fitText(nm, nm.Text, F.name, 23, 10, 204, 28, false)
+	local ds = new("TextLabel", { Name = "CardDesc", BackgroundTransparency = 1, Position = UDim2.fromOffset(25, 235), Size = UDim2.fromOffset(200, 66),
+		Text = c.desc, FontFace = F.hand, TextColor3 = rgb(46, 36, 30), TextWrapped = true }, card)
+	fitText(ds, c.desc, F.hand, 16, 8, 196, 64, true)
+	local rt = spaced(R.name)
+	if sig then
+		new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(125, 324), Size = UDim2.fromOffset(#rt * 7.3 + 26, 20),
+			Text = rt, FontFace = F.mono, TextSize = 12, TextColor3 = WHITE }, card)
+	else
+		new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 313), Size = UDim2.fromOffset(250, 22), Text = rt, FontFace = F.mono,
+			TextSize = 12, TextColor3 = R.label }, card)
+	end
+	local glowFrame = new("Frame", { Name = "SelGlow", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 14, 1, 14),
+		BackgroundTransparency = 1, Visible = false }, card)
+	corner(glowFrame, 14)
+	local glowStroke = stroke(glowFrame, R.glow, 4, 0.1)
+	glowStroke.Name = "SelGlowStroke"
+	holder.Parent = parent
+	local api = { card = card, rarity = R, data = c, baked = true }
 	function api.setGlow(on, col)
 		glowFrame.Visible = on and true or false
 		if col then glowStroke.Color = col end
@@ -1522,6 +1724,10 @@ function A.Build(parent, id, opts)
 	elseif opts.lod == "lite" then lite = 1
 	elseif opts.lod == nil and not anim then
 		if width <= 130 then lite = 2 elseif width <= 260 then lite = 1 end
+	end
+	if not anim and opts.baked ~= false then
+		local h, api = buildBaked(parent, id, opts)
+		if h then return h, api end
 	end
 	if anim or opts.cache == false then
 		return buildFresh(parent, id, opts, lite)
