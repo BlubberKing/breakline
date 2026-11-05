@@ -374,9 +374,10 @@ local function runRoll(my)
 		r.streaks.Visible = false
 		burst(cv, r.cx, CY, r.R, rank)
 		sfx("land", 0.9 + rank * 0.05, 1)
-		if rank >= 4 then sfx("rare", 1, 1) end
-		if rank >= 5 then
-			shake(cv, 6 + (rank - 5) * 4, 0.35)
+		-- v4.9: ranks moved up one (EPIC = 4 was added), so the old thresholds are +1: rare sound from Legendary, shake from Mythic
+		if rank >= 4 then sfx("rare", 1, rank >= 5 and 1 or 0.7) end
+		if rank >= 6 then
+			shake(cv, 6 + (rank - 6) * 4, 0.35)
 			edgePulse(root, r.R.glow)
 		end
 		local rl = r.rarityLbl
