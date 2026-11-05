@@ -35,7 +35,7 @@ A.W, A.H = 250, 350
 -- If you ever change a card's art / rarity or add a card, the sheets must be re-baked (ask the AI: "re-bake the card sheets"); cards that are not
 -- in BAKED_MAP (or whose rarity changed since the bake) automatically fall back to the drawn version, so nothing ever breaks.
 -- ======================================================================================
-A.SHEETS = { 0, 0, 0, 0 } -- <<< paste the 4 image ids here, e.g. { 1234567890, 1234567891, 1234567892, 1234567893 }
+A.SHEETS = { 107243050811638, 76549811722878, 125500158265679, 97063169601401 } -- <<< paste the 4 image ids here, e.g. { 1234567890, 1234567891, 1234567892, 1234567893 }
 local BAKED_RARITY = { -- rarity each card had when it was baked (a changed rarity = draw it the old way until re-baked)
 	steady_hands = "common",
 	light_feet = "common",
