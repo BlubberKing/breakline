@@ -968,7 +968,7 @@ end
 --   right hand: frame = the pistol grip (X right, Y up the grip, Z back). Back of the hand on the rear / right side, three fingers wrap the front,
 --               the index finger lies along the receiver toward the trigger, the thumb rests on the left side.
 --   left hand : frame = the palm point (gun axes). Back of the hand on the left, four fingers wrap round the front of the hand rest, thumb along the left.
-local BALL = Enum.PartType.Ball
+local _BALL = Enum.PartType.Ball
 
 local function gripSize(desc)
 	for _, d in ipairs(desc.Parts) do
@@ -982,64 +982,42 @@ end
 --   left : CF is relative to the palm point (gun axes), so the caller places it at Points.Palm (+ any animation)
 -- The first-person viewmodel and the lobby / cutscene figures (Skins.NewFigure) both use this, so every hand looks the same.
 function GunModels.HandParts(desc, glove, pad)
+	-- v8 BLOCK HANDS (owner: back to blocky): every hand is a few clean blocks (back plate, knuckle plate, a finger block that wraps the
+	-- grip with two pad lines for the finger splits, finger tips on the far side, thumb block, index finger block, wrist block).
 	glove, pad = glove or C.Glove, pad or C.GlovePad
 	local pts = desc.Points
 	local gs = gripSize(desc)
 	local gw, gd = gs.X, gs.Z
 	local out = { right = {}, left = {} }
-	local function put(side, name, size, cf, color, shape)
-		table.insert(out[side], { Name = name, Size = size, CF = cf, Color = color, Shape = shape })
-	end
-	local function seg(side, frame, a, b, dia, color)
-		local pa, pb = frame:PointToWorldSpace(a), frame:PointToWorldSpace(b)
-		local len = (pb - pa).Magnitude
-		if len < 0.002 then return end
-		put(side, "Finger", V(len, dia, dia), CFrame.lookAt((pa + pb) / 2, pb) * ang(0, 90, 0), color, CYL)
-	end
-	local function ball(side, frame, p, dia, color)
-		put(side, "Knuckle", V(dia, dia, dia), CF(frame:PointToWorldSpace(p)), color, BALL)
-	end
-	local function finger(side, frame, p3, dia)
-		for i = 1, #p3 - 1 do seg(side, frame, p3[i], p3[i + 1], dia, glove) end
-		for i = 2, #p3 do ball(side, frame, p3[i], dia * 1.04, i == #p3 and glove or pad) end
+	local function put(side, name, size, cf, color)
+		table.insert(out[side], { Name = name, Size = size, CF = cf, Color = color })
 	end
 
 	-- ---------- right hand (frame = pistol grip: X right, Y up the grip, Z back) ----------
 	local G = pts.Grip
 	local hx = gw / 2
-	local fd = 0.064
-	put("right", "HandBack", V(0.1, 0.34, 0.22), G * CF(hx + 0.045, 0.07, 0.12), glove)
-	put("right", "HandBackPad", V(0.03, 0.26, 0.16), G * CF(hx + 0.1, 0.07, 0.12), pad)
-	put("right", "HandWeb", V(gw + 0.03, 0.06, 0.13), G * CF(0, 0.255, 0.16), glove)
-	put("right", "WristR", V(0.2, 0.19, 0.19), G * CF(hx + 0.03, 0.0, 0.3), glove, CYL)
-	for i, y in ipairs({ 0.09, -0.01, -0.11 }) do
-		finger("right", G, {
-			V(hx + 0.05, y, 0.09),
-			V(hx + 0.035, y, -gd / 2 + 0.02),
-			V(0.0, y, -gd / 2 - 0.035),
-			V(-hx + 0.0, y, -gd / 2 + 0.0),
-		}, fd * (i == 3 and 0.88 or 1))
-	end
-	-- index finger lies along the receiver toward the trigger
-	finger("right", G, { V(hx + 0.05, 0.2, 0.09), V(hx + 0.045, 0.2, -0.12), V(hx + 0.035, 0.2, -0.3) }, fd)
-	-- thumb on the left side of the grip top
-	finger("right", G, { V(-hx - 0.03, 0.2, 0.15), V(-hx - 0.05, 0.2, 0.0), V(-hx - 0.04, 0.215, -0.17) }, fd * 1.08)
+	put("right", "HandBack", V(0.11, 0.36, gd + 0.1), G * CF(hx + 0.055, 0.04, 0.03), glove)
+	put("right", "HandBackPad", V(0.03, 0.26, gd * 0.7), G * CF(hx + 0.125, 0.04, 0.0), pad)
+	put("right", "Fingers", V(gw + 0.16, 0.3, 0.1), G * CF(0, -0.01, -gd / 2 - 0.05), glove)
+	put("right", "FingerLine", V(gw + 0.17, 0.025, 0.104), G * CF(0, 0.045, -gd / 2 - 0.05), pad)
+	put("right", "FingerLine", V(gw + 0.17, 0.025, 0.104), G * CF(0, -0.055, -gd / 2 - 0.05), pad)
+	put("right", "FingerTips", V(0.08, 0.3, gd * 0.45), G * CF(-hx - 0.04, -0.01, -gd * 0.3), glove)
+	put("right", "Index", V(0.08, 0.08, 0.39), G * CF(hx + 0.05, 0.2, -0.105), glove)
+	put("right", "Thumb", V(0.09, 0.09, 0.32), G * CF(-hx - 0.045, 0.2, -0.01), glove)
+	put("right", "HandWeb", V(gw + 0.06, 0.07, 0.16), G * CF(0, 0.255, 0.14), glove)
+	put("right", "WristR", V(0.22, 0.22, 0.22), G * CF(hx + 0.03, 0.0, 0.3), glove)
 
 	-- ---------- left hand (frame = palm point, gun axes) ----------
 	local L = CFrame.identity
 	local lw = 0.09
-	put("left", "LHandBack", V(0.1, 0.33, 0.25), L * CF(-lw - 0.06, 0.0, 0.07), glove)
-	put("left", "LHandBackPad", V(0.03, 0.25, 0.18), L * CF(-lw - 0.115, 0.0, 0.07), pad)
-	put("left", "LWrist", V(0.2, 0.2, 0.2), L * CF(-lw - 0.03, -0.02, 0.26), glove, CYL)
-	for i, y in ipairs({ 0.115, 0.04, -0.035, -0.11 }) do
-		finger("left", L, {
-			V(-lw - 0.03, y, 0.04),
-			V(-lw + 0.0, y, -0.13),
-			V(0.0, y, -0.175),
-			V(lw + 0.025, y, -0.12),
-		}, 0.062 * (i == 4 and 0.88 or 1))
-	end
-	finger("left", L, { V(-lw - 0.07, 0.17, 0.12), V(-lw - 0.07, 0.19, -0.04), V(-lw - 0.05, 0.2, -0.18) }, 0.066)
+	put("left", "LHandBack", V(0.11, 0.34, 0.28), L * CF(-lw - 0.06, 0.0, 0.06), glove)
+	put("left", "LHandBackPad", V(0.03, 0.26, 0.2), L * CF(-lw - 0.125, 0.0, 0.06), pad)
+	put("left", "LFingers", V(2 * lw + 0.14, 0.28, 0.1), L * CF(0, 0.0, -0.175), glove)
+	put("left", "LFingerLine", V(2 * lw + 0.15, 0.025, 0.104), L * CF(0, 0.05, -0.175), pad)
+	put("left", "LFingerLine", V(2 * lw + 0.15, 0.025, 0.104), L * CF(0, -0.05, -0.175), pad)
+	put("left", "LFingerTips", V(0.08, 0.28, 0.14), L * CF(lw + 0.04, 0.0, -0.11), glove)
+	put("left", "LThumb", V(0.09, 0.09, 0.3), L * CF(-lw - 0.07, 0.19, -0.03), glove)
+	put("left", "LWrist", V(0.22, 0.22, 0.22), L * CF(-lw - 0.03, -0.02, 0.26), glove)
 	return out
 end
 
@@ -1125,11 +1103,13 @@ function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor)
 	local rHand = scaled.Grip.Position
 	local rDir = V(0.45, -0.5, 1).Unit
 	local turn = ang(0, 90, 0)
-	arm("gun", V(1.7, 0.31, 0.31), CFrame.lookAt(rHand + rDir * 1.0, rHand + rDir * 2) * turn, C.Sleeve, CYL)
-	arm("gun", V(0.16, 0.34, 0.34), CFrame.lookAt(rHand + rDir * 0.2, rHand + rDir) * turn, C.Dark, CYL)
+	-- v8: sleeves + cuffs are BLOCKS again (long axis = Z, so no cylinder turn; Cyl = false tells GunClient not to add it)
+	local _ = turn
+	arm("gun", V(0.32, 0.32, 1.7), CFrame.lookAt(rHand + rDir * 1.0, rHand + rDir * 2), C.Sleeve)
+	arm("gun", V(0.36, 0.36, 0.16), CFrame.lookAt(rHand + rDir * 0.2, rHand + rDir), C.Dark)
 	local lDir = V(-0.6, -0.55, 1).Unit
-	arm("left", V(SLEEVE_LEN, 0.31, 0.31), CFrame.lookAt(lDir * 1.1, lDir * 2) * turn, C.Sleeve, CYL).Dyn = "sleeve"
-	arm("left", V(0.16, 0.34, 0.34), CFrame.lookAt(lDir * 0.2, lDir) * turn, C.Dark, CYL).Dyn = "cuff"
+	arm("left", V(0.32, 0.32, SLEEVE_LEN), CFrame.lookAt(lDir * 1.1, lDir * 2), C.Sleeve).Dyn = "sleeve"
+	arm("left", V(0.36, 0.36, 0.16), CFrame.lookAt(lDir * 0.2, lDir), C.Dark).Dyn = "cuff"
 
 	addHands(model, groups, desc, scaled, s)
 
