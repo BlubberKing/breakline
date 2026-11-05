@@ -1,8 +1,9 @@
--- GadgetClient v2 (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v4.0, reworked in v4.1.
+-- GadgetClient v2.1 (v4.9: STRONGER THROWS - fast flat throw with light in-flight gravity, released from the throwing hand, RIGHT CLICK = underhand toss;
+--   new first-person hold pose + keyframed throw: cock back, whip forward (item leaves the hand at the whip), follow-through, next one rises) (was v2: LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v4.0, reworked in v4.1.
 -- v4.1: gadgets are EQUIPPED (your gun is swapped for the item, like in Call of Duty / The Finals):
 --   keys 2 / 3 / 4 (gamepad DPad left / up / right, mobile buttons)  equip that loadout gadget. Press it again, or 1, or Q = put it away (gun back).
 --   THROW kinds (frag, smoke, flashbang): CLICK = throw. HOLD the click = a see-through line shows where it will land; release = throw. RIGHT CLICK while
---                                         holding = cancel the throw.
+--                                         holding = cancel the throw. v4.9: RIGHT CLICK when not holding = short underhand toss.
 --   PLACE kinds (sentry, bubble shield, prox mine): a BLUE see-through copy follows where you look (drag it around by moving your view), it turns RED
 --                                         when it cannot go there (too far, too steep, edge, something in the way). CLICK = put it down exactly there.
 -- The first-person hand model, the throw line, the preview and the third-person held item are all built here from GadgetModels. The server (GadgetServer)
@@ -40,6 +41,8 @@ if not fxFolder.Parent then fxFolder.Name = "ClientFX"; fxFolder.Parent = worksp
 local held -- nil | { slot, id, cfg, since }
 local aimingThrow, aimStart = false, 0
 local throwKick, throwing = 0, false
+local throwUnder, throwT0 = false, -10
+local THROW_WHIP, THROW_DROP = 0.1, 0.34 -- v4.9: keyframed first-person throw (overhand / underhand), started at throwT0
 local lastThrowAt = 0
 local ghost -- { model, id, extra = {parts}, hl }
 local traj = {} -- pooled line segments
@@ -86,17 +89,22 @@ local function simulate(id, look)
 	local head = char and char:FindFirstChild("Head")
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not head or not root then return nil end
-	local dir = (look + Vector3.new(0, Cfg.Throw.Up, 0)).Unit
+	-- v4.9: same maths as GadgetServer (start beside the head on the throwing side, light gravity until the first bounce)
+	local T = Cfg.Throw
+	local dir = (look + Vector3.new(0, T.Up, 0)).Unit
 	local from = head.Position
-	local origin = from + dir * 1.8
-	local r = workspace:Raycast(from, dir * 1.8, rayParams)
-	if r then origin = r.Position - dir * 0.4 end
-	local vel = dir * cfg.speed + root.AssemblyLinearVelocity * 0.35
-	local g = Vector3.new(0, -workspace.Gravity, 0)
+	local right = dir:Cross(Vector3.yAxis)
+	right = right.Magnitude > 0.05 and right.Unit or Vector3.xAxis
+	local want = from + right * (T.Side or 0) + Vector3.new(0, -0.15, 0) + dir * (T.Start or 1.8)
+	local origin = want
+	local r = workspace:Raycast(from, want - from, rayParams)
+	if r then origin = r.Position - (want - from).Unit * 0.4 end
+	local vel = dir * cfg.speed + root.AssemblyLinearVelocity * (T.Inherit or 0.35)
+	local g = Vector3.new(0, -math.min(T.Gravity or workspace.Gravity, workspace.Gravity), 0)
 	local pts, pos = { origin }, origin
 	local dt, t, bounces = 0.035, 0, 0
 	local final
-	while t < math.min(cfg.fuse or 2.5, 2.6) and #pts < 90 do
+	while t < math.min(cfg.fuse or 2.5, 2.6) and #pts < 140 do
 		local nxt = pos + vel * dt + g * (0.5 * dt * dt)
 		local hit = workspace:Raycast(pos, nxt - pos, rayParams)
 		if hit then
@@ -104,7 +112,8 @@ local function simulate(id, look)
 			final = hit
 			bounces += 1
 			if bounces >= 2 then break end
-			vel = (vel - 2 * vel:Dot(hit.Normal) * hit.Normal) * 0.38
+			vel = (vel - 2 * vel:Dot(hit.Normal) * hit.Normal) * (T.Bounce or 0.38)
+			g = Vector3.new(0, -workspace.Gravity, 0) -- normal gravity after the first bounce (the server switches its lift off)
 			pos = hit.Position + hit.Normal * 0.1
 		else
 			pos = nxt
@@ -306,6 +315,41 @@ local function buildVM(id)
 end
 
 local function easeOut(a) return 1 - (1 - clamp(a, 0, 1)) ^ 3 end
+local function easeInOut(a) a = clamp(a, 0, 1) return a * a * (3 - 2 * a) end
+local function lerp3(a, b, t) return a + (b - a) * t end
+
+-- v4.9 first-person throw, in 3 beats (times after the release click):
+--   0 .. Windup            cock: hand pulls up + back beside your head, item tilts back (underhand: hand drops low + back)
+--   Windup .. +WHIP        whip: hand snaps forward and across, the item LEAVES the hand at Windup (same moment the server launches it)
+--   .. +THROW_DROP         follow-through: the empty hand carries on down and out of view; then the next one rises (equip raise)
+
+local OVER = {
+	cock = { pos = Vector3.new(0.32, 0.42, 0.5), rot = Vector3.new(38, 6, -14) },
+	whip = { pos = Vector3.new(-0.28, -0.05, -1.05), rot = Vector3.new(-30, 14, 8) },
+	drop = { pos = Vector3.new(-0.55, -1.5, -0.4), rot = Vector3.new(-60, 20, 20) },
+}
+local UNDER = {
+	cock = { pos = Vector3.new(0.12, -0.55, 0.45), rot = Vector3.new(-30, 0, -6) },
+	whip = { pos = Vector3.new(-0.05, 0.05, -1.0), rot = Vector3.new(30, 6, 0) },
+	drop = { pos = Vector3.new(-0.1, -1.3, -0.5), rot = Vector3.new(10, 10, 6) },
+}
+-- returns position offset, rotation (degrees), whether the item is still in the hand, and whether the throw anim is running
+local function throwPose(now)
+	local W = Cfg.Throw.Windup
+	local tp = now - throwT0
+	if tp < 0 or tp > W + THROW_DROP then return Vector3.zero, Vector3.zero, true, false end
+	local K = throwUnder and UNDER or OVER
+	if tp < W then
+		local a = easeOut(tp / W)
+		return K.cock.pos * a, K.cock.rot * a, true, true
+	elseif tp < W + THROW_WHIP then
+		local a = easeInOut((tp - W) / THROW_WHIP)
+		return lerp3(K.cock.pos, K.whip.pos, a), lerp3(K.cock.rot, K.whip.rot, a), false, true
+	else
+		local a = easeInOut((tp - W - THROW_WHIP) / (THROW_DROP - THROW_WHIP))
+		return lerp3(K.whip.pos, K.drop.pos, a), lerp3(K.whip.rot, K.drop.rot, a), false, true
+	end
+end
 
 local function updateVM(dt, now)
 	if not held then destroyVM() return end
@@ -318,18 +362,32 @@ local function updateVM(dt, now)
 	vm.bob += dt * clamp(speed, 0, 30) * 0.45
 	local amp = clamp(speed / 16, 0, 1.4)
 	throwKick = math.max(0, throwKick - dt * 4.5)
-	local raise = easeOut((now - held.since) / Cfg.Throw.EquipTime)
 	local place = cfg.kind == "place"
-	-- windup while you hold the throw
-	local hold = (aimingThrow and not place) and clamp((now - aimStart) / 0.25, 0, 1) or 0
+	local tPos, tRot, inHand, throwingAnim = Vector3.zero, Vector3.zero, true, false
+	if not place then tPos, tRot, inHand, throwingAnim = throwPose(now) end
+	local raise = throwingAnim and 1 or easeOut((now - held.since) / Cfg.Throw.EquipTime)
+	-- the thrown item is gone from the hand until the next one is raised
+	local showItem = inHand and (now - throwT0 > Cfg.Throw.Windup + THROW_DROP or now - throwT0 < Cfg.Throw.Windup or place)
+	if vm.shown ~= showItem then
+		vm.shown = showItem
+		vm.model.Parent = showItem and vm.folder or nil
+	end
+	-- aiming (holding the click): the arm cocks back beside your head, ready to throw - v4.9 a real ready-to-throw pose
+	local hold = (aimingThrow and not place) and clamp((now - aimStart) / 0.22, 0, 1) or 0
 	vm.hold = (vm.hold or 0) + (hold - (vm.hold or 0)) * (1 - math.exp(-dt * 16))
-	local base = place and Vector3.new(0.7, -0.62, -1.9) or Vector3.new(0.58, -0.46, -1.7)
+	local h = easeInOut(vm.hold) * (throwingAnim and 0 or 1)
+	-- resting hold: grenade low in the right hand, palm up, fingers round it, a little inward (it no longer floats in the middle of the screen)
+	local base = place and Vector3.new(0.7, -0.62, -1.9) or Vector3.new(0.62, -0.58, -1.55)
+	local breathe = math.sin(now * 1.7) * 0.007
 	local pos = base
-		+ Vector3.new(math.sin(vm.bob) * 0.04 * amp, -math.abs(math.cos(vm.bob)) * 0.05 * amp + math.sin(now * 1.7) * 0.007, 0)
+		+ Vector3.new(math.sin(vm.bob) * 0.04 * amp, -math.abs(math.cos(vm.bob)) * 0.05 * amp + breathe, 0)
 		+ Vector3.new(0.05, -1.3 * (1 - raise), 0.5 * (1 - raise))
-		+ Vector3.new(0.06 * vm.hold, 0.16 * vm.hold, 0.34 * vm.hold)
-		+ Vector3.new(-0.1 * throwKick, 0.12 * throwKick, -1.0 * throwKick)
-	local rot = CFrame.Angles(rad(-18 * vm.hold + 38 * throwKick), rad(-12 - 10 * vm.hold), rad(-8 + 16 * (1 - raise)))
+		+ OVER.cock.pos * 0.8 * h
+		+ tPos
+	local rx = (place and 0 or 8) + OVER.cock.rot.X * 0.8 * h + tRot.X
+	local ry = -12 + OVER.cock.rot.Y * h + tRot.Y
+	local rz = -8 + 16 * (1 - raise) + OVER.cock.rot.Z * h + tRot.Z
+	local rot = CFrame.Angles(rad(rx), rad(ry), rad(rz))
 	local cf = camera.CFrame * CFrame.new(pos) * rot
 	vm.model:PivotTo(cf * CFrame.new(0, place and 0.2 * vm.scale or 0, 0))
 	local gloveCF = cf * CFrame.new(-0.03, place and -0.1 or -0.2, 0.01)
@@ -378,7 +436,7 @@ local function equip(slot)
 	end
 end
 
-local function doThrow()
+local function doThrow(under)
 	if not held or held.cfg.kind ~= "throw" or throwing then return end
 	if blockedNow() then return end
 	local now = os.clock()
@@ -389,11 +447,12 @@ local function doThrow()
 	lastThrowAt = now
 	throwing = true
 	throwKick = 1
-	local look = camera.CFrame.LookVector
-	task.delay(Cfg.Throw.Windup, function()
-		UseR:FireServer(slot, look)
-		throwing = false
-	end)
+	throwUnder = under == true
+	throwT0 = now
+	held.since = now + Cfg.Throw.Windup + THROW_DROP -- the next grenade comes up from below once the arm has followed through
+	-- v4.9: sent right away; the server starts everybody's throwing arm and releases the item after Cfg.Throw.Windup (when the arm whips forward)
+	UseR:FireServer(slot, camera.CFrame.LookVector, throwUnder)
+	task.delay(Cfg.Throw.Windup + 0.05, function() throwing = false end)
 end
 
 local function doPlace()
@@ -442,7 +501,11 @@ UIS.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then onPrimaryDown()
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-		if aimingThrow then aimingThrow = false hideTraj() end -- right click cancels a throw you are charging
+		if aimingThrow then
+			aimingThrow = false hideTraj() -- right click cancels a throw you are charging
+		elseif held and held.cfg.kind == "throw" then
+			doThrow(true) -- v4.9: right click (not charging) = short underhand toss
+		end
 	elseif input.KeyCode == Enum.KeyCode.One or input.KeyCode == Enum.KeyCode.ButtonR1 then unequip()
 	elseif input.KeyCode == Enum.KeyCode.Q and held and player:GetAttribute("Carrying") ~= true and player:GetAttribute("CarryingSoul") ~= true then unequip() end
 end)
@@ -466,9 +529,11 @@ local function syncOthers()
 			if char and id and hand and Cfg.Items[id] then
 				if not cur or cur.id ~= id or not cur.model.Parent then
 					dropOther(char)
-					local model = GM.Build(id, nil, { anchored = false, scale = 0.85 })
+					-- v4.9: smaller and sitting IN the palm (it used to hang off the front of the hand); placeables a bit bigger, held in front
+					local isThrow = Cfg.Items[id].kind == "throw"
+					local model = GM.Build(id, nil, { anchored = false, scale = isThrow and 0.55 or 0.6 })
 					if model then
-						model:PivotTo(hand.CFrame * CFrame.new(0, -0.15, -0.35))
+						model:PivotTo(hand.CFrame * (isThrow and CFrame.new(-0.1, -0.3, -0.04) or CFrame.new(-0.25, -0.35, -0.2)))
 						local anchorPart = hand
 						for _, d in model:GetChildren() do
 							if d:IsA("BasePart") then
@@ -502,7 +567,7 @@ RunService.RenderStepped:Connect(function(dt)
 		-- the server owns the truth: dead / no longer holding / out of charges = put it away
 		if not hum or blockedNow() or (char and char:GetAttribute("HeldGadget") == nil and now - held.since > 0.6) then
 			unequip(not hum)
-		elseif slotCount(held.slot) <= 0 and not throwing and now - lastThrowAt > 0.4 then
+		elseif slotCount(held.slot) <= 0 and not throwing and now - lastThrowAt > Cfg.Throw.Windup + THROW_DROP then
 			unequip()
 		end
 	end
