@@ -1,13 +1,13 @@
--- Skins v6 (ModuleScript in ReplicatedStorage) - used by BOTH games (Lobby + Breakline). Keep the two copies identical.
--- v6 ANATOMY-KIT REWRITE of the player models (owner: "it looks thrown together, the arms do not even connect to the body").
---   WHY v5 LOOKED ASSEMBLED: every body part was its own blob, the elbow / knee balls were narrower than the limb they joined (pinched joints),
---   and the shoulder was built on the wrong point (the real R15 shoulder pivot is on the arm's CENTRE LINE, not its inner edge), so the arms leaned
---   away from the torso and detached when they raised.
---   v6 FIX: ONE shared anatomy kit (K.*) builds every skin: continuous lofted TUBES (B.tube) for torso, arms and legs with a V-taper; a ball at every
---   real rig pivot that is at least as wide as the limb; a shoulder yoke that makes the arms grow out of the torso; chunky gloves; shoes that sit on
---   an ankle ball. A skin is then only an OUTFIT: a palette, ONE silhouette idea, ONE hero prop, a handful of big shapes (see GDD 5.4 "Skin Style Bible").
---   * NO team-coloured / glowing parts on skins (owner). Teammates + party members are shown with an OUTLINE (TeamOutline LocalScript).
---   * ONE outfit code path for the real character AND the menu figure (virtual R15 rig scaled by FIG_SCALE, dressed by the same DRESS code).
+-- Skins v8 (ModuleScript in ReplicatedStorage) - used by BOTH games (Lobby + Breakline). Keep the two copies identical.
+-- v8 BACK TO BLOCKY (owner, Nov 4: "back to the total blocky skins, with the blocky hands as well, but refined, the best it can look for blocky").
+--   * The mesh-skin loader of v7 (ReplicatedStorage.SkinModels) is REMOVED. Skins are pure Studio code again, nothing to import.
+--   * Every body part is ONE clean block the size of the real R15 part (the classic blocky avatar silhouette), outfit detail is built on top
+--     from bigger, readable blocks + a few wedges: plates, pouches, straps, pads, cuffs, laces, helmet, hood, mask.
+--   * BLOCK HANDS (mitten block, wrist cuff, knuckle plate, thumb block) on the character, the lobby figure AND in first person
+--     (GunModels.HandParts / GadgetModels.BuildHand v8).
+--   * Joint fillers (a 45 degree turned block on every elbow + knee pivot) so bent blocky limbs never open a gap.
+--   * Layers never share a face with a different colour (each layer is a few % bigger than the one below), so nothing flickers.
+--   * NO team-coloured / glowing parts (owner). Teammates + party members get an OUTLINE (TeamOutline). Only SOULBOUND's soul eyes + lantern glow.
 -- The equipped skin is saved in the shared profile as "Skin" (ProfileStore DEFAULTS = "OPERATOR").
 --   Skins.Order / Skins.ById / Skins.Default / Skins.Get(id) / Skins.Is(id)
 --   Skins.Dress(character, skinId)               -> server: dresses a real Roblox character (lobby + match). (3rd argument = old team accent, ignored)
@@ -15,7 +15,7 @@
 --       opts = { weapon = "VX9", camPos = Vector3, idle = true, still = true, static = true } (unchanged)
 --       figure:SetRoot(cframe), figure:Update(t, dt), figure:Destroy(), figure.HeadTop, figure.run / runPhase / sit
 --   Skins.Proportions / Skins.ApplyProportions(character) / Skins.Prepare(character) (unchanged)
--- Adding a skin: entry in Skins.List (colors) + DRESS[id](B, Z, C, opt) built from the kit K (see "THE ANATOMY KIT" + "OUTFITS" below).
+-- Adding a skin: entry in Skins.List (colors) + DRESS[id](B, Z, C, opt) built from the block kit K (see "THE BLOCK KIT" + "OUTFITS" below).
 local RS = game:GetService("ReplicatedStorage")
 
 local S = {}
@@ -26,12 +26,16 @@ local BREAKLINE_RED = rgb(226, 38, 48)
 S.List = {
 	{
 		id = "OPERATOR", name = "OPERATOR", sub = "Standard issue", card = rgb(214, 40, 46),
-		desc = "Fitted field jacket, sling, drop-leg holster and high-tops. What every recruit starts with.",
+		desc = "Ballistic helmet, plate carrier, drop-leg holster and high-tops. What every recruit starts with.",
 		colors = {
 			-- v5 keys
 			Skin = rgb(196, 146, 112), SkinShade = rgb(168, 118, 88), Hair = rgb(36, 28, 24), Lip = rgb(150, 96, 80), Eye = rgb(52, 38, 30),
 			Top = rgb(34, 36, 42), TopDark = rgb(22, 23, 28), Shirt = rgb(150, 152, 156), Pants = rgb(78, 81, 88), PantsDark = rgb(56, 58, 64),
 			Shoe = rgb(28, 28, 32), Sole = rgb(232, 230, 222), Strap = rgb(20, 20, 24), Metal = rgb(176, 180, 186), Pad = rgb(44, 46, 52),
+			-- v8 block outfit keys
+			Helmet = rgb(118, 104, 82), HelmetDark = rgb(88, 77, 60), Carrier = rgb(142, 122, 90), CarrierDark = rgb(108, 92, 68),
+			Gaiter = rgb(52, 56, 50), GaiterDark = rgb(38, 41, 36), Lens = rgb(26, 28, 34), Tape = rgb(206, 200, 184),
+			PadLight = rgb(70, 72, 80), Lace = rgb(46, 46, 52), Gun = rgb(30, 31, 34),
 			-- old keys (menus / GunModels hands still read some of these)
 			Suit = rgb(34, 36, 42), Under = rgb(78, 81, 88), Armor = rgb(112, 118, 128), Trim = rgb(20, 20, 24), Accent = BREAKLINE_RED,
 			Plate = rgb(150, 156, 166), Cloth = rgb(48, 50, 56), Glove = rgb(24, 24, 28), Brand = BREAKLINE_RED, White = rgb(232, 232, 228),
@@ -118,519 +122,402 @@ local function getGunModels()
 end
 
 -- =====================================================================================
--- BUILDER. Every shell is described relative to the CENTRE of an R15 body part ("base"). Front of a Roblox character = -Z, right = +X.
---   B.ell(base, size, cf, color, mat)              stretched sphere (ellipsoid) filling `size`
---   B.box(base, size, cf, color, mat)              plain block
---   B.rod(base, a, b, d, color, mat)               thin cylinder between two points
---   B.ball(base, p, r, color, mat)                 sphere (joint caps, knuckles, studs)
---   B.tube(base, stations, color, mat)             ONE continuous lofted tube. stations = { {p=Vector3, rx=, rz=}, ... }: radius in X / Z at each
---                                                  station, linearly blended, drawn as overlapping ellipsoids (no seams, no steps). THE tool for limbs,
---                                                  torso, sleeves, coat panels, straps, hair strands, anything long.
---   B.ring(base, y, wx, wz, h, color, mat, cf)     flat band round a limb (cuffs, wraps)
+-- BUILDER (v8 BLOCKY). Every piece is a block (or a wedge) described relative to the CENTRE of an R15 body part ("base").
+-- Front of a Roblox character = -Z, right = +X, up = +Y (the same for both sides: on the LEFT arm +X still points to the character's right).
+--   B.blk(base, size, pos, col, mat, rotDeg)   plain block at `pos` (Vector3), optional rotation in DEGREES (Vector3, X then Y then Z)
+--   B.wdg(base, size, pos, col, mat, rotDeg)   wedge (Roblox WedgePart: full height at +Z, slope falls to the front, -Z)
+--   B.box(base, size, cf, col, mat)            block with a full CFrame (old API, still used by the plumbing)
 -- The emitter decides what happens with it: weld to the real rig (Dress) or record for the figure (NewFigure).
 -- =====================================================================================
-local SP, METAL, NEON, FABRIC = Enum.Material.SmoothPlastic, Enum.Material.Metal, Enum.Material.Neon, Enum.Material.Fabric
+local SP, METAL, NEON, FABRIC, GLASS = Enum.Material.SmoothPlastic, Enum.Material.Metal, Enum.Material.Neon, Enum.Material.Fabric, Enum.Material.Glass
+local LEATHER = Enum.Material.Leather
 local CFn, V3 = CFrame.new, Vector3.new
 local rad = math.rad
 
-local function frameAlong(a, b)
-	local up = b - a
-	local len = up.Magnitude
-	if len < 1e-4 then return CFn((a + b) / 2), 0 end
-	up = up / len
-	local right = Vector3.xAxis - up * up.X
-	if right.Magnitude < 0.2 then right = Vector3.zAxis - up * up.Z end
-	right = right.Unit
-	return CFrame.fromMatrix((a + b) / 2, right, up), len
+local function rotCF(pos, r)
+	if r then return CFn(pos) * CFrame.Angles(rad(r.X), rad(r.Y), rad(r.Z)) end
+	return CFn(pos)
 end
-
-local TUBE_LEN = 2.6 -- bead length in steps (bigger = smoother outline, fewer parts)
 
 local function newBuilder(emit)
 	local B = {}
-	function B.ell(base, size, cf, col, mat) emit(base, "ell", size, cf, col, mat) end
 	function B.box(base, size, cf, col, mat) emit(base, "box", size, cf, col, mat) end
-	function B.ball(base, p, r, col, mat) emit(base, "ell", V3(2 * r, 2 * r, 2 * r), CFn(p), col, mat) end
-	function B.rod(base, a, b, d, col, mat)
-		local cf, len = frameAlong(a, b)
-		if len < 1e-3 then return end
-		emit(base, "cyl", V3(len, d, d), cf * CFrame.Angles(0, 0, rad(90)), col, mat)
-	end
-	function B.ring(base, y, wx, wz, h, col, mat, cf)
-		emit(base, "ell", V3(wx, h, wz), (cf or CFrame.identity) * CFn(0, y, 0), col, mat)
-	end
-	function B.tube(base, st, col, mat)
-		for i = 1, #st - 1 do
-			local a, b = st[i], st[i + 1]
-			local d = b.p - a.p
-			local len = d.Magnitude
-			if len > 1e-4 then
-				local rmax = math.max(a.rx, a.rz, b.rx, b.rz)
-				local n = math.max(1, math.ceil(len / (1.0 * rmax)))
-				local rot = frameAlong(a.p, b.p).Rotation
-				local step = len / n
-				for k = 0, n - 1 do
-					local t = (k + 0.5) / n
-					emit(base, "ell", V3(2 * (a.rx + (b.rx - a.rx) * t), step * TUBE_LEN, 2 * (a.rz + (b.rz - a.rz) * t)), CFn(a.p + d * t) * rot, col, mat)
-				end
-			end
-		end
-	end
+	function B.ell(base, size, cf, col, mat) emit(base, "ell", size, cf, col, mat) end
+	function B.blk(base, size, pos, col, mat, r) emit(base, "box", size, rotCF(pos, r), col, mat) end
+	function B.wdg(base, size, pos, col, mat, r) emit(base, "wedge", size, rotCF(pos, r), col, mat) end
 	return B
 end
 
--- joint positions inside each R15 part (fractions of the part size, from the stock R15 attachments)
+-- joint positions inside each R15 part (fractions of the part size, from the stock R15 rig attachments)
 local J = {}
-function J.ut(t) return { neck = V3(0, t.Y * 0.5, 0), sh = t.Y * 0.352, waist = V3(0, -t.Y * 0.5, 0) } end
--- (v6) the REAL R15 shoulder pivot is on the arm's centre line (checked against the stock rig attachments), not on its inner edge
-function J.ua(a, s) return { sh = V3(0, a.Y * 0.335, 0), el = V3(0, -a.Y * 0.286, 0) } end
+function J.ua(a) return { sh = V3(0, a.Y * 0.335, 0), el = V3(0, -a.Y * 0.286, 0) } end
 function J.la(l) return { el = V3(0, l.Y * 0.246, 0), wr = V3(0, -l.Y * 0.476, 0) } end
-function J.hd(h) return { wr = V3(0, h.Y * 0.417, 0) } end
 function J.ul(u) return { hip = V3(0, u.Y * 0.345, 0), kn = V3(0, -u.Y * 0.329, 0) } end
 function J.ll(l) return { kn = V3(0, l.Y * 0.334, 0), an = V3(0, -l.Y * 0.459, 0) } end
-function J.ft(f) return { an = V3(0, f.Y * 0.333, 0) } end
-function J.lt(l) return { waist = V3(0, l.Y * 0.5, 0), hipY = -l.Y * 0.5 } end
-
--- front surface of the head (union of ellipsoids) at (x, y): returns z (negative = front)
-local function headFront(E, x, y)
-	local best = 0
-	for _, e in E do
-		local c, r = e[1], e[2]
-		local k = ((x - c.X) / (r.X / 2)) ^ 2 + ((y - c.Y) / (r.Y / 2)) ^ 2
-		if k < 1 then
-			local z = c.Z - (r.Z / 2) * math.sqrt(1 - k)
-			if z < best then best = z end
-		end
-	end
-	return best
-end
-
--- radius (rx, rz) of a station list at height y (stations ascend in Y)
-local function radiiAt(st, y)
-	if y <= st[1].p.Y then return st[1].rx, st[1].rz end
-	for i = 1, #st - 1 do
-		local a, b = st[i], st[i + 1]
-		if y <= b.p.Y then
-			local t = (y - a.p.Y) / math.max(1e-6, b.p.Y - a.p.Y)
-			return a.rx + (b.rx - a.rx) * t, a.rz + (b.rz - a.rz) * t
-		end
-	end
-	return st[#st].rx, st[#st].rz
-end
 
 -- =====================================================================================
--- THE ANATOMY KIT (K). Every skin is built from the SAME anatomy so every character has the same proportions and the same joints:
---   * ONE continuous tube per limb segment, thick at the top, thinning to the bottom (never a stack of separate blobs).
---   * A BALL at every real rig pivot (shoulder, elbow, hip, knee, ankle) at least as wide as the tubes it joins: the surface stays closed when the limb bends.
---   * The torso is one tube with a V taper: broad chest + shoulders, narrow waist, hips narrower than the chest.
---   * Garment thickness comes from `pad` (a skin is built from its OUTERMOST layer only, nothing hidden underneath).
--- Numbers are for a real player (u = 1); everything is multiplied by Z.u so the lobby figure matches exactly.
+-- THE BLOCK KIT (K). v8 = back to the classic blocky Roblox body, done properly:
+--   * every body part is ONE clean block the size of the real R15 part (so the silhouette is the classic blocky avatar), layers on top of it
+--     are a little bigger than the layer below (no two different colours ever share a face = no flicker), detail is big, readable blocks
+--     (plates, pouches, straps, pads, cuffs, laces) in 2-4 tones per material, never tiny noise.
+--   * BLOCK HANDS: a mitten block per hand (wrist cuff, knuckle plate, thumb block), the same in first person (GunModels.HandParts).
+--   * JOINT FILLERS: a 45 degree turned block on every elbow + knee pivot, so a bent blocky limb never shows a gap or a hollow corner.
+--   * HEAD: a slightly rounded-off cube (bevel blocks on the vertical edges) with a block face (brows, eyes with a highlight, nose).
+-- Sizes are fractions of the real part sizes (Z[part]) or studs * Z.u, so the lobby figure (FIG_SCALE) matches the player exactly.
 -- =====================================================================================
 local K = {}
 
--- torso stations (UpperTorso frame). o.pad = garment thickness, o.chest = chest width multiplier
-function K.torsoSt(Z, o)
-	local u = Z.u
-	local ny = J.ut(Z.UpperTorso).neck.Y
-	local pad, ch = (o.pad or 0) * u, o.chest or 1
-	local function s(f, rx, rz) return { p = V3(0, f * ny, 0), rx = rx * u * (f > -0.2 and ch or 1) + pad, rz = rz * u + pad } end
-	return {
-		s(-1.0, 0.52, 0.37), s(-0.5, 0.57, 0.40), s(0.0, 0.64, 0.43), s(0.42, 0.70, 0.44), s(0.76, 0.66, 0.39), s(1.0, 0.34, 0.29),
-	}
-end
+-- the head cube edge (the R15 head part is 2 x 1 x 1; the visible stock head is 1.2 x its depth)
+local function headCube(Z) return Z.h * 0.94 end
 
--- neck (skin) + torso garment + shoulder + pelvis. Returns torso stations for surface placement.
-function K.torso(B, Z, col, mat, o)
+function K.head(B, Z, skinCol, o)
 	o = o or {}
-	local u = Z.u
-	local A = {}
-	if Z.UpperTorso then
-		local jt = J.ut(Z.UpperTorso)
-		local ny = jt.neck.Y
-		local st = K.torsoSt(Z, o)
-		B.tube("UpperTorso", st, col, mat)
-		-- shoulder yoke: one bar across the shoulder line from arm pivot to arm pivot, so the arms grow out of the torso (trapezius + deltoid line)
-		local ua = Z.RightUpperArm
-		if ua then
-			local xe = (Z.shX or (Z.UpperTorso.X * 0.5 + ua.X * 0.5)) * 0.92
-			local ys = jt.sh
-			local pad = (o.pad or 0) * u
-			B.tube("UpperTorso", {
-				{ p = V3(-xe, ys + 0.01 * u, 0), rx = 0.34 * u + pad, rz = 0.29 * u + pad },
-				{ p = V3(0, ys + 0.03 * u, 0.01 * u), rx = 0.38 * u + pad, rz = 0.27 * u + pad },
-				{ p = V3(xe, ys + 0.01 * u, 0), rx = 0.34 * u + pad, rz = 0.29 * u + pad },
-			}, col, mat)
-		end
-		A.st, A.ny = st, ny
-		A.chest = function(x, y, dz) -- point on the torso front surface at (x, y)
-			local rx, rz = radiiAt(st, y)
-			local k = math.clamp(x / rx, -0.98, 0.98)
-			return V3(x, y, -rz * math.sqrt(1 - k * k) + (dz or 0))
-		end
-		A.back = function(x, y, dz)
-			local rx, rz = radiiAt(st, y)
-			local k = math.clamp(x / rx, -0.98, 0.98)
-			return V3(x, y, rz * math.sqrt(1 - k * k) + (dz or 0))
-		end
-	end
-	if Z.LowerTorso then
-		local jl = J.lt(Z.LowerTorso)
-		local top, bot = jl.waist.Y, -Z.LowerTorso.Y * 0.5
-		local pad = (o.pad or 0) * u
-		B.tube("LowerTorso", {
-			{ p = V3(0, top + 0.02 * u, 0), rx = 0.58 * u + pad, rz = 0.39 * u + pad },
-			{ p = V3(0, bot - 0.1 * u, 0.0), rx = 0.62 * u + pad, rz = 0.42 * u + pad },
-		}, o.pelvisCol or col, o.pelvisMat or mat)
-		B.ell("LowerTorso", V3(1.12, 0.62, 0.72) * u, CFn(0, bot - 0.12 * u, 0.03 * u), o.pelvisCol or col, o.pelvisMat or mat) -- seat: closes the crotch
-		A.waistY, A.hipY = top, bot
-	end
-	return A
-end
-
--- one arm: sleeve tube + shoulder cap + elbow ball. The arm hangs on the rig bone (pivot on the centre line), so it follows every animation exactly.
-function K.arm(B, Z, side, col, mat, o)
-	o = o or {}
-	local u, sg = Z.u, side == "Right" and 1 or -1
-	local ua, la = Z[side .. "UpperArm"], Z[side .. "LowerArm"]
-	local pad = (o.pad or 0) * u
-	local info = { lax = 0 }
-	if ua then
-		local j = J.ua(ua, sg)
-		local shY = j.sh.Y
-		local R1, R2 = o.upper or 0.30, o.lower or 0.22
-		B.ball(side .. "UpperArm", j.sh + V3(0, 0.01 * u, 0), (R1 + 0.035) * u * (o.shoulder or 1) + pad, col, mat) -- shoulder cap on the REAL pivot
-		B.tube(side .. "UpperArm", {
-			{ p = V3(0, shY, 0), rx = R1 * u + pad, rz = (R1 + 0.01) * u + pad },
-			{ p = V3(0, shY * 0.2, 0), rx = (R1 - 0.03) * u + pad, rz = (R1 - 0.01) * u + pad },
-			{ p = V3(0, j.el.Y, 0), rx = R2 * u + pad, rz = (R2 + 0.01) * u + pad },
-		}, col, mat)
-		B.ball(side .. "UpperArm", j.el, (R2 + 0.01) * u + pad, col, mat) -- elbow ball (the bend pivots here)
-		info.shY, info.elY = shY, j.el.Y
-	end
-	if la then
-		local j = J.la(la)
-		local R2, R3 = o.lower or 0.22, o.wrist or 0.155
-		B.tube(side .. "LowerArm", {
-			{ p = V3(0, j.el.Y, 0), rx = R2 * u + pad, rz = (R2 + 0.01) * u + pad },
-			{ p = V3(0, j.el.Y * 0.2, 0), rx = (R2 + 0.012) * u + pad, rz = (R2 + 0.025) * u + pad },
-			{ p = V3(0, j.wr.Y, 0), rx = R3 * u + pad, rz = (R3 + 0.01) * u + pad },
-		}, col, mat)
-		info.wrY, info.lelY = j.wr.Y, j.el.Y
-	end
-	return info
-end
-
--- the hand: chunky glove (palm + curled finger block + thumb). fingerCol lets fingerless gloves show skin.
-function K.hand(B, Z, side, glove, fingerCol, armInfo)
-	local u, sg = Z.u, side == "Right" and 1 or -1
-	local hd = Z[side .. "Hand"]
-	if not hd then return end
-	local j = J.hd(hd)
-	local w = j.wr
-	local ax = armInfo and armInfo.lax or 0
-	local gl, fg = glove, fingerCol or glove
-	B.ball(side .. "Hand", w + V3(ax, 0.02 * u, 0), 0.17 * u, gl, SP)                                                -- wrist ball (hand turns here)
-	B.ell(side .. "Hand", V3(0.3, 0.32, 0.27) * u, CFn(w + V3(ax, -0.15 * u, 0)), gl, SP)                          -- palm / back of hand
-	B.ell(side .. "Hand", V3(0.28, 0.26, 0.3) * u, CFn(w + V3(ax - sg * 0.02 * u, -0.34 * u, -0.01 * u)), fg, SP)  -- finger block
-	B.ell(side .. "Hand", V3(0.1, 0.22, 0.1) * u, CFn(w + V3(ax - sg * 0.12 * u, -0.2 * u, -0.12 * u)) * CFrame.Angles(rad(-20), 0, rad(sg * 20)), fg, SP) -- thumb
-end
-
--- one leg: thigh tube, calf tube, hip / knee / ankle balls. col = trouser colour.
-function K.leg(B, Z, side, col, mat, o)
-	o = o or {}
-	local u = Z.u
-	local ul, ll = Z[side .. "UpperLeg"], Z[side .. "LowerLeg"]
-	local pad = (o.pad or 0) * u
-	local info = {}
-	if ul then
-		local j = J.ul(ul)
-		local T = o.thigh or 0.30
-		B.ball(side .. "UpperLeg", j.hip, (T + 0.01) * u + pad, col, mat)
-		B.tube(side .. "UpperLeg", {
-			{ p = V3(0, j.hip.Y, 0), rx = T * u + pad, rz = (T + 0.02) * u + pad },
-			{ p = V3(0, 0.0, 0), rx = (T - 0.02) * u + pad, rz = (T + 0.01) * u + pad },
-			{ p = V3(0, j.kn.Y, 0), rx = 0.235 * u + pad, rz = 0.255 * u + pad },
-		}, col, mat)
-		B.ball(side .. "UpperLeg", j.kn, 0.25 * u + pad, col, mat)
-		info.hipY, info.knY = j.hip.Y, j.kn.Y
-	end
-	if ll then
-		local j = J.ll(ll)
-		B.tube(side .. "LowerLeg", {
-			{ p = V3(0, j.kn.Y, 0), rx = 0.235 * u + pad, rz = 0.255 * u + pad },
-			{ p = V3(0, j.kn.Y * 0.35, 0.02 * u), rx = 0.25 * u + pad, rz = 0.275 * u + pad },
-			{ p = V3(0, j.an.Y, 0), rx = (o.ankle or 0.16) * u + pad, rz = ((o.ankle or 0.16) + 0.02) * u + pad },
-		}, col, mat)
-		info.lknY, info.anY = j.kn.Y, j.an.Y
-	end
-	return info
-end
-
--- the shoe: heel + foot + toe box + sole + ankle ball. o.collar = high-top shaft colour height, shoeCol / soleCol
-function K.shoe(B, Z, side, shoe, sole, o)
-	o = o or {}
-	local u = Z.u
-	local ft = Z[side .. "Foot"]
-	if not ft then return end
-	local j = J.ft(ft)
-	local fb = -ft.Y * 0.5
-	local up = o.up or 0
-	B.ball(side .. "Foot", V3(0, j.an.Y, 0.02 * u), 0.2 * u, shoe, SP)                                                     -- ankle ball
-	B.tube(side .. "Foot", { { p = V3(0, j.an.Y, 0.04 * u), rx = 0.2 * u, rz = 0.22 * u }, { p = V3(0, fb + 0.2 * u, 0.1 * u), rx = 0.22 * u, rz = 0.26 * u } }, shoe, SP)
-	B.ell(side .. "Foot", V3(0.43, 0.32, 0.9) * u, CFn(0, fb + 0.19 * u, -0.14 * u), shoe, SP)                                -- foot body
-	B.ell(side .. "Foot", V3(0.41, 0.24, 0.44) * u, CFn(0, fb + 0.15 * u, -0.43 * u), shoe, SP)                               -- toe box
-	B.box(side .. "Foot", V3(0.45, 0.07, 0.98) * u, CFn(0, fb + 0.035 * u, -0.16 * u), sole, Enum.Material.Rubber)             -- sole
-	B.ell(side .. "Foot", V3(0.45, 0.1, 0.34) * u, CFn(0, fb + 0.05 * u, -0.6 * u), sole, Enum.Material.Rubber)                -- sole toe
-	return { footBottom = fb, an = j.an.Y }
-end
-
--- neck + head + face. face=false for masked skins. Returns the head ellipsoids + a surface helper.
-function K.head(B, Z, C, o)
-	o = o or {}
-	local u = Z.u
-	local A = {}
-	if Z.UpperTorso then
-		local ny = J.ut(Z.UpperTorso).neck.Y
-		B.tube("UpperTorso", { { p = V3(0, ny * 0.8, 0.01 * u), rx = 0.24 * u, rz = 0.25 * u }, { p = V3(0, ny + 0.2 * u, 0.0), rx = 0.19 * u, rz = 0.2 * u } }, C.Skin, SP)
-	end
-	if Z.Head then
-		local h = Z.h
-		local E = {
-			{ V3(0, 0.1 * h, 0.03 * h), V3(0.7, 0.8, 0.8) * h },      -- cranium
-			{ V3(0, -0.1 * h, -0.07 * h), V3(0.58, 0.62, 0.62) * h },  -- face
-			{ V3(0, -0.29 * h, -0.08 * h), V3(0.5, 0.3, 0.46) * h },   -- jaw
-			{ V3(0, -0.37 * h, -0.19 * h), V3(0.26, 0.2, 0.24) * h },  -- chin
-		}
-		for _, e in E do B.ell("Head", e[2], CFn(e[1]), C.Skin, SP) end
-		A.headE = E
-		A.at = function(x, y, dz) return V3(x, y, headFront(E, x, y) + (dz or 0)) end
-		if o.face ~= false then
-			local at = A.at
-			for _, s in { -1, 1 } do
-				B.ell("Head", V3(0.08, 0.22, 0.16) * h, CFn(s * 0.345 * h, -0.02 * h, 0.04 * h) * CFrame.Angles(0, s * rad(-14), 0), C.SkinShade, SP)
-				local e = at(s * 0.13 * h, 0.0, 0.012 * h)
-				B.ell("Head", V3(0.12, 0.062, 0.04) * h, CFn(e) * CFrame.Angles(0, s * rad(-16), 0), rgb(236, 232, 226), SP)
-				B.ell("Head", V3(0.056, 0.056, 0.03) * h, CFn(e + V3(0, 0, -0.012 * h)) * CFrame.Angles(0, s * rad(-16), 0), C.Eye, SP)
-				local b = at(s * 0.13 * h, 0.08 * h, -0.004 * h)
-				B.box("Head", V3(0.15, 0.032, 0.045) * h, CFn(b) * CFrame.Angles(0, s * rad(-16), s * rad(-7)), C.Hair, SP)
+	local h = headCube(Z)
+	B.blk("Head", V3(h * 0.92, h, h * 0.92), V3(0, 0, 0), skinCol, SP)
+	-- bevelled vertical edges: the cube reads as a head, not a crate
+	B.blk("Head", V3(h, h * 0.94, h * 0.84), V3(0, -h * 0.01, 0), skinCol, SP)
+	B.blk("Head", V3(h * 0.84, h * 0.94, h), V3(0, -h * 0.01, 0), skinCol, SP)
+	if o.face ~= false then
+		local f = -h * 0.5 -- front face
+		local eyeY = o.eyeY or h * 0.05
+		for _, sg in { -1, 1 } do
+			B.blk("Head", V3(h * 0.13, h * 0.16, h * 0.03), V3(sg * h * 0.19, eyeY, f - h * 0.005), o.eye, SP)
+			B.blk("Head", V3(h * 0.045, h * 0.05, h * 0.03), V3(sg * h * 0.19 + h * 0.035, eyeY + h * 0.04, f - h * 0.012), o.white, SP)
+			if o.brow then
+				B.blk("Head", V3(h * 0.22, h * 0.055, h * 0.035), V3(sg * h * 0.2, eyeY + h * 0.13, f - h * 0.008), o.brow, SP, V3(0, 0, -sg * 6))
 			end
-			local n = at(0, -0.08 * h, 0)
-			B.ell("Head", V3(0.09, 0.2, 0.13) * h, CFn(n + V3(0, 0, -0.025 * h)) * CFrame.Angles(rad(-12), 0, 0), C.Skin, SP)
-			B.ell("Head", V3(0.12, 0.06, 0.08) * h, CFn(at(0, -0.17 * h, -0.02 * h)), C.SkinShade, SP)
-			B.box("Head", V3(0.15, 0.022, 0.03) * h, CFn(at(0, -0.24 * h, -0.002 * h)), C.Lip, SP)
+			if o.ear then
+				B.blk("Head", V3(h * 0.06, h * 0.2, h * 0.16), V3(sg * h * 0.52, -h * 0.02, h * 0.04), o.ear, SP)
+			end
+		end
+		if o.nose then B.blk("Head", V3(h * 0.11, h * 0.15, h * 0.07), V3(0, -h * 0.07, f - h * 0.03), o.nose, SP) end
+		if o.mouth then B.blk("Head", V3(h * 0.22, h * 0.04, h * 0.03), V3(0, -h * 0.25, f - h * 0.005), o.mouth, SP) end
+	end
+	return h
+end
+
+-- one body part as a single block (grow > 1 for outer garment layers)
+function K.core(B, Z, base, col, mat, grow, gy)
+	local s = Z[base]
+	if not s then return end
+	grow = grow or 1
+	B.blk(base, V3(s.X * grow, s.Y * (gy or 1), s.Z * grow), V3(0, 0, 0), col, mat)
+end
+
+-- band round a part (cuffs, belts, straps): y = centre height inside the part
+function K.band(B, Z, base, y, h, col, mat, grow)
+	local s = Z[base]
+	grow = grow or 1.06
+	B.blk(base, V3(s.X * grow, h, s.Z * grow), V3(0, y, 0), col, mat)
+end
+
+-- 45 degree turned block on the elbow / knee pivot (rides on the upper segment)
+function K.fillers(B, Z, col, mat, legCol, legMat)
+	for _, side in { "Left", "Right" } do
+		local ua = Z[side .. "UpperArm"]
+		if ua then
+			local d = ua.Z * 0.66
+			B.blk(side .. "UpperArm", V3(ua.X * 0.96, d, d), J.ua(ua).el, col, mat, V3(45, 0, 0))
+		end
+		local ul = Z[side .. "UpperLeg"]
+		if ul then
+			local d = ul.Z * 0.66
+			B.blk(side .. "UpperLeg", V3(ul.X * 0.96, d, d), J.ul(ul).kn, legCol or col, legMat or mat, V3(45, 0, 0))
 		end
 	end
-	return A
+end
+
+-- BLOCK HAND: mitten (palm + fingers as one block that runs a little past the R15 hand), wrist cuff, knuckle plate, thumb block
+function K.hand(B, Z, side, glove, pad, cuff, o)
+	o = o or {}
+	local base = side .. "Hand"
+	local s = Z[base]
+	if not s then return end
+	local u = Z.u
+	local sg = side == "Right" and 1 or -1
+	B.blk(base, V3(s.X * 1.02, s.Y * 1.7, s.Z * 0.94), V3(0, -s.Y * 0.32, 0), glove, o.mat or SP)
+	B.blk(base, V3(s.X * 1.1, 0.13 * u, s.Z * 1.02), V3(0, s.Y * 0.42, 0), cuff or pad, o.cuffMat or SP)
+	-- knuckle plate on the back of the hand (outer side) + finger split line on the front
+	B.blk(base, V3(0.05 * u, s.Y * 0.62, s.Z * 0.7), V3(sg * (s.X * 0.51 + 0.025 * u), -s.Y * 0.36, 0), pad, SP)
+	B.blk(base, V3(s.X * 0.86, 0.035 * u, s.Z * 0.96), V3(0, -s.Y * 0.72, 0), pad, SP)
+	-- thumb: a block on the front, inner edge
+	B.blk(base, V3(s.X * 0.3, s.Y * 0.95, 0.14 * u), V3(-sg * s.X * 0.27, -s.Y * 0.18, -s.Z * 0.47 - 0.07 * u), glove, o.mat or SP)
+end
+
+-- BOOT: shaft on the lower leg, foot block with a toe that sticks out, sole, toe slope, heel, laces
+function K.boot(B, Z, side, shoe, sole, lace, o)
+	o = o or {}
+	local u = Z.u
+	local ll, ft = side .. "LowerLeg", side .. "Foot"
+	local L, F = Z[ll], Z[ft]
+	if not L or not F then return end
+	local shaftH = L.Y * (o.shaft or 0.4)
+	B.blk(ll, V3(L.X * 1.07, shaftH, L.Z * 1.07), V3(0, -L.Y * 0.5 + shaftH * 0.5, 0), shoe, o.mat or SP)
+	B.blk(ll, V3(L.X * 1.12, 0.09 * u, L.Z * 1.12), V3(0, -L.Y * 0.5 + shaftH, 0), o.collar or shoe, o.collarMat or SP)
+	if lace then
+		B.blk(ll, V3(L.X * 0.34, shaftH * 0.8, 0.03 * u), V3(0, -L.Y * 0.5 + shaftH * 0.48, -L.Z * 0.535 - 0.015 * u), lace, SP)
+		for i = 0, 2 do
+			B.blk(ll, V3(L.X * 0.44, 0.035 * u, 0.04 * u), V3(0, -L.Y * 0.5 + shaftH * (0.2 + i * 0.25), -L.Z * 0.55 - 0.02 * u), o.laceX or shoe, SP)
+		end
+	end
+	local toe = F.Z * 0.22
+	B.blk(ft, V3(F.X * 1.07, F.Y * 1.02, F.Z * 1.07 + toe), V3(0, 0, -toe * 0.5), shoe, o.mat or SP)
+	B.wdg(ft, V3(F.X * 1.07, F.Y * 0.55, F.Z * 0.3), V3(0, F.Y * 0.775, -F.Z * 0.385 - toe * 0.5), shoe, o.mat or SP)
+	B.blk(ft, V3(F.X * 1.12, 0.1 * u, F.Z * 1.12 + toe + 0.04 * u), V3(0, -F.Y * 0.5 + 0.05 * u, -toe * 0.5), sole, o.soleMat or SP)
+	B.blk(ft, V3(F.X * 1.1, F.Y * 0.5, 0.12 * u), V3(0, -F.Y * 0.2, -F.Z * 0.535 - toe - 0.02 * u), o.toeCap or sole, o.soleMat or SP)
+	B.blk(ft, V3(F.X * 1.09, F.Y * 0.6, 0.06 * u), V3(0, -F.Y * 0.1, F.Z * 0.535 + 0.03 * u), o.heel or sole, o.soleMat or SP)
 end
 
 -- =====================================================================================
--- OUTFITS. Each skin = an `identity sentence`, a palette (60 % base / 30 % second / 10 % accent), ONE silhouette idea, ONE hero prop.
--- Build order: K.head -> K.torso -> arms + hands -> legs + shoes -> the few signature shapes. Nothing floats: every shape sits ON a garment.
+-- OUTFITS. DRESS[id](B, Z, C, opt) - Z = part sizes (+ Z.u, Z.h), C = the skin colours, opt.noHands = the figure builds no hands.
 -- =====================================================================================
 local DRESS = {}
 
--- ---------------------------------------------------------------- OPERATOR (base skin = the game itself)
--- "A clean, fast arcade operator": charcoal jacket + ONE bold red slash (the Breakline mark) + light cargo trousers + white-soled high-tops.
+-- ---------------------------------------------------------------- OPERATOR: ballistic helmet + goggles, gaiter, coyote plate carrier
+-- over a charcoal field jacket, grey cargos, drop-leg holster, knee pads, high-top boots with white soles. Red only as the Breakline patch.
 DRESS.OPERATOR = function(B, Z, C, opt)
 	local u = Z.u
-	local RED, JACKET, RIB = C.Brand, C.Top, C.TopDark
-	local AH = K.head(B, Z, C, {})
-	-- hair: short textured crop, side-swept top
-	if Z.Head then
-		local h = Z.h
-		B.ell("Head", V3(0.74, 0.56, 0.84) * h, CFn(0, 0.25 * h, 0.06 * h), C.Hair, SP)
-		B.ell("Head", V3(0.56, 0.26, 0.62) * h, CFn(0.04 * h, 0.44 * h, -0.04 * h) * CFrame.Angles(0, 0, rad(-6)), C.Hair, SP)
-		B.ell("Head", V3(0.42, 0.18, 0.3) * h, CFn(0.1 * h, 0.36 * h, -0.28 * h) * CFrame.Angles(rad(18), 0, rad(-10)), C.Hair, SP)
-		B.ell("Head", V3(0.62, 0.4, 0.5) * h, CFn(0, 0.06 * h, 0.22 * h), C.Hair, SP)
-		for _, s in { -1, 1 } do B.box("Head", V3(0.04, 0.14, 0.08) * h, CFn(s * 0.34 * h, 0.06 * h, -0.02 * h), C.Hair, SP) end
-		-- headset: ear cup + boom mic (left)
-		B.ell("Head", V3(0.1, 0.2, 0.18) * h, CFn(-0.39 * h, -0.02 * h, 0.04 * h), C.Strap, SP)
-		B.rod("Head", V3(-0.41 * h, -0.08 * h, 0.0), V3(-0.3 * h, -0.24 * h, -0.3 * h), 0.03 * h, C.Strap, SP)
-		B.ball("Head", V3(-0.29 * h, -0.245 * h, -0.31 * h), 0.032 * h, C.Strap, SP)
+	-- HEAD
+	local h = K.head(B, Z, C.Skin, { eye = C.Eye, white = C.White, brow = C.Hair, nose = C.SkinShade, eyeY = 0 })
+	local hd = "Head"
+	-- gaiter pulled up to the nose (covers mouth + neck), with a fold line
+	B.blk(hd, V3(h * 1.02, h * 0.36, h * 1.02), V3(0, -h * 0.33, 0), C.Gaiter, FABRIC)
+	B.blk(hd, V3(h * 1.05, h * 0.05, h * 1.05), V3(0, -h * 0.16, 0), C.GaiterDark, FABRIC)
+	-- helmet: shell, bevelled crown, side rails, brim, back pouch, top velcro
+	B.blk(hd, V3(h * 1.1, h * 0.36, h * 1.12), V3(0, h * 0.36, h * 0.01), C.Helmet, SP)
+	B.blk(hd, V3(h * 0.96, h * 0.1, h * 0.98), V3(0, h * 0.58, h * 0.01), C.Helmet, SP)
+	B.blk(hd, V3(h * 1.13, h * 0.06, h * 1.15), V3(0, h * 0.2, h * 0.01), C.HelmetDark, SP)
+	for _, sg in { -1, 1 } do
+		B.blk(hd, V3(h * 0.08, h * 0.36, h * 0.56), V3(sg * h * 0.55, h * 0.06, h * 0.2), C.Helmet, SP) -- side skirt behind the ear
+		B.blk(hd, V3(h * 0.06, h * 0.08, h * 0.7), V3(sg * h * 0.585, h * 0.32, 0), C.Strap, SP)            -- rail
+		B.blk(hd, V3(h * 0.04, h * 0.3, h * 0.05), V3(sg * h * 0.54, -h * 0.12, -h * 0.02), C.Strap, SP)  -- chin strap
 	end
-	-- ---- jacket: torso + collar + rib hem + slash + zip
-	local T = K.torso(B, Z, JACKET, FABRIC, { pad = 0.03, pelvisCol = C.Pants, pelvisMat = FABRIC })
-	if T.st then
-		local ny = T.ny
-		-- stand collar (tube around the neck base) + darker rim
-		B.tube("UpperTorso", { { p = V3(0, ny * 0.82, 0.0), rx = 0.36 * u, rz = 0.31 * u }, { p = V3(0, ny + 0.1 * u, 0.0), rx = 0.31 * u, rz = 0.27 * u } }, JACKET, FABRIC)
-		B.tube("UpperTorso", { { p = V3(0, ny + 0.08 * u, 0.0), rx = 0.315 * u, rz = 0.275 * u }, { p = V3(0, ny + 0.17 * u, 0.0), rx = 0.3 * u, rz = 0.26 * u } }, RIB, FABRIC)
-		-- rib-knit hem band (bomber): slightly wider, darker
-		B.tube("UpperTorso", { { p = V3(0, -ny - 0.0 * u, 0), rx = 0.625 * u, rz = 0.43 * u }, { p = V3(0, -ny * 0.78, 0), rx = 0.635 * u, rz = 0.44 * u } }, RIB, FABRIC)
-		-- THE SLASH: one bold red diagonal across the chest, from the left shoulder to the right hip, lying on the jacket surface
-		local pts = {}
-		for i = 0, 6 do
-			local t = i / 6
-			local y = ny * (0.66 - 1.62 * t)
-			local x = (-0.5 + 1.0 * t) * u
-			local p = T.chest(x, y, -0.004 * u)
-			pts[#pts + 1] = { p = p, rx = 0.085 * u, rz = 0.018 * u }
-		end
-		B.tube("UpperTorso", pts, RED, SP)
-		-- zip: thin metal line down the front centre + a pull
-		local zp = {}
-		for i = 0, 4 do
-			local y = ny * (0.92 - 1.8 * i / 4)
-			zp[#zp + 1] = { p = T.chest(0.0, y, -0.004 * u), rx = 0.016 * u, rz = 0.012 * u }
-		end
-		B.tube("UpperTorso", zp, C.Metal, METAL)
-		B.box("UpperTorso", V3(0.04, 0.12, 0.025) * u, CFn(T.chest(0.0, ny * 0.86, -0.02 * u)), RED, SP)
+	B.blk(hd, V3(h * 0.5, h * 0.26, h * 0.12), V3(0, h * 0.3, h * 0.6), C.HelmetDark, SP)
+	B.blk(hd, V3(h * 0.42, h * 0.03, h * 0.36), V3(0, h * 0.64, -h * 0.05), C.HelmetDark, SP)
+	-- goggles pushed up on the helmet front: strap round the shell, two dark lenses in a frame, red side tabs
+	B.blk(hd, V3(h * 1.14, h * 0.07, h * 1.16), V3(0, h * 0.3, h * 0.01), C.Strap, SP)
+	B.blk(hd, V3(h * 0.86, h * 0.2, h * 0.1), V3(0, h * 0.31, -h * 0.6), C.Strap, SP)
+	for _, sg in { -1, 1 } do
+		B.blk(hd, V3(h * 0.34, h * 0.13, h * 0.04), V3(sg * h * 0.2, h * 0.31, -h * 0.66), C.Lens, GLASS)
+		B.blk(hd, V3(h * 0.06, h * 0.14, h * 0.06), V3(sg * h * 0.44, h * 0.31, -h * 0.63), C.Accent, SP)
 	end
-	-- ---- sleeves (same jacket colour, one tube each) + dark rib cuffs + gloves with skin fingers
+	B.blk(hd, V3(h * 0.08, h * 0.08, h * 0.05), V3(0, h * 0.3, -h * 0.67), C.Strap, SP)
+
+	-- TORSO: jacket, collar, plate carrier front + back, shoulder straps, pouches, admin panel, patch, radio, hydration pouch
+	local T = Z.UpperTorso
+	local W, H, D = T.X, T.Y, T.Z
+	K.core(B, Z, "UpperTorso", C.Top, FABRIC)
+	B.blk("UpperTorso", V3(W * 0.52, 0.16 * u, D * 0.82), V3(0, H * 0.5 + 0.02 * u, 0), C.TopDark, FABRIC) -- collar
+	B.blk("UpperTorso", V3(0.04 * u, H * 0.3, 0.03 * u), V3(0, -H * 0.33, -D * 0.5 - 0.015 * u), C.Metal, METAL) -- zip below the plate
+	B.blk("UpperTorso", V3(W * 0.36, 0.05 * u, 0.04 * u), V3(-W * 0.22, -H * 0.41, -D * 0.5 - 0.02 * u), C.TopDark, FABRIC) -- hand pocket seams
+	B.blk("UpperTorso", V3(W * 0.36, 0.05 * u, 0.04 * u), V3(W * 0.22, -H * 0.41, -D * 0.5 - 0.02 * u), C.TopDark, FABRIC)
+	local pz = D * 0.5 + 0.06 * u
+	B.blk("UpperTorso", V3(W * 0.8, H * 0.6, 0.12 * u), V3(0, H * 0.06, -pz), C.Carrier, FABRIC)       -- front plate bag
+	B.blk("UpperTorso", V3(W * 0.82, H * 0.62, 0.12 * u), V3(0, H * 0.08, pz), C.Carrier, FABRIC)       -- back plate bag
+	B.blk("UpperTorso", V3(W * 1.02, H * 0.2, D * 1.04 + 0.12 * u), V3(0, -H * 0.18, 0), C.CarrierDark, FABRIC) -- cummerbund
+	for _, sg in { -1, 1 } do
+		B.blk("UpperTorso", V3(W * 0.2, 0.08 * u, D + 0.26 * u), V3(sg * W * 0.27, H * 0.5 + 0.03 * u, 0), C.Carrier, FABRIC) -- shoulder strap
+		B.blk("UpperTorso", V3(W * 0.12, 0.05 * u, 0.06 * u), V3(sg * W * 0.27, H * 0.33, -pz - 0.07 * u), C.Strap, SP)       -- buckle
+	end
+	-- three rifle mag pouches with flaps + pull tabs
+	local my = -H * 0.06
+	for i = -1, 1 do
+		local x = i * W * 0.25
+		B.blk("UpperTorso", V3(W * 0.22, H * 0.24, 0.16 * u), V3(x, my, -pz - 0.14 * u), C.Carrier, FABRIC)
+		B.blk("UpperTorso", V3(W * 0.23, H * 0.07, 0.18 * u), V3(x, my + H * 0.1, -pz - 0.15 * u), C.CarrierDark, FABRIC)
+		B.blk("UpperTorso", V3(W * 0.06, H * 0.06, 0.04 * u), V3(x, my + H * 0.05, -pz - 0.25 * u), i == 0 and C.Accent or C.Strap, SP)
+	end
+	-- admin panel above the mags with a name tape
+	B.blk("UpperTorso", V3(W * 0.5, H * 0.14, 0.06 * u), V3(0, H * 0.22, -pz - 0.09 * u), C.CarrierDark, FABRIC)
+	B.blk("UpperTorso", V3(W * 0.3, H * 0.05, 0.03 * u), V3(0, H * 0.24, -pz - 0.13 * u), C.Tape, SP)
+	-- back: hydration pouch, radio + antenna on the left
+	B.blk("UpperTorso", V3(W * 0.5, H * 0.46, 0.16 * u), V3(W * 0.06, H * 0.02, pz + 0.14 * u), C.CarrierDark, FABRIC)
+	B.blk("UpperTorso", V3(W * 0.42, 0.06 * u, 0.18 * u), V3(W * 0.06, H * 0.22, pz + 0.15 * u), C.Strap, SP)
+	B.blk("UpperTorso", V3(W * 0.16, H * 0.3, 0.16 * u), V3(-W * 0.3, H * 0.1, pz + 0.14 * u), C.Pad, SP)
+	B.blk("UpperTorso", V3(0.04 * u, H * 0.55, 0.04 * u), V3(-W * 0.34, H * 0.5, pz + 0.16 * u), C.Strap, SP, V3(0, 0, -8))
+	B.blk("UpperTorso", V3(0.07 * u, 0.07 * u, 0.07 * u), V3(-W * 0.34 + H * 0.038, H * 0.77, pz + 0.16 * u), C.Strap, SP)
+
+	-- LOWER TORSO: trousers, rigger belt + buckle, dump pouch
+	local LT = Z.LowerTorso
+	K.core(B, Z, "LowerTorso", C.Pants, FABRIC)
+	B.blk("LowerTorso", V3(LT.X * 1.04, 0.17 * u, LT.Z * 1.06), V3(0, LT.Y * 0.18, 0), C.Strap, LEATHER)
+	B.blk("LowerTorso", V3(0.24 * u, 0.13 * u, 0.04 * u), V3(0, LT.Y * 0.18, -LT.Z * 0.53 - 0.02 * u), C.Metal, METAL)
+	B.blk("LowerTorso", V3(LT.X * 0.3, 0.32 * u, 0.16 * u), V3(-LT.X * 0.24, -0.02 * u, LT.Z * 0.53 + 0.08 * u), C.CarrierDark, FABRIC)
+
+	-- ARMS: jacket sleeves, shoulder seam, patches, cuffs, elbow pads
 	for _, side in { "Left", "Right" } do
 		local sg = side == "Right" and 1 or -1
-		local info = K.arm(B, Z, side, JACKET, FABRIC, { pad = 0.03 })
-		if Z[side .. "LowerArm"] and info.wrY then
-			B.tube(side .. "LowerArm", { { p = V3(info.lax, info.wrY + 0.2 * u, 0), rx = 0.2 * u, rz = 0.21 * u }, { p = V3(info.lax, info.wrY - 0.02 * u, 0), rx = 0.19 * u, rz = 0.2 * u } }, RIB, FABRIC)
+		local ua, la = side .. "UpperArm", side .. "LowerArm"
+		local A, L = Z[ua], Z[la]
+		K.core(B, Z, ua, C.Top, FABRIC)
+		B.blk(ua, V3(A.X * 1.04, 0.2 * u, A.Z * 1.04), V3(0, A.Y * 0.5 - 0.1 * u, 0), C.TopDark, FABRIC)
+		local px = sg * (A.X * 0.5 + 0.008 * u)
+		if side == "Left" then
+			B.blk(ua, V3(0.025 * u, A.Y * 0.24, A.Z * 0.46), V3(px, A.Y * 0.14, 0), C.Accent, SP)
+			B.blk(ua, V3(0.03 * u, A.Y * 0.3, 0.06 * u), V3(px - 0.006 * u, A.Y * 0.14, 0), C.White, SP, V3(35, 0, 0))
+		else
+			B.blk(ua, V3(0.025 * u, A.Y * 0.2, A.Z * 0.5), V3(px, A.Y * 0.14, 0), C.Pad, SP)
+			B.blk(ua, V3(0.03 * u, A.Y * 0.04, A.Z * 0.4), V3(px + 0.006 * u, A.Y * 0.14, 0), C.Tape, SP)
 		end
-		if not opt.noHands then K.hand(B, Z, side, C.Glove, C.Skin, info) end
+		K.core(B, Z, la, C.Top, FABRIC)
+		K.band(B, Z, la, -L.Y * 0.5 + 0.16 * u, 0.2 * u, C.TopDark, FABRIC, 1.07)
+		B.blk(la, V3(L.X * 0.62, 0.34 * u, 0.09 * u), V3(0, L.Y * 0.33, L.Z * 0.5 + 0.045 * u), C.Pad, SP)
+		B.blk(la, V3(L.X * 1.05, 0.06 * u, L.Z * 1.05), V3(0, L.Y * 0.33, 0), C.Strap, SP)
+		if not opt.noHands then K.hand(B, Z, side, C.Glove, C.Pad, C.Pad) end
 	end
-	-- ---- belt + buckle, and trousers
-	local l = Z.LowerTorso
-	if l then
-		local jl = J.lt(l)
-		B.tube("LowerTorso", { { p = V3(0, jl.waist.Y - 0.1 * u, 0), rx = 0.615 * u, rz = 0.425 * u }, { p = V3(0, jl.waist.Y - 0.02 * u, 0), rx = 0.615 * u, rz = 0.425 * u } }, C.Strap, FABRIC)
-		B.box("LowerTorso", V3(0.2, 0.14, 0.05) * u, CFn(0, jl.waist.Y - 0.06 * u, -0.45 * u), C.Metal, METAL)
-	end
+
+	-- LEGS: cargos, cargo pocket (left), drop-leg holster (right), knee pads, boots
 	for _, side in { "Left", "Right" } do
 		local sg = side == "Right" and 1 or -1
-		local li = K.leg(B, Z, side, C.Pants, FABRIC, { pad = 0.025 })
-		-- trouser cuff: dark band at the ankle
-		if li.anY then B.ring(side .. "LowerLeg", li.anY + 0.14 * u, 0.4 * u, 0.44 * u, 0.12 * u, C.PantsDark, FABRIC) end
-		-- right thigh: drop-leg holster (the one hero prop); left thigh: cargo pocket
-		if li.hipY then
-			if side == "Right" then
-				B.ring(side .. "UpperLeg", li.hipY - 0.3 * u, 0.7 * u, 0.74 * u, 0.07 * u, C.Strap, FABRIC)
-				B.ring(side .. "UpperLeg", li.hipY - 0.62 * u, 0.62 * u, 0.68 * u, 0.07 * u, C.Strap, FABRIC)
-				B.ell(side .. "UpperLeg", V3(0.2, 0.62, 0.36) * u, CFn(sg * 0.31 * u, li.hipY - 0.48 * u, 0.0), C.Strap, SP)
-				B.ell(side .. "UpperLeg", V3(0.16, 0.24, 0.2) * u, CFn(sg * 0.33 * u, li.hipY - 0.12 * u, 0.06 * u) * CFrame.Angles(rad(14), 0, 0), C.Pad, SP)
-			else
-				B.ell(side .. "UpperLeg", V3(0.2, 0.46, 0.4) * u, CFn(sg * 0.31 * u, li.hipY - 0.52 * u, 0.0), C.PantsDark, FABRIC)
-			end
+		local ul, ll = side .. "UpperLeg", side .. "LowerLeg"
+		local U, L = Z[ul], Z[ll]
+		K.core(B, Z, ul, C.Pants, FABRIC)
+		K.core(B, Z, ll, C.Pants, FABRIC)
+		local ox = sg * (U.X * 0.5 + 0.06 * u)
+		if side == "Left" then
+			B.blk(ul, V3(0.12 * u, U.Y * 0.34, U.Z * 0.56), V3(ox, -U.Y * 0.08, 0), C.PantsDark, FABRIC)
+			B.blk(ul, V3(0.14 * u, 0.08 * u, U.Z * 0.6), V3(ox + sg * 0.01 * u, U.Y * 0.1, 0), C.PantsDark, FABRIC)
+		else
+			-- holster platform + two leg straps + pistol grip + red pull tab
+			B.blk(ul, V3(0.12 * u, U.Y * 0.46, U.Z * 0.5), V3(ox, -U.Y * 0.06, U.Z * 0.04), C.Strap, LEATHER)
+			K.band(B, Z, ul, -U.Y * 0.02, 0.07 * u, C.Strap, LEATHER, 1.05)
+			K.band(B, Z, ul, -U.Y * 0.26, 0.07 * u, C.Strap, LEATHER, 1.05)
+			B.blk(ul, V3(0.14 * u, 0.36 * u, 0.2 * u), V3(ox + 0.02 * u, U.Y * 0.22, U.Z * 0.12), C.Gun, SP, V3(-12, 0, 0))
+			B.blk(ul, V3(0.15 * u, 0.08 * u, 0.16 * u), V3(ox + 0.03 * u, U.Y * 0.1, -U.Z * 0.06), C.Accent, SP)
 		end
-		-- knee pads (both): a hard shell over the front of each knee
-		if li.lknY then
-			B.ell(side .. "LowerLeg", V3(0.46, 0.4, 0.22) * u, CFn(0, li.lknY - 0.04 * u, -0.28 * u), C.Pad, SP)
-			B.box(side .. "LowerLeg", V3(0.3, 0.05, 0.05) * u, CFn(0, li.lknY - 0.04 * u, -0.38 * u), RED, SP)
-		end
-		-- high-top sneaker: white sole, red heel tab
-		local sh = K.shoe(B, Z, side, C.Shoe, C.Sole, {})
-		if sh then
-			local fb = sh.footBottom
-			B.box(side .. "Foot", V3(0.4, 0.1, 0.2) * u, CFn(0, fb + 0.2 * u, 0.3 * u), RED, SP)
-			B.ell(side .. "Foot", V3(0.2, 0.04, 0.4) * u, CFn(0, fb + 0.33 * u, -0.28 * u) * CFrame.Angles(rad(-20), 0, 0), C.Sole, SP) -- tongue / laces
-		end
+		local kn = J.ll(L).kn
+		B.blk(ll, V3(L.X * 0.78, 0.4 * u, 0.12 * u), kn + V3(0, 0, -L.Z * 0.5 - 0.06 * u), C.Pad, SP)
+		B.blk(ll, V3(L.X * 0.5, 0.08 * u, 0.06 * u), kn + V3(0, 0.06 * u, -L.Z * 0.5 - 0.14 * u), C.PadLight, SP)
+		B.blk(ll, V3(L.X * 1.05, 0.07 * u, L.Z * 1.05), kn + V3(0, -0.08 * u, 0), C.Strap, SP)
+		K.boot(B, Z, side, C.Shoe, C.Sole, C.Lace, { collar = C.Pad, laceX = C.Shoe, heel = C.Shoe })
 	end
+	K.fillers(B, Z, C.Top, FABRIC, C.Pants, FABRIC)
 end
 
--- ---------------------------------------------------------------- SOULBOUND (soul skin = the "carries the dead" half of the game)
--- "A pallbearer": ONE long navy hooded coat (the silhouette), a bone mask (the face), a bone pauldron (the shoulder), a soul lantern (the only glow).
+-- ---------------------------------------------------------------- SOULBOUND: deep hood, bone mask with soul-lit eyes, long split coat,
+-- bandolier with bone charms, bone pauldron (left), wrapped hands + shins, soul lantern on the belt.
 DRESS.SOULBOUND = function(B, Z, C, opt)
 	local u = Z.u
-	local BONE, SOUL, COAT, COATD = C.Bone, C.Soul, C.Top, C.TopDark
-	local AH = K.head(B, Z, C, { face = false })
-	-- ---- bone mask + hood
-	if Z.Head then
-		local h = Z.h
-		local E = AH.headE
-		local mz = headFront(E, 0, -0.04 * h)
-		B.ell("Head", V3(0.6, 0.74, 0.3) * h, CFn(0, -0.04 * h, mz + 0.06 * h), BONE, SP)
-		B.ell("Head", V3(0.34, 0.3, 0.2) * h, CFn(0, -0.3 * h, mz + 0.04 * h), BONE, SP)
-		for _, s in { -1, 1 } do
-			local e = V3(s * 0.13 * h, 0.02 * h, mz - 0.075 * h)
-			B.ell("Head", V3(0.17, 0.1, 0.06) * h, CFn(e) * CFrame.Angles(0, s * rad(-14), s * rad(12)), rgb(12, 14, 20), SP)
-			B.ball("Head", e + V3(0, 0, -0.03 * h), 0.022 * h, SOUL, NEON)
-			B.box("Head", V3(0.16, 0.03, 0.04) * h, CFn(s * 0.15 * h, -0.13 * h, mz - 0.06 * h) * CFrame.Angles(0, s * rad(-18), s * rad(-20)), C.BoneShade, SP)
-		end
-		B.box("Head", V3(0.03, 0.2, 0.04) * h, CFn(0, 0.2 * h, mz - 0.07 * h), C.BoneShade, SP)
-		for i = -2, 2 do B.box("Head", V3(0.03, 0.07, 0.03) * h, CFn(i * 0.045 * h, -0.3 * h, mz - 0.1 * h + math.abs(i) * 0.012 * h), rgb(40, 40, 46), SP) end
-		-- hood: shell over the back + top of the head, rim round the face (one tube on an arc), pointed back
-		B.ell("Head", V3(0.98, 1.04, 1.04) * h, CFn(0, 0.08 * h, 0.14 * h), COAT, FABRIC)
-		local arc = {}
-		for i = 0, 8 do
-			local a = rad(-180 + i * 22.5)
-			arc[#arc + 1] = { p = V3(math.cos(a) * 0.43 * h, 0.07 * h - math.sin(a) * 0.52 * h, -0.34 * h + math.abs(math.cos(a)) * 0.08 * h), rx = 0.11 * h, rz = 0.11 * h }
-		end
-		B.tube("Head", arc, COATD, FABRIC)
-		B.tube("Head", { { p = V3(0, 0.1 * h, 0.4 * h), rx = 0.3 * h, rz = 0.3 * h }, { p = V3(0, 0.0 * h, 0.78 * h), rx = 0.07 * h, rz = 0.07 * h } }, COAT, FABRIC) -- back point
+	local hd = "Head"
+	-- HEAD: the face is the hood's shadow; the mask sits in it
+	local h = K.head(B, Z, C.Hair, { face = false })
+	B.blk(hd, V3(h * 1.24, h * 0.14, h * 1.24), V3(0, h * 0.56, h * 0.02), C.Top, FABRIC)
+	for _, sg in { -1, 1 } do
+		B.blk(hd, V3(h * 0.14, h * 1.1, h * 1.24), V3(sg * h * 0.55, -h * 0.02, h * 0.02), C.Top, FABRIC)
+		B.blk(hd, V3(h * 0.06, h * 1.0, h * 0.06), V3(sg * h * 0.5, -h * 0.04, -h * 0.6), C.TopDark, FABRIC) -- hood rim
 	end
-	-- ---- coat: torso tube with a wide stand collar + hood drape (cowl) on the shoulders
-	local T = K.torso(B, Z, COAT, FABRIC, { pad = 0.05, chest = 1.04, pelvisCol = COAT, pelvisMat = FABRIC })
-	if T.st then
-		local ny = T.ny
-		B.tube("UpperTorso", { { p = V3(0, ny * 0.7, 0), rx = 0.56 * u, rz = 0.44 * u }, { p = V3(0, ny + 0.12 * u, 0.04 * u), rx = 0.4 * u, rz = 0.36 * u } }, COATD, FABRIC)
-		-- front: centre seam piped in soul blue, 3 bone toggles
-		local sp = {}
-		for i = 0, 5 do sp[#sp + 1] = { p = T.chest(0, ny * (0.7 - i * 0.3), -0.004 * u), rx = 0.018 * u, rz = 0.012 * u } end
-		B.tube("UpperTorso", sp, C.Shirt, SP)
-		for i = 0, 2 do
-			local p = T.chest(0, ny * (0.5 - i * 0.42), -0.02 * u)
-			B.ell("UpperTorso", V3(0.26, 0.07, 0.06) * u, CFn(p), BONE, SP)
-			B.ball("UpperTorso", p + V3(0, 0, -0.01 * u), 0.04 * u, C.BoneShade, SP)
-		end
-		-- spine beads on the back (small, readable from behind)
-		for i = 0, 3 do B.ball("UpperTorso", T.back(0, ny * (0.55 - i * 0.34), 0.0), 0.05 * u, C.BoneShade, SP) end
+	B.blk(hd, V3(h * 1.24, h * 1.16, h * 0.14), V3(0, 0, h * 0.58), C.Top, FABRIC)
+	B.blk(hd, V3(h * 1.24, h * 0.18, h * 0.22), V3(0, h * 0.48, -h * 0.6), C.Top, FABRIC)                  -- peak
+	B.wdg(hd, V3(h * 1.24, h * 0.16, h * 0.24), V3(0, h * 0.63, -h * 0.5), C.Top, FABRIC)                  -- peak slope
+	B.blk(hd, V3(h * 0.8, h * 0.4, h * 0.3), V3(0, h * 0.16, h * 0.8), C.TopDark, FABRIC, V3(-20, 0, 0))   -- hood tail
+	-- mask
+	local f = -h * 0.5
+	B.blk(hd, V3(h * 0.74, h * 0.82, h * 0.08), V3(0, -h * 0.04, f - h * 0.02), C.Bone, SP)
+	B.blk(hd, V3(h * 0.62, h * 0.12, h * 0.08), V3(0, h * 0.3, f - h * 0.05), C.Bone, SP)                  -- brow ridge
+	for _, sg in { -1, 1 } do
+		B.blk(hd, V3(h * 0.2, h * 0.14, h * 0.03), V3(sg * h * 0.17, h * 0.14, f - h * 0.065), C.Eye, SP)
+		B.blk(hd, V3(h * 0.06, h * 0.06, h * 0.03), V3(sg * h * 0.17, h * 0.14, f - h * 0.075), C.Soul, NEON)
+		B.blk(hd, V3(h * 0.12, h * 0.3, h * 0.06), V3(sg * h * 0.3, -h * 0.2, f - h * 0.04), C.BoneShade, SP)  -- cheek
 	end
-	-- ---- sleeves + bone-wrap forearms + dark gloves; left shoulder bone pauldron
-	for _, side in { "Left", "Right" } do
-		local sg = side == "Right" and 1 or -1
-		local info = K.arm(B, Z, side, COAT, FABRIC, { pad = 0.045, shoulder = 1.08 })
-		if Z[side .. "LowerArm"] and info.wrY then
-			for i = 0, 2 do
-				B.ring(side .. "LowerArm", info.wrY + (0.08 + i * 0.15) * u, (0.43 + i * 0.01) * u, (0.45 + i * 0.01) * u, 0.1 * u, C.Wrap, FABRIC, CFn(info.lax, 0, 0) * CFrame.Angles(rad(i % 2 == 0 and 7 or -7), 0, 0))
-			end
-		end
-		if not opt.noHands then K.hand(B, Z, side, C.Glove, C.Glove, info) end
-		local ua = Z[side .. "UpperArm"]
-		if ua and side == "Left" then
-			local j = J.ua(ua, sg)
-			for i = 0, 2 do
-				B.ell(side .. "UpperArm", V3(0.78 - i * 0.1, 0.2, 0.74 - i * 0.08) * u, CFn(j.sh + V3(sg * (0.1 + i * 0.03) * u, (0.1 - i * 0.14) * u, 0)) * CFrame.Angles(0, 0, sg * rad(22 + i * 8)), i == 1 and C.BoneShade or BONE, SP)
-			end
-			B.tube(side .. "UpperArm", { { p = j.sh + V3(sg * 0.26 * u, 0.22 * u, 0), rx = 0.07 * u, rz = 0.07 * u }, { p = j.sh + V3(sg * 0.38 * u, 0.5 * u, 0.04 * u), rx = 0.015 * u, rz = 0.015 * u } }, BONE, SP)
-		end
+	B.blk(hd, V3(h * 0.09, h * 0.22, h * 0.06), V3(0, -h * 0.02, f - h * 0.08), C.BoneShade, SP)             -- nose ridge
+	B.blk(hd, V3(h * 0.4, h * 0.12, h * 0.03), V3(0, -h * 0.3, f - h * 0.065), C.Eye, SP)                    -- teeth
+	for i = -2, 2 do
+		B.blk(hd, V3(h * 0.035, h * 0.13, h * 0.04), V3(i * h * 0.075, -h * 0.3, f - h * 0.07), C.Bone, SP)
 	end
-	-- ---- rope belt + skull buckle + soul lantern (right hip)
-	local l = Z.LowerTorso
-	if l then
-		local jl = J.lt(l)
-		B.tube("LowerTorso", { { p = V3(0, jl.waist.Y - 0.05 * u, 0), rx = 0.645 * u, rz = 0.45 * u }, { p = V3(0, jl.waist.Y - 0.0 * u, 0), rx = 0.645 * u, rz = 0.45 * u } }, C.Strap, FABRIC)
-		B.ell("LowerTorso", V3(0.2, 0.2, 0.12) * u, CFn(0, jl.waist.Y - 0.04 * u, -0.5 * u), BONE, SP)
-		for _, s in { -1, 1 } do B.ball("LowerTorso", V3(s * 0.045 * u, jl.waist.Y - 0.04 * u, -0.565 * u), 0.026 * u, rgb(14, 14, 18), SP) end
-		local hip = V3(0.74 * u, jl.waist.Y - 0.5 * u, -0.04 * u)
-		B.rod("LowerTorso", V3(0.62 * u, jl.waist.Y - 0.04 * u, -0.04 * u), hip + V3(0, 0.24 * u, 0), 0.03 * u, C.Metal, METAL)
-		B.ell("LowerTorso", V3(0.22, 0.06, 0.22) * u, CFn(hip + V3(0, 0.17 * u, 0)), C.Metal, METAL)
-		B.ell("LowerTorso", V3(0.22, 0.06, 0.22) * u, CFn(hip + V3(0, -0.17 * u, 0)), C.Metal, METAL)
-		for i = 0, 3 do
-			local a = i * math.pi / 2 + math.pi / 4
-			B.box("LowerTorso", V3(0.025, 0.34, 0.025) * u, CFn(hip + V3(math.cos(a) * 0.09 * u, 0, math.sin(a) * 0.09 * u)), C.Metal, METAL)
-		end
-		B.ball("LowerTorso", hip, 0.075 * u, SOUL, NEON)
-	end
-	-- ---- legs: dark trousers, the coat tails (flat tapered panels hanging from each thigh), tall wrapped boots
-	for _, side in { "Left", "Right" } do
-		local sg = side == "Right" and 1 or -1
-		local li = K.leg(B, Z, side, C.Pants, FABRIC, { pad = 0.03, thigh = 0.32 })
-		if li.hipY then
-			local top, bot = li.hipY + 0.05 * u, li.hipY - 1.25 * u
-			-- front + back + outer panels: widen towards the hem, so the coat flares
-			B.tube(side .. "UpperLeg", { { p = V3(sg * 0.03 * u, top, -0.34 * u), rx = 0.36 * u, rz = 0.04 * u }, { p = V3(sg * 0.05 * u, bot, -0.46 * u), rx = 0.38 * u, rz = 0.045 * u } }, COAT, FABRIC)
-			B.tube(side .. "UpperLeg", { { p = V3(sg * 0.03 * u, top, 0.34 * u), rx = 0.36 * u, rz = 0.04 * u }, { p = V3(sg * 0.05 * u, bot - 0.08 * u, 0.48 * u), rx = 0.38 * u, rz = 0.045 * u } }, COAT, FABRIC)
-			B.tube(side .. "UpperLeg", { { p = V3(sg * 0.36 * u, top, 0.0), rx = 0.04 * u, rz = 0.34 * u }, { p = V3(sg * 0.5 * u, bot, 0.0), rx = 0.045 * u, rz = 0.38 * u } }, COATD, FABRIC)
-			B.tube(side .. "UpperLeg", { { p = V3(sg * 0.05 * u, bot - 0.02 * u, -0.46 * u), rx = 0.39 * u, rz = 0.05 * u }, { p = V3(sg * 0.05 * u, bot + 0.1 * u, -0.46 * u), rx = 0.385 * u, rz = 0.05 * u } }, C.Shirt, FABRIC) -- soul-blue hem piping
-		end
-		-- boots: tall shaft over the calf, rope straps
-		if Z[side .. "LowerLeg"] then
-			local j = J.ll(Z[side .. "LowerLeg"])
-			B.tube(side .. "LowerLeg", { { p = V3(0, j.kn.Y * 0.4, 0.02 * u), rx = 0.31 * u, rz = 0.33 * u }, { p = V3(0, j.an.Y, 0), rx = 0.235 * u, rz = 0.25 * u } }, C.Shoe, SP)
-			for i = 0, 2 do
-				B.ring(side .. "LowerLeg", j.an.Y + (0.2 + i * 0.22) * u, 0.5 * u - i * 0.012 * u, 0.52 * u - i * 0.012 * u, 0.07 * u, C.Strap, FABRIC, CFrame.Angles(rad(8), 0, 0))
-			end
-		end
-		K.shoe(B, Z, side, C.Shoe, C.Sole, {})
-	end
-end
+	B.blk(hd, V3(h * 0.03, h * 0.28, h * 0.03), V3(-h * 0.2, -h * 0.02, f - h * 0.065), C.Eye, SP, V3(0, 0, 25)) -- crack
 
+	-- TORSO: coat, V of the shirt, lapels, mantle, bandolier + charms, buttons
+	local T = Z.UpperTorso
+	local W, H, D = T.X, T.Y, T.Z
+	K.core(B, Z, "UpperTorso", C.Top, FABRIC)
+	B.blk("UpperTorso", V3(W * 0.3, H * 0.4, 0.03 * u), V3(0, H * 0.28, -D * 0.5 - 0.015 * u), C.Shirt, FABRIC)
+	for _, sg in { -1, 1 } do
+		B.blk("UpperTorso", V3(W * 0.14, H * 0.56, 0.07 * u), V3(sg * W * 0.15, H * 0.22, -D * 0.5 - 0.04 * u), C.TopDark, FABRIC, V3(0, 0, sg * 18))
+	end
+	B.blk("UpperTorso", V3(W * 1.08, 0.24 * u, D * 1.12), V3(0, H * 0.5 - 0.06 * u, 0), C.TopDark, FABRIC)    -- mantle
+	B.blk("UpperTorso", V3(W * 0.96, H * 0.42, 0.08 * u), V3(0, H * 0.2, D * 0.56 + 0.04 * u), C.TopDark, FABRIC) -- short cape
+	B.blk("UpperTorso", V3(0.16 * u, H * 1.18, 0.06 * u), V3(0, 0, -D * 0.5 - 0.1 * u), C.Strap, LEATHER, V3(0, 0, 33))
+	B.blk("UpperTorso", V3(0.16 * u, H * 1.18, 0.06 * u), V3(0, 0, D * 0.5 + 0.13 * u), C.Strap, LEATHER, V3(0, 0, -33))
+	for i = -1, 1 do
+		local t = i * H * 0.28
+		local x, y = -math.sin(rad(33)) * t, math.cos(rad(33)) * t
+		B.blk("UpperTorso", V3(0.11 * u, 0.15 * u, 0.06 * u), V3(x, y, -D * 0.5 - 0.15 * u), C.Bone, SP, V3(0, 0, 33))
+	end
+	for i = 0, 2 do
+		B.blk("UpperTorso", V3(0.07 * u, 0.07 * u, 0.04 * u), V3(W * 0.2, -H * 0.12 - i * H * 0.13, -D * 0.5 - 0.02 * u), C.Metal, METAL)
+	end
+
+	-- LOWER TORSO: coat skirt top, belt, soul lantern, split coat tails (front pair, sides, back)
+	local LT = Z.LowerTorso
+	K.core(B, Z, "LowerTorso", C.Top, FABRIC)
+	B.blk("LowerTorso", V3(LT.X * 1.05, 0.15 * u, LT.Z * 1.07), V3(0, LT.Y * 0.12, 0), C.Strap, LEATHER)
+	B.blk("LowerTorso", V3(0.2 * u, 0.14 * u, 0.04 * u), V3(-LT.X * 0.12, LT.Y * 0.12, -LT.Z * 0.535 - 0.02 * u), C.Metal, METAL)
+	local tailH = 1.25 * u
+	local ty = -LT.Y * 0.5 - tailH * 0.5 + 0.06 * u
+	for _, sg in { -1, 1 } do
+		B.blk("LowerTorso", V3(LT.X * 0.44, tailH, 0.07 * u), V3(sg * LT.X * 0.27, ty, -LT.Z * 0.5 - 0.05 * u), C.Top, FABRIC, V3(-4, 0, -sg * 3))
+		B.blk("LowerTorso", V3(LT.X * 0.45, 0.08 * u, 0.08 * u), V3(sg * LT.X * 0.29, ty - tailH * 0.46, -LT.Z * 0.5 - 0.1 * u), C.Shirt, FABRIC, V3(-4, 0, -sg * 3))
+		B.blk("LowerTorso", V3(0.07 * u, tailH, LT.Z * 1.04), V3(sg * (LT.X * 0.5 + 0.05 * u), ty, 0), C.Top, FABRIC, V3(0, 0, sg * 4))
+	end
+	B.blk("LowerTorso", V3(LT.X * 1.06, tailH + 0.08 * u, 0.07 * u), V3(0, ty - 0.04 * u, LT.Z * 0.5 + 0.05 * u), C.Top, FABRIC, V3(4, 0, 0))
+	B.blk("LowerTorso", V3(LT.X * 1.07, 0.08 * u, 0.08 * u), V3(0, ty - tailH * 0.5, LT.Z * 0.5 + 0.1 * u), C.Shirt, FABRIC, V3(4, 0, 0))
+	-- lantern hanging off the front-right of the belt
+	local lp = V3(LT.X * 0.36, -0.45 * u, -LT.Z * 0.5 - 0.28 * u)
+	B.blk("LowerTorso", V3(0.05 * u, 0.05 * u, 0.3 * u), V3(lp.X, LT.Y * 0.12, -LT.Z * 0.5 - 0.13 * u), C.Metal, METAL) -- bracket off the belt
+	B.blk("LowerTorso", V3(0.04 * u, 0.32 * u, 0.04 * u), V3(lp.X, LT.Y * 0.12 - 0.14 * u, lp.Z), C.Metal, METAL)      -- hanger
+	B.blk("LowerTorso", V3(0.3 * u, 0.06 * u, 0.3 * u), lp + V3(0, 0.22 * u, 0), C.Metal, METAL)
+	B.blk("LowerTorso", V3(0.18 * u, 0.06 * u, 0.18 * u), lp + V3(0, 0.27 * u, 0), C.Metal, METAL)
+	B.blk("LowerTorso", V3(0.3 * u, 0.06 * u, 0.3 * u), lp + V3(0, -0.2 * u, 0), C.Metal, METAL)
+	for _, cx in { -1, 1 } do
+		for _, cz in { -1, 1 } do
+			B.blk("LowerTorso", V3(0.04 * u, 0.38 * u, 0.04 * u), lp + V3(cx * 0.12 * u, 0.01 * u, cz * 0.12 * u), C.Metal, METAL)
+		end
+	end
+	B.blk("LowerTorso", V3(0.2 * u, 0.34 * u, 0.2 * u), lp, C.Soul, GLASS)
+	B.blk("LowerTorso", V3(0.09 * u, 0.15 * u, 0.09 * u), lp, C.Soul, NEON)
+
+	-- ARMS: coat sleeves, blue cuffs, bone pauldron (left), strap + charm (right), wrapped hands
+	for _, side in { "Left", "Right" } do
+		local sg = side == "Right" and 1 or -1
+		local ua, la = side .. "UpperArm", side .. "LowerArm"
+		local A, L = Z[ua], Z[la]
+		K.core(B, Z, ua, C.Top, FABRIC)
+		K.core(B, Z, la, C.Top, FABRIC)
+		K.band(B, Z, la, -L.Y * 0.5 + 0.2 * u, 0.26 * u, C.Shirt, FABRIC, 1.12)
+		K.band(B, Z, la, -L.Y * 0.5 + 0.35 * u, 0.05 * u, C.TopDark, FABRIC, 1.14)
+		if side == "Left" then
+			for i = 0, 2 do
+				local y = A.Y * 0.5 - i * 0.2 * u
+				B.blk(ua, V3(A.X * (1.22 - i * 0.07), 0.16 * u, A.Z * (1.22 - i * 0.07)), V3(sg * 0.06 * u, y, 0), i == 1 and C.BoneShade or C.Bone, SP, V3(0, 0, -sg * 12))
+			end
+			B.wdg(ua, V3(0.1 * u, 0.26 * u, 0.22 * u), V3(sg * A.X * 0.3, A.Y * 0.5 + 0.2 * u, 0), C.Bone, SP, V3(0, 90 * sg, 0))
+		else
+			K.band(B, Z, ua, A.Y * 0.05, 0.08 * u, C.Strap, LEATHER, 1.05)
+			B.blk(ua, V3(0.05 * u, 0.18 * u, 0.12 * u), V3(sg * (A.X * 0.53 + 0.02 * u), A.Y * 0.0, 0), C.Bone, SP)
+		end
+		if not opt.noHands then
+			K.hand(B, Z, side, C.Wrap, C.BoneShade, C.Shirt, { mat = FABRIC })
+		end
+	end
+
+	-- LEGS: dark trousers, thigh strap + pouch, shin wraps, tall boots
+	for _, side in { "Left", "Right" } do
+		local sg = side == "Right" and 1 or -1
+		local ul, ll = side .. "UpperLeg", side .. "LowerLeg"
+		local U, L = Z[ul], Z[ll]
+		K.core(B, Z, ul, C.Pants, FABRIC)
+		K.core(B, Z, ll, C.Pants, FABRIC)
+		if side == "Left" then
+			K.band(B, Z, ul, -U.Y * 0.12, 0.08 * u, C.Strap, LEATHER, 1.05)
+			B.blk(ul, V3(0.14 * u, 0.3 * u, U.Z * 0.42), V3(sg * (U.X * 0.5 + 0.07 * u), -U.Y * 0.2, 0), C.Strap, LEATHER)
+		end
+		for i = 0, 3 do
+			B.blk(ll, V3(L.X * 1.06, 0.1 * u, L.Z * 1.06), V3(0, L.Y * 0.28 - i * 0.16 * u, 0), i % 2 == 0 and C.Wrap or C.BoneShade, FABRIC, V3(0, 0, (i % 2 == 0 and 6 or -6)))
+		end
+		K.boot(B, Z, side, C.Shoe, C.Sole, nil, { shaft = 0.36, collar = C.Strap, collarMat = LEATHER, toeCap = C.Shoe, heel = C.Sole, mat = LEATHER })
+	end
+	K.fillers(B, Z, C.Top, FABRIC, C.Pants, FABRIC)
+end
 
 -- =====================================================================================
 -- REAL CHARACTERS (server)
@@ -643,9 +530,10 @@ local RIG_PARTS = {
 
 S._DRESS = DRESS -- test hooks (tools/skintest)
 S._newBuilder = newBuilder
+S._K = K
 
 local function makeShell(kind, size, color, mat)
-	local p = Instance.new("Part")
+	local p = Instance.new(kind == "wedge" and "WedgePart" or "Part")
 	p.Name = "Shell"
 	if kind == "cyl" then p.Shape = Enum.PartType.Cylinder end
 	p.Size = V3(math.max(size.X, 0.02), math.max(size.Y, 0.02), math.max(size.Z, 0.02))
@@ -653,7 +541,8 @@ local function makeShell(kind, size, color, mat)
 	p.Material = mat or SP
 	p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
 	p.CanCollide, p.CanQuery, p.CanTouch, p.Massless = false, false, false, true
-	p.CastShadow = size.Magnitude > 1.0 and mat ~= NEON
+	p.CastShadow = size.Magnitude > 0.6 and mat ~= NEON and mat ~= GLASS
+	if mat == GLASS then p.Transparency = 0.15 end
 	if kind == "ell" then
 		local m = Instance.new("SpecialMesh")
 		m.MeshType = Enum.MeshType.Sphere
@@ -751,6 +640,7 @@ end
 -- 2.7 * Height (old figure hip height) / stock hip height 2.016 * Height -> the figure is this much bigger than a real player
 local FIG_SCALE = 2.7 / 2.016
 S.FigureScale = FIG_SCALE
+S._scaledStock = scaledStock
 
 S.GunPose = {
 	base = Vector3.new(-0.15, 0, 0.6),
@@ -774,7 +664,9 @@ function S.NewFigure(parent, skinId, opts)
 	model.Name = "Figure_" .. skin.id
 	model.Parent = parent
 	local sz, rest = scaledStock(k)
-	local Z = { u = (sz.UpperTorso.Y / 1.792), h = math.min(sz.Head.Y, sz.Head.Z) * 1.2, shX = sz.UpperTorso.X * 0.5 + sz.RightUpperArm.X * 0.15 } -- lobby shoulders sit a little closer than in-game so both hands reach every gun
+	-- v8: holding a gun the shoulders sit a little closer than in-game (both block hands reach every gun); empty-handed = the real rig width
+	local Z = { u = (sz.UpperTorso.Y / 1.792), h = math.min(sz.Head.Y, sz.Head.Z) * 1.2,
+		shX = sz.UpperTorso.X * 0.5 + sz.RightUpperArm.X * (opts.weapon and 0.15 or 0.5) }
 	for n, v in sz do Z[n] = v end
 	local list = {}   -- { part, base, rel }
 	local gunList = {} -- { part, rel }
@@ -788,7 +680,7 @@ function S.NewFigure(parent, skinId, opts)
 	local B = newBuilder(function(base, kind, size, cf, color, mat)
 		table.insert(list, { part = newPart(kind, size, color, mat), base = base, rel = cf })
 	end)
-	DRESS[skin.id](B, Z, c, { noHands = true })
+	DRESS[skin.id](B, Z, c, {}) -- v8: the block hands are part of the outfit (they ride on the forearm, see Update)
 
 	-- ---- rig joints in rig space (y up, -Z forward, +X right)
 	local HIP_Y = rest.LeftUpperLeg.Y + sz.LeftUpperLeg.Y * 0.345
@@ -844,20 +736,10 @@ function S.NewFigure(parent, skinId, opts)
 		local palm = desc.Points.Palm or desc.Points.Fore
 		lHand = gunCF * (palm.Position * s)
 		if (lHand - rHand).Magnitude < 0.9 then lHand = rHand + (lHand - rHand).Unit * 0.9 + Vector3.new(0, -0.15, 0) end
-		if GM.HandParts then
-			local hands = GM.HandParts(desc, c.Glove, c.Pad or c.Trim)
-			for _, h in hands.right do addGun(h.Size * s, gunCF * (CFrame.new(h.CF.Position * s) * h.CF.Rotation), h.Color, SP, h.Shape) end
-			local palmCF = gunCF * CFrame.new(palm.Position * s)
-			for _, h in hands.left do addGun(h.Size * s, palmCF * (CFrame.new(h.CF.Position * s) * h.CF.Rotation), h.Color, SP, h.Shape) end
-		end
 	else
-		-- no weapon: relaxed hands (simple gloved fists hanging at the sides) are part of the arm IK below
-		rHand = Vector3.new(-Z.shX * 0.98, rest.RightHand.Y + 0.1 * k, 0.15 * k)
-		lHand = Vector3.new(Z.shX * 0.98, rest.LeftHand.Y + 0.1 * k, 0.15 * k)
-		for _, hp in { rHand, lHand } do
-			local p = newPart("ell", V3(0.24, 0.4, 0.34) * Z.u, c.Glove, SP)
-			table.insert(gunList, { part = p, rel = CFrame.new(hp), noGun = true })
-		end
+		-- no weapon: arms hang straight down at the sides (the block hands sit on the forearms)
+		rHand = Vector3.new(-Z.shX, rest.RightHand.Y - 0.1 * k, 0)
+		lHand = Vector3.new(Z.shX, rest.LeftHand.Y - 0.1 * k, 0)
 	end
 	local hasGun = desc ~= nil
 
@@ -1019,13 +901,14 @@ function S.NewFigure(parent, skinId, opts)
 			local hFig = gT:PointToWorldSpace(handFig)
 			local hRig = FLIP:PointToWorldSpace(hFig) -- rig = flip(figure)
 			local sh = SH[side]
-			local wrist = hRig + (sh - hRig).Unit * 0.16 * k
+			local wrist = hRig + (sh - hRig).Unit * (hasGun and 0.16 or 0) * k
 			local pole = V3(sg * 0.8, -1, 0.35)
 			local elbow, wr = ik(sh, wrist, pole)
 			if fig._debug then fig._debug[side] = (wr - wrist).Magnitude end
 			local side3 = V3(sg, 0, 0)
 			base[side .. "UpperArm"] = placeAlong(sh, elbow, UA_SH(sg), UA_EL, side3)
 			base[side .. "LowerArm"] = placeAlong(elbow, wr, LA_EL, LA_WR, side3)
+			base[side .. "Hand"] = base[side .. "LowerArm"] * CFrame.new(LA_WR) * CFrame.new(0, -sz.RightHand.Y * 0.417, 0)
 		end
 		-- ---- write every part (figure space = root * FLIP * rig)
 		local RF = root * FLIP
