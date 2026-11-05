@@ -1,4 +1,5 @@
--- GadgetServer v2 (Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0, reworked in v4.1:
+-- GadgetServer v2.1 (v4.9: throws are much stronger - ~115 studs/s, light gravity in flight via a VectorForce until the first bounce, 60% run-speed
+--   carry-over, released from the throwing hand AFTER the windup so it leaves the hand when the arm whips; Use(slot, dir, underhand) for the right-click toss) (was v2: Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0, reworked in v4.1:
 --   v4.1: gadgets are EQUIPPED first (remote Equip: your gun is swapped for the item, char attribute HeldGadget = id), then
 --         "throw" kinds (frag / smoke / flash) are thrown with remote Use(slot, dir) and
 --         "place" kinds (sentry / shield / mine) are put down EXACTLY where the client's preview was with remote Place(slot, pos, facing).
@@ -585,15 +586,27 @@ local function resetState(p)
 end
 
 ------------------------------------------------------------------ throwing (frag / smoke / flash)
-local function launch(player, slot, id, dir)
+-- v4.9: where a throw starts = right shoulder / hand side of the head (GadgetClient's preview line uses the same maths)
+local function throwOrigin(from, dir)
+	local T = Cfg.Throw
+	local right = dir:Cross(Vector3.yAxis)
+	right = right.Magnitude > 0.05 and right.Unit or Vector3.xAxis
+	local start = from + right * (T.Side or 0) + Vector3.new(0, -0.15, 0)
+	local want = start + dir * (T.Start or 1.8)
+	local rp = newParams()
+	local r = workspace:Raycast(from, want - from, rp)
+	if r then return r.Position - (want - from).Unit * 0.4 end
+	return want
+end
+
+local function launch(player, slot, id, dir, under)
 	local cfg = Cfg.Items[id]
+	local T = Cfg.Throw
 	local char, _, root = aliveChar(player)
 	if not char then return false end
 	local head = char:FindFirstChild("Head")
 	local from = head and head.Position or root.Position + Vector3.new(0, 1.5, 0)
-	local origin = from + dir * 1.8
-	local r = workspace:Raycast(from, dir * 1.8, newParams())
-	if r then origin = r.Position - dir * 0.4 end
+	local origin = throwOrigin(from, dir)
 	-- an invisible physics ball carries the real model (GadgetModels) along
 	local p = Instance.new("Part")
 	p.Name = "Gadget_" .. id
@@ -602,7 +615,7 @@ local function launch(player, slot, id, dir)
 	p.Transparency = 1
 	p.Material = Enum.Material.SmoothPlastic
 	p.CanQuery, p.CanCollide, p.CanTouch, p.CastShadow = false, true, true, false
-	p.CustomPhysicalProperties = PhysicalProperties.new(0.8, 0.6, 0.4, 1, 1)
+	p.CustomPhysicalProperties = PhysicalProperties.new(0.8, 0.7, T.Elasticity or 0.3, 1, 1)
 	p.CFrame = CFrame.new(origin)
 	p.Parent = fxFolder
 	local model = GM.Build(id, nil, { anchored = false })
@@ -613,7 +626,29 @@ local function launch(player, slot, id, dir)
 		GM.WeldTo(p, p)
 	end
 	pcall(function() p:SetNetworkOwner(nil) end)
-	p.AssemblyLinearVelocity = dir * cfg.speed + root.AssemblyLinearVelocity * 0.35
+	local speed = cfg.speed * (under and (T.UnderMult or 0.45) or 1)
+	p.AssemblyLinearVelocity = dir * speed + root.AssemblyLinearVelocity * (T.Inherit or 0.35)
+	-- v4.9: lighter gravity while it flies (a VectorForce cancels part of it), normal gravity from the first bounce on
+	if T.Gravity and T.Gravity < workspace.Gravity then
+		local att = Instance.new("Attachment")
+		att.Name = "LiftAtt"
+		att.Parent = p
+		local vf = Instance.new("VectorForce")
+		vf.Name = "Lift"
+		vf.Attachment0 = att
+		vf.RelativeTo = Enum.ActuatorRelativeTo.World
+		vf.ApplyAtCenterOfMass = true
+		vf.Force = Vector3.new(0, p.AssemblyMass * (workspace.Gravity - T.Gravity), 0)
+		vf.Parent = p
+		local conn
+		conn = p.Touched:Connect(function(other)
+			if other:IsDescendantOf(char) or other:IsDescendantOf(fxFolder) then return end
+			if not other.CanCollide then return end
+			vf.Enabled = false
+			conn:Disconnect()
+		end)
+		task.delay(6, function() if conn.Connected then conn:Disconnect() end end)
+	end
 	p.AssemblyAngularVelocity = Vector3.new(rnd:NextNumber(-12, 12), rnd:NextNumber(-12, 12), rnd:NextNumber(-12, 12))
 	-- trail so people can see the arc
 	local a0, a1 = Instance.new("Attachment"), Instance.new("Attachment")
@@ -677,11 +712,11 @@ local function commit(player, s, slot, cfg, t, char)
 	s.ready[slot] = t + cfg.cooldown
 	if not s.nextCharge[slot] then s.nextCharge[slot] = t + cfg.recharge end
 	publish(player, s, slot)
-	char:SetAttribute("GadgetThrowAt", t) -- everybody's client plays the throwing arm
+	char:SetAttribute("GadgetThrowAt", t) -- everybody's client plays the throwing arm (v4.9: windup -> whip -> follow-through, MoveAnim)
 end
 
 local lastUse, lastEquip = {}, {}
-UseR.OnServerEvent:Connect(function(player, slot, dir)
+UseR.OnServerEvent:Connect(function(player, slot, dir, under)
 	if typeof(dir) ~= "Vector3" then return end
 	local m = dir.Magnitude
 	if not (m > 0.9 and m < 1.1) then return end
@@ -689,10 +724,17 @@ UseR.OnServerEvent:Connect(function(player, slot, dir)
 	if now - (lastUse[player] or 0) < 0.25 then return end
 	local s, id, cfg, char, _, t = prep(player, slot, "throw")
 	if not s then return end
-	dir = (dir.Unit + Vector3.new(0, Cfg.Throw.Up, 0)).Unit
-	if not launch(player, slot, id, dir) then return end
+	under = under == true
+	local T = Cfg.Throw
+	dir = (dir.Unit + Vector3.new(0, T.Up + (under and (T.UnderUp or 0.3) or 0), 0)).Unit
+	-- v4.9: the throw is committed now (GadgetThrowAt starts everybody's throwing arm), the item leaves the hand after the windup,
+	-- exactly when the arm whips forward
 	lastUse[player] = now
 	commit(player, s, slot, cfg, t, char)
+	char:SetAttribute("GadgetThrowUnder", under)
+	task.delay(T.Windup or 0.12, function()
+		if player.Parent then launch(player, slot, id, dir, under) end
+	end)
 end)
 
 ------------------------------------------------------------------ equip (swap the gun for the item, or back)
