@@ -390,13 +390,13 @@ end
 -- Origin = the middle of the palm, +Y up toward the item, -Z forward. The item is held about 0.2 studs above the palm: four fingers
 -- curl up the front of it, the thumb wraps the left side. Everything is anchored; move it with model:PivotTo(cf).
 function GM.BuildHand(parent)
+	-- v8 BLOCK HAND: palm slab, a finger block that curls up the front of the item (pad lines for the finger splits), thumb block, wrist block
 	local model = Instance.new("Model")
 	model.Name = "GadgetHand"
 	local GLOVE, PAD = rgb(30, 30, 34), rgb(56, 58, 64)
-	local function part(name, size, cf, color, shape)
+	local function part(name, size, cf, color)
 		local p = Instance.new("Part")
 		p.Name = name
-		if shape then p.Shape = shape end
 		p.Size = size
 		p.CFrame = cf
 		p.Color, p.Material = color, SP
@@ -405,32 +405,16 @@ function GM.BuildHand(parent)
 		p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
 		p.Parent = model
 	end
-	local function seg(a, b, d, color)
-		local len = (b - a).Magnitude
-		if len < 0.002 then return end
-		part("Finger", Vector3.new(len, d, d), CFrame.lookAt((a + b) / 2, b) * CFrame.Angles(0, rad(90), 0), color, CYL)
+	part("Palm", Vector3.new(0.32, 0.1, 0.32), CFrame.new(0, -0.01, 0.04), GLOVE)
+	part("PalmPad", Vector3.new(0.2, 0.03, 0.16), CFrame.new(0, 0.045, 0.0), PAD)
+	part("FingerBase", Vector3.new(0.3, 0.08, 0.12), CFrame.new(0, 0.02, -0.16), GLOVE)
+	part("Fingers", Vector3.new(0.3, 0.26, 0.08), CFrame.new(0, 0.15, -0.22), GLOVE)
+	part("FingerTips", Vector3.new(0.3, 0.07, 0.1), CFrame.new(0, 0.27, -0.17), GLOVE)
+	for _, x in { -0.075, 0, 0.075 } do
+		part("FingerLine", Vector3.new(0.015, 0.26, 0.084), CFrame.new(x, 0.15, -0.222), PAD)
 	end
-	local function chain(points, d)
-		for i = 1, #points - 1 do seg(points[i], points[i + 1], d, GLOVE) end
-		for i = 2, #points do part("Knuckle", Vector3.one * d * 1.06, CFrame.new(points[i]), i == #points and GLOVE or PAD, BALL) end
-	end
-	part("Palm", Vector3.new(0.3, 0.09, 0.3), CFrame.new(0, -0.01, 0.04), GLOVE)
-	part("PalmPad", Vector3.new(0.18, 0.03, 0.14), CFrame.new(0, 0.04, 0.0), PAD)
-	part("Wrist", Vector3.new(0.3, 0.2, 0.2), CFrame.new(0, -0.03, 0.27) * CFrame.Angles(0, rad(90), 0), GLOVE, CYL)
-	for i, x in { -0.105, -0.035, 0.035, 0.105 } do
-		chain({
-			Vector3.new(x, 0.01, -0.1),
-			Vector3.new(x, 0.03, -0.18),
-			Vector3.new(x, 0.14, -0.215),
-			Vector3.new(x, 0.25, -0.17),
-		}, i == 4 and 0.058 or 0.068)
-	end
-	chain({
-		Vector3.new(-0.17, 0.04, 0.06),
-		Vector3.new(-0.21, 0.14, -0.03),
-		Vector3.new(-0.19, 0.24, -0.12),
-		Vector3.new(-0.12, 0.3, -0.16),
-	}, 0.072)
+	part("Thumb", Vector3.new(0.08, 0.24, 0.08), CFrame.new(-0.19, 0.16, -0.06) * CFrame.Angles(0, 0, rad(-15)), GLOVE)
+	part("Wrist", Vector3.new(0.3, 0.22, 0.2), CFrame.new(0, -0.03, 0.27), PAD)
 	model.WorldPivot = CFrame.identity
 	model.Parent = parent
 	return model
