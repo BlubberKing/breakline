@@ -1,4 +1,4 @@
--- MoveAnim v3.1 (v4.7: crouch + slide GROUND CLEARANCE - the lowest part of the body is measured every frame and the body is lifted until nothing sinks into the floor; slide wobble removed (no more shaking right hand / swaying body)) (v3: v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
+-- MoveAnim v3.2 (v4.9: new grenade-ready hold pose + a real 3-beat throw - cock, whip, follow-through - and an underhand toss, timed to the release) (was v3.1 v4.7: crouch + slide GROUND CLEARANCE - the lowest part of the body is measured every frame and the body is lifted until nothing sinks into the floor; slide wobble removed (no more shaking right hand / swaying body)) (v3: v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
 -- (v2 header:) MoveAnim v2 (v4.5: smooth distance-driven stride, big arm swing, new slide + dust) - was v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games. NEW in v4.1. Keep the two copies identical.
 -- Real animations for WALKING, RUNNING (sprint), CROUCHING (idle + crouch-walk) and SLIDING, for EVERY player (what you see on other people; in the
 -- Lobby you also see your own). It drives the R15 joint Transforms procedurally AFTER the Animator (RunService.Stepped), blending from whatever the
@@ -19,6 +19,7 @@ local player = Players.LocalPlayer
 local rad, sin, cos, abs, clamp, exp, max = math.rad, math.sin, math.cos, math.abs, math.clamp, math.exp, math.max
 local CF = CFrame.Angles
 local function approach(a, b, speed, dt) return a + (b - a) * (1 - exp(-speed * dt)) end
+local THROW_LEN, throwSwing = 0.79, nil -- v4.9 (set in the THROW section below)
 
 local rayP = RaycastParams.new()
 rayP.FilterType = Enum.RaycastFilterType.Exclude
@@ -174,8 +175,10 @@ local function frame(st, dt)
 	st.wasGrounded = grounded
 	st.airW = approach(st.airW, (not grounded and not busy and not slide) and 1 or 0, 12, dt)
 	st.arms = approach(st.arms or 0, (not hasGun and not busy and (held or soulCarry or reviving)) and 1 or 0, 14, dt)
-	local sinceThrow = workspace:GetServerTimeNow() - (char:GetAttribute("GadgetThrowAt") or -10)
-	st.throw = approach(st.throw or 0, (sinceThrow >= 0 and sinceThrow < 0.4) and 1 or 0, 22, dt)
+	-- v4.9: the throw is a timed 3-beat swing (see armPoses), driven straight from the time since GadgetThrowAt
+	st.sinceThrow = workspace:GetServerTimeNow() - (char:GetAttribute("GadgetThrowAt") or -10)
+	st.throwUnder = char:GetAttribute("GadgetThrowUnder") == true
+	st.throw = (st.sinceThrow >= 0 and st.sinceThrow < THROW_LEN) and 1 or 0
 
 	-- v4.6: remember the real standing hip height (used by the crouch fit); measured, so it also holds for other players
 	if st.crouch < 0.02 and st.slide < 0.02 and grounded and os.clock() >= st.nextBase then
@@ -341,6 +344,46 @@ local function frame(st, dt)
 	end
 end
 
+-- v4.9 THROW: 3 beats keyed to the server's GadgetThrowAt (the item leaves the hand at WINDUP, exactly when GadgetServer launches it)
+--   cock (0 .. WINDUP)          throwing arm up + back behind the head, elbow bent, torso turned away, left arm points at the target
+--   whip (.. + 0.12)            the arm snaps over the top, the torso turns through, weight onto the front
+--   follow-through (.. + 0.25)  the arm finishes low across the body, then everything eases back over the last 0.3 s
+-- Underhand (right click): arm low behind the hip, swings forward and up, the body dips a little.
+local THROWABLE = { FRAG = true, SMOKE = true, FLASH = true }
+local WINDUP = 0.12 -- = GadgetConfig.Throw.Windup (that module only exists in Breakline, so the number is copied here)
+THROW_LEN = WINDUP + 0.37 + 0.3
+local function lerpN(a, b, t) return a + (b - a) * t end
+local function ease(t) t = clamp(t, 0, 1) return t * t * (3 - 2 * t) end
+-- key poses: rSh pitch / roll, rEl, lSh pitch / roll, lEl, waist yaw, waist pitch (radians; + pitch = arm forward / up)
+local OVER = {
+	{ 0.0, 0.3, 1.0, 0.4, -0.3, 1.0, 0.0, 0.0 },        -- start (blends from the hold)
+	{ 2.75, 0.55, 1.9, 1.45, -0.25, 0.25, -0.45, -0.08 }, -- cocked
+	{ 1.55, 0.2, 0.25, 0.6, -0.45, 1.5, 0.4, 0.12 },     -- whip (release)
+	{ 0.2, -0.45, 0.45, 0.25, -0.2, 1.1, 0.35, 0.16 },   -- follow-through
+}
+local UNDER = {
+	{ 0.0, 0.3, 1.0, 0.4, -0.3, 1.0, 0.0, 0.0 },
+	{ -0.75, 0.25, 0.35, 0.7, -0.3, 0.9, -0.25, 0.1 },
+	{ 1.35, 0.1, 0.2, 0.45, -0.3, 1.1, 0.2, 0.05 },
+	{ 1.6, 0.0, 0.3, 0.35, -0.25, 1.0, 0.15, 0.0 },
+}
+function throwSwing(st)
+	local tt = st.sinceThrow or 99
+	local K = st.throwUnder and UNDER or OVER
+	local a, b, u
+	if tt < WINDUP then a, b, u = K[1], K[2], ease(tt / WINDUP)
+	elseif tt < WINDUP + 0.12 then a, b, u = K[2], K[3], ease((tt - WINDUP) / 0.12)
+	elseif tt < WINDUP + 0.37 then a, b, u = K[3], K[4], ease((tt - WINDUP - 0.12) / 0.25)
+	else a, b, u = K[4], K[4], 0 end
+	local w = 1 - ease((tt - WINDUP - 0.37) / 0.3) -- fade back to the normal pose at the end
+	local function v(i) return lerpN(a[i], b[i], u) end
+	blend(st.rSh, CF(v(1), 0, v(2)), w)
+	blend(st.rEl, CF(v(3), 0, 0), w)
+	blend(st.lSh, CF(v(4), 0, v(5)), w)
+	blend(st.lEl, CF(v(6), 0, 0), w)
+	blend(st.waist, CF(v(8), v(7), 0), w * 0.9)
+end
+
 -- (arm poses for an item in hand, a carried soul, a revive, and the throwing swing) are applied LAST so they win over the stride arms
 local function armPoses(st)
 	local w = st.arms or 0
@@ -362,19 +405,25 @@ local function armPoses(st)
 			blend(st.lSh, CF(1.2, 0, -rad(10)), w)
 			blend(st.rEl, CF(0.55, 0, 0), w)
 			blend(st.lEl, CF(0.55, 0, 0), w)
+		elseif THROWABLE[char:GetAttribute("HeldGadget")] then
+			-- v4.9 grenade ready: held at chest height in the right hand, elbow down and tucked, forearm up; the left hand rests beside it
+			-- (on the pin) so both arms frame the grenade like a real throw-ready stance
+			local br = sin(os.clock() * 1.6) * 0.03
+			blend(st.rSh, CF(0.55 + br, 0, rad(18)), w)
+			blend(st.rEl, CF(1.75, 0, 0), w)
+			if st.rWr then blend(st.rWr, CF(-0.25, 0, 0), w) end
+			blend(st.lSh, CF(0.7 + br, 0, -rad(28)), w)
+			blend(st.lEl, CF(1.35, 0, 0), w)
 		else
-			-- item in the right hand (grenade / turret / projector), left arm relaxed, a little forward
-			blend(st.rSh, CF(0.85, 0, rad(6)), w)
-			blend(st.rEl, CF(1.15, 0, 0), w)
-			blend(st.lSh, CF(0.35, 0, -rad(6)), w)
-			blend(st.lEl, CF(0.5, 0, 0), w)
+			-- turret / projector / mine: carried in front at the waist with both hands
+			blend(st.rSh, CF(0.65, 0, -rad(12)), w)
+			blend(st.rEl, CF(0.95, 0, 0), w)
+			blend(st.lSh, CF(0.65, 0, rad(12)), w)
+			blend(st.lEl, CF(0.95, 0, 0), w)
 		end
 	end
-	if st.throw and st.throw > 0.01 then
-		local t = st.throw
-		blend(st.rSh, CF(-0.4 + 2.5 * (1 - t), 0, rad(14)), t) -- arm swings from back to front
-		blend(st.rEl, CF(0.35, 0, 0), t)
-		blend(st.waist, CF(0, rad(-12) * t, 0), t * 0.8)
+	if st.throw and st.throw > 0 then
+		throwSwing(st)
 	end
 end
 
