@@ -1,3 +1,4 @@
+-- HitFX v3.4: the hitmarker is smaller and calmer (thin 45 degree ticks that pop in and fade out; white = body, gold = head, red = kill).
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
@@ -96,29 +97,28 @@ function HitFX:_buildHitmarker()
 		st.Transparency = 0.4
 		st.Parent = l
 		l.Parent = hm
-		table.insert(self.hmLines, { f = l, o = o })
+		table.insert(self.hmLines, { f = l, o = o, st = st })
 	end
 	self.hm, self.hmScale, self.hmToken = hm, scale, 0
+	self.hmStart, self.hmDur, self.hmPop = 0, 0.1, 1
 end
 
 function HitFX:ShowHitmarker(kind)
 	local color = kind == "kill" and KILL or kind == "head" and HEAD or WHITE
-	local w, h, dist = 3, 10, 9
-	if kind == "head" then h, dist = 12, 10 elseif kind == "kill" then w, h, dist = 4, 16, 13 end
+	local w, h, dist = 2, 7, 7
+	if kind == "head" then h, dist = 9, 8 elseif kind == "kill" then w, h, dist = 3, 12, 11 end
 	for _, l in self.hmLines do
 		l.f.BackgroundColor3 = color
+		l.f.BackgroundTransparency = 0
+		l.st.Transparency = 0.4
 		l.f.Size = UDim2.fromOffset(w, h)
 		l.f.Position = UDim2.new(0.5, l.o.X * dist, 0.5, l.o.Y * dist)
 	end
-	self.hmToken += 1
-	local token = self.hmToken
+	self.hmStart = os.clock()
+	self.hmDur = kind == "kill" and 0.4 or kind == "head" and 0.16 or 0.11
+	self.hmPop = kind == "kill" and 1.7 or 1.35
+	self.hmScale.Scale = self.hmPop
 	self.hm.Visible = true
-	self.hmScale.Scale = kind == "kill" and 2.0 or 1.6
-	TweenService:Create(self.hmScale, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-	local dur = kind == "kill" and 0.45 or kind == "head" and 0.18 or 0.12
-	task.delay(dur, function()
-		if self.hmToken == token then self.hm.Visible = false end
-	end)
 end
 
 -- ===== elimination banner =====
@@ -332,6 +332,19 @@ end
 -- ===== per-frame =====
 function HitFX:_update(dt)
 	local nowc = os.clock()
+	if self.hm.Visible then -- hitmarker: quick pop, then a fade over the last 65 % of its life
+		local a = (nowc - self.hmStart) / self.hmDur
+		if a >= 1 then
+			self.hm.Visible = false
+		else
+			self.hmScale.Scale = 1 + (self.hmPop - 1) * (1 - math.min(a * self.hmDur / 0.08, 1)) ^ 2
+			local t = math.clamp((a - 0.35) / 0.65, 0, 1)
+			for _, l in self.hmLines do
+				l.f.BackgroundTransparency = t
+				l.st.Transparency = 0.4 + 0.6 * t
+			end
+		end
+	end
 	for i = #self.holes, 1, -1 do
 		local r = self.holes[i]
 		local age = nowc - r.born
