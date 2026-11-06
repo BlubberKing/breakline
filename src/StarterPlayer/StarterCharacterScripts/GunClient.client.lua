@@ -657,12 +657,18 @@ table.insert(conns, player:GetAttributeChangedSignal("Sight"):Connect(onLoadoutC
 equip(player:GetAttribute("Weapon"), player:GetAttribute("Sight"))
 
 -- ================= FIRE CONTROL =================
+local lastDry, wasAiming = 0, false
 local function fireControl(now, canFire)
 	if menuOpen() then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
 	-- a click slightly early (e.g. during a bolt/pump cycle) is buffered for 0.2s
 	if semiPending and now - semiPending > 0.2 then semiPending = nil end
 	if not canFire then
 		if (triggerDown or semiPending) and ammo <= 0 and not reloading then startReload() end
+		-- v5.7: empty mag + trigger while the reload is still running = a dry click (SoundBank slot DryFire), at most every 0.4 s
+		if (triggerDown or semiPending) and ammo <= 0 and reloading and now - (lastDry or 0) > 0.4 then
+			lastDry = now
+			Sfx.Play("DryFire", nil, nil, nil, WEAPON)
+		end
 		return
 	end
 	if cfg.FireMode == "Auto" then
@@ -741,6 +747,10 @@ local function onRender(dt)
 		lastHeldGadget = heldGadget
 	end
 	local aiming = aimHeld and not reloading and alive and not mantling and not carryingBox
+	if aiming ~= wasAiming then -- v5.7: sound hooks AimIn / AimOut (per gun, optional)
+		wasAiming = aiming
+		if alive then Sfx.Play(aiming and "AimIn" or "AimOut", nil, nil, nil, WEAPON) end
+	end
 	local wantsSprint = (shiftHeld or sprintToggle) and moving and not aiming and not triggerDown and not crouching
 	local sprinting = (wantsSprint and not sliding and not mantling) or (type(cutRun) == "number" and cutRun > 10)
 	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
