@@ -3,6 +3,10 @@
 --   2) add its id to W.Order (picker order)
 --   3) add a model with the same id in GunModels (or set Model = "<existing model id>")
 -- Health is 100. Distances are studs. Spreads/recoil are degrees.
+-- v3.4 GUN FEEL (Rivals-style): only ONE gun has TRUE recoil (Recoil = "Climb": the aim really climbs, you have to pull down).
+-- Every other gun is Recoil = "Kick": the bullet always goes exactly where the crosshair was when you pressed the trigger, the gun + camera
+-- still kick for feel (viewmodel kick, camera flinch, FOV punch) but the kick never moves your aim. Accuracy on those guns comes from
+-- spread / bloom / moving / jumping, not from recoil. Flip any gun with Recoil = "Climb" | "Kick".
 local W = {}
 
 W.Order = { "VX9", "KR47", "HX3", "WASP", "ANVIL", "LONGSHOT", "HALO50", "BREACHER", "V9", "MAGNUM" }
@@ -37,6 +41,10 @@ W.Defaults = {
 
 	ADSTime = 0.14, ADSFov = 58, ADSSensitivity = 0.7, ADSRecoilMult = 0.7,
 
+	Recoil = "Kick",            -- v3.4: "Kick" = visual only (aim never moves) | "Climb" = true recoil (RecoilPattern moves the aim)
+	Flinch = 1.6,               -- v3.4: Kick guns only: camera flinch multiplier (bigger = the screen jolts more, aim is unaffected)
+	ViewKick = 1.3,             -- v3.4: Kick guns only: viewmodel kick multiplier (the gun itself snaps back harder because the aim does not climb)
+	EquipStyle = "Swing",       -- v3.4: draw animation: "Swing" (rifles) | "Flip" (SMG / pistol) | "Twirl" (revolver) | "Heavy" (LMG / sniper / shotgun)
 	RecoilPattern = climb(0.45, 0.1, 12, 0.5),
 	RecoilJitter = 0.06, SprayResetTime = 0.3,
 	RecoverDelay = 0.1, RecoverSpeed = 10, ClimbSnap = 30,
@@ -74,7 +82,16 @@ W.Weapons = {
 		FalloffStart = 35, FalloffEnd = 90, FalloffMin = 0.62,
 		SpreadHip = 1.3, SpreadMove = 0.5, BloomPerShot = 0.1, BloomMax = 1.0,
 		ADSTime = 0.17,
-		RecoilPattern = climb(0.62, 0.14, 12, 0.35), RecoilJitter = 0.09,
+		-- v3.4: THE ONE GUN WITH TRUE RECOIL. A fixed, learnable spray: climbs hard for ~6 shots, then swings left, then right and settles.
+		-- Pull down (and counter-strafe the sway) to keep it on target. Tiny jitter only so it still feels alive.
+		Recoil = "Climb", ViewKick = 1.0,
+		RecoilPattern = {
+			Vector2.new(0.55, 0.00), Vector2.new(0.60, 0.05), Vector2.new(0.64, 0.10), Vector2.new(0.66, 0.14),
+			Vector2.new(0.66, 0.12), Vector2.new(0.62, 0.02), Vector2.new(0.58, -0.10), Vector2.new(0.54, -0.20),
+			Vector2.new(0.50, -0.26), Vector2.new(0.46, -0.22), Vector2.new(0.42, -0.10), Vector2.new(0.40, 0.06),
+			Vector2.new(0.38, 0.16), Vector2.new(0.36, 0.20), Vector2.new(0.34, 0.14), Vector2.new(0.34, 0.00),
+		},
+		RecoilJitter = 0.03, RecoverDelay = 0.12, RecoverSpeed = 9,
 		CamPunch = 17, KickBack = 5.2, KickUp = 85,
 		MoveSpeed = 0.97, FirePitch = 0.88, FireVolume = 1.1,
 	},
@@ -102,6 +119,7 @@ W.Weapons = {
 		RecoilPattern = climb(0.28, 0.14, 14, 0.3), RecoilJitter = 0.1,
 		CamPunch = 9, KickBack = 3, KickUp = 45,
 		MoveSpeed = 1.06, EquipTime = 0.25, FirePitch = 1.18, FireVolume = 0.8,
+		EquipStyle = "Flip",
 	},
 
 	ANVIL = {
@@ -115,6 +133,7 @@ W.Weapons = {
 		RecoilPattern = climb(0.45, 0.18, 16, 0.5),
 		CamPunch = 13, KickUp = 60, KickBack = 4,
 		MoveSpeed = 0.9, EquipTime = 0.6, FirePitch = 0.82, FireVolume = 1.15,
+		EquipStyle = "Heavy",
 	},
 
 	LONGSHOT = {
@@ -145,6 +164,7 @@ W.Weapons = {
 		CamPunch = 30, FovPunch = 10, KickBack = 8, KickUp = 150,
 		MoveSpeed = 0.9, EquipTime = 0.7,
 		Cycle = "Bolt", CycleTime = 0.8, CycleDelay = 0.2, CycleDist = 0.32,
+		EquipStyle = "Heavy",
 		FirePitch = 0.62, FireVolume = 1.4,
 		Shell = { Size = Vector3.new(0.05, 0.05, 0.18), Color = Color3.fromRGB(214, 168, 72) },
 	},
@@ -161,6 +181,7 @@ W.Weapons = {
 		RecoilPattern = { Vector2.new(1.8, 0) }, RecoverSpeed = 7,
 		CamPunch = 26, FovPunch = 30, KickBack = 9, KickUp = 120,
 		Cycle = "Pump", CycleTime = 0.5, CycleDelay = 0.08, CycleDist = 0.28,
+		EquipStyle = "Heavy",
 		FirePitch = 0.6, FireVolume = 1.4,
 		Shell = { Size = Vector3.new(0.08, 0.08, 0.17), Color = Color3.fromRGB(200, 40, 40) },
 	},
@@ -179,6 +200,7 @@ W.Weapons = {
 		CamPunch = 12, KickBack = 3.5, KickUp = 70,
 		MoveSpeed = 1.08, EquipTime = 0.25,
 		Cycle = "Slide", CycleTime = 0.08, CycleDelay = 0, CycleDist = 0.14,
+		EquipStyle = "Flip",
 		FirePitch = 1.12, FireVolume = 0.8,
 		Shell = { Size = Vector3.new(0.03, 0.03, 0.07), Color = Color3.fromRGB(214, 168, 72) },
 	},
@@ -195,6 +217,7 @@ W.Weapons = {
 		RecoilPattern = { Vector2.new(2.0, 0.2) }, RecoverSpeed = 7,
 		CamPunch = 26, KickBack = 5, KickUp = 140,
 		MoveSpeed = 1.04, FirePitch = 0.72, FireVolume = 1.3,
+		EquipStyle = "Twirl",
 		Shell = false, -- revolvers keep their brass
 	},
 }
