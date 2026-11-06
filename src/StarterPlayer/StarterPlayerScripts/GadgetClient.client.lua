@@ -412,6 +412,7 @@ local function unequip(silent)
 	destroyGhost()
 	CAS:UnbindAction("GadgetFire")
 	if not silent then EquipR:FireServer(0) end
+	if not silent then sound("GadPutAway") end -- v5.7: sound hook
 end
 
 local function equip(slot)
@@ -426,6 +427,7 @@ local function equip(slot)
 	destroyGhost()
 	if cfg.kind == "place" then buildGhost(id) end
 	EquipR:FireServer(slot)
+	sound("GadEquip_" .. id) -- v5.7: sound hook (falls back to GadEquip)
 	if UIS.TouchEnabled then
 		CAS:BindAction("GadgetFire", function(_, state)
 			if state == Enum.UserInputState.Begin then onPrimaryDown() elseif state == Enum.UserInputState.End then onPrimaryUp() end
@@ -452,6 +454,7 @@ local function doThrow(under)
 	held.since = now + Cfg.Throw.Windup + THROW_DROP -- the next grenade comes up from below once the arm has followed through
 	-- v4.9: sent right away; the server starts everybody's throwing arm and releases the item after Cfg.Throw.Windup (when the arm whips forward)
 	UseR:FireServer(slot, camera.CFrame.LookVector, throwUnder)
+	sound("GadThrow_" .. held.id, nil, throwUnder and 0.85 or 1) -- v5.7: sound hook (falls back to GadThrow)
 	task.delay(Cfg.Throw.Windup + 0.05, function() throwing = false end)
 end
 
@@ -467,6 +470,7 @@ local function doPlace()
 	lastThrowAt = now
 	throwKick = 0.6
 	PlaceR:FireServer(slot, lastSpot, lastFacing)
+	sound("GadPlaceTry") -- v5.7: sound hook (the click when you press place; the placed sound itself plays from the object)
 end
 
 onPrimaryDown = function()
@@ -728,7 +732,13 @@ local function placedFx(pos, normal)
 end
 
 FxR.OnClientEvent:Connect(function(kind, a, b, c)
-	if kind == "Placed" then placedFx(a, b)
+	if kind == "Placed" then placedFx(a, b); sound(c and ("GadPlace_" .. c) or "GadPlace", a)
+	elseif kind == "SmokePop" then sound("SmokePop", a)
+	elseif kind == "SentryDeploy" then sound("SentryDeploy", a)
+	elseif kind == "SentryShot" then sound("SentryShot", a)
+	elseif kind == "MineArm" then sound("MineArm", a)
+	elseif kind == "MineBeep" then sound("MineBeep", a)
+	elseif kind == "MineTrigger" then sound("MineTrigger", a)
 	elseif kind == "Boom" then boom(a, b or 12)
 	elseif kind == "Flash" then flashbang(a, b or 70, c or 3.5)
 	elseif kind == "ShieldBreak" then shieldBreak(a, b or 9, c) end
