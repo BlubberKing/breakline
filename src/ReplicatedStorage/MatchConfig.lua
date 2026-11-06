@@ -56,7 +56,19 @@ C.SOUL = {
 	HoldRange  = 3.2,   -- the rezzing player must stay this close to where they started (and keep holding)
 }
 
--- ===== v4.1 modes (picked from the child of MapBounds, see MatchServer) =====
+-- ===== v5 MAP FOLDERS (MatchServer) =====
+-- One folder per game mode. Each folder holds one sub-folder per map, named <mapname>_map (example: test_map). Every <name>_map folder
+-- holds the whole map (its MapBounds part + all its parts / models). The server picks ONE map of the mode's folder at random (one map = always
+-- that one, two maps = 50/50 ...), clones it into Workspace and fits the match pieces inside its MapBounds. The text before "_map" is
+-- the map name shown on the loadout screen (test_map -> TEST).
+-- The folders are looked for in ServerStorage (best: players never see the unused maps), then ReplicatedStorage, then Workspace (moved to ServerStorage at start).
+C.MAPS = {
+	Folders = { Breakline = "breaklineMaps", ["1v1"] = "1v1Maps" }, -- mode -> folder name (matched ignoring upper / lower case)
+	Suffix = "_map",                                                -- a map folder's name ends with this
+	StudioMode = "Breakline",                                       -- the mode used when you press Play in Studio (live servers get it from the lobby queue)
+}
+
+-- ===== v4.1 modes =====
 C.MODES = { Breakline = "Breakline", OneVOne = "1v1" }
 C.V1 = {
 	KillsToWin = 5,  -- first player to this many kills wins the round
