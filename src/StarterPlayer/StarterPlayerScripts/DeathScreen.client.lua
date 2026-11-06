@@ -93,7 +93,7 @@ local hintLbl = Instance.new("TextLabel")
 hintLbl.AnchorPoint = Vector2.new(1, 0)
 hintLbl.BackgroundTransparency = 1
 hintLbl.Position = UDim2.new(1, -34, 0, 14)
-hintLbl.Size = UDim2.fromOffset(420, 40)
+hintLbl.Size = UDim2.fromOffset(760, 40)
 hintLbl.Font = Enum.Font.GothamBold
 hintLbl.TextSize = 13
 hintLbl.TextXAlignment = Enum.TextXAlignment.Right
@@ -135,6 +135,8 @@ end
 
 ------------------------------------------------------------------ state
 local active = false
+local reserveOpen = false -- v5.7: the RESERVE screen (J) is open: the mouse is free, look / roam keys are ignored
+local closeReserve -- forward (set below)
 local target -- spectated Player (or nil = free roam)
 local roam = { pos = Vector3.zero, yaw = 0, pitch = 0, fresh = true }
 local lastTargetPos
@@ -234,11 +236,16 @@ local function camStep(dt)
 	dt = math.min(dt, 0.1)
 	local mode = player:GetAttribute("DeathMode")
 	-- mouse look
-	UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
-	UIS.MouseIconEnabled = false
-	local md = UIS:GetMouseDelta()
-	roam.yaw -= md.X * 0.0034
-	roam.pitch = clamp(roam.pitch - md.Y * 0.0034, rad(-85), rad(85))
+	if reserveOpen then
+		UIS.MouseBehavior = Enum.MouseBehavior.Default -- v5.7: RESERVE screen open, the cursor is free
+		UIS.MouseIconEnabled = true
+	else
+		UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
+		UIS.MouseIconEnabled = false
+		local md = UIS:GetMouseDelta()
+		roam.yaw -= md.X * 0.0034
+		roam.pitch = clamp(roam.pitch - md.Y * 0.0034, rad(-85), rad(85))
+	end
 
 	if mode == "roam" then target = nil end
 	if target and not isAlivePlayer(target) then
@@ -294,16 +301,195 @@ local function camStep(dt)
 		if UIS:IsKeyDown(Enum.KeyCode.Space) then d += Vector3.yAxis end
 		if UIS:IsKeyDown(Enum.KeyCode.C) or UIS:IsKeyDown(Enum.KeyCode.LeftControl) then d -= Vector3.yAxis end
 		local speed = UIS:IsKeyDown(Enum.KeyCode.LeftShift) and 90 or 38
-		if d.Magnitude > 0.01 then roam.pos = moveRoam(roam.pos, d.Unit * speed * dt) end
+		if d.Magnitude > 0.01 and not reserveOpen then roam.pos = moveRoam(roam.pos, d.Unit * speed * dt) end
 		camPos = roam.pos
 		camera.CFrame = CFrame.lookAt(roam.pos, roam.pos + look)
 		camera.FieldOfView = 75
 	end
 end
 
+------------------------------------------------------------------ v5.7: RESERVE screen (press J while dead)
+-- Opens the loadout dock again. Only your ACTIVE gun / gadgets are clickable: GUN or a GADGET slot opens the small horizontal scroll that
+-- lists ONLY what sits in your reserve for that slot. Pick one = it is equipped, and what it replaces goes into that reserve slot (the server
+-- does the swap: MatchRemotes.ReserveSwap). The screen closes by itself when you come back to life (revive, personal or team respawn).
+local HttpService = game:GetService("HttpService")
+local Catalog = require(RS:WaitForChild("LobbyCatalog"))
+local LoadoutPicker = require(RS:WaitForChild("LoadoutPicker"))
+local UI = require(RS:WaitForChild("UIKit"))
+local ReserveSwapR = RS:WaitForChild("MatchRemotes"):WaitForChild("ReserveSwap")
+local Sfx = require(RS:WaitForChild("Sfx"))
+local function snd(name) pcall(Sfx.Play, name) end -- SoundBank slots ReserveOpen / ReserveClose / ReserveSwap
+
+local rgui = Instance.new("ScreenGui")
+rgui.Name = "ReserveScreen"
+rgui.ResetOnSpawn = false
+rgui.IgnoreGuiInset = true
+rgui.DisplayOrder = 62
+rgui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+rgui.Enabled = false
+rgui.Parent = player:WaitForChild("PlayerGui")
+local rmodal = Instance.new("TextButton") -- Modal = true frees the mouse while this is visible
+rmodal.Name = "ModalCursor"
+rmodal.Text = ""
+rmodal.Modal = true
+rmodal.BackgroundTransparency = 1
+rmodal.Size = UDim2.fromOffset(1, 1)
+rmodal.Parent = rgui
+local rdim = Instance.new("Frame") -- dims the picture but leaves the death bar at the bottom alone
+rdim.Size = UDim2.new(1, 0, 1, -BAR_H)
+rdim.BackgroundColor3 = Color3.new(0, 0, 0)
+rdim.BackgroundTransparency = 0.45
+rdim.BorderSizePixel = 0
+rdim.Parent = rgui
+local rcv = Instance.new("Frame") -- 1920 x 1080 canvas scaled to fit the screen
+rcv.AnchorPoint = Vector2.new(0.5, 0.5)
+rcv.Position = UDim2.fromScale(0.5, 0.5)
+rcv.Size = UDim2.fromOffset(1920, 1080)
+rcv.BackgroundTransparency = 1
+rcv.Parent = rgui
+local rscale = Instance.new("UIScale")
+rscale.Parent = rcv
+local function fitReserve()
+	local v = camera.ViewportSize
+	rscale.Scale = math.max(0.3, math.min(v.X / 1920, v.Y / 1080))
+end
+fitReserve()
+camera:GetPropertyChangedSignal("ViewportSize"):Connect(fitReserve)
+
+local function rlabel(text, size, y, col, font)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.AnchorPoint = Vector2.new(0.5, 0)
+	l.Position = UDim2.fromOffset(960, y)
+	l.Size = UDim2.fromOffset(1400, size + 10)
+	l.Font = font or Enum.Font.GothamBlack
+	l.TextSize = size
+	l.TextColor3 = col or Color3.new(1, 1, 1)
+	l.Text = text
+	l.Parent = rcv
+	return l
+end
+rlabel("RESERVE", 64, 250)
+rlabel("SWAP YOUR ACTIVE GUN OR GADGETS WITH WHAT YOU KEEP IN RESERVE", 15, 330, Color3.fromRGB(190, 194, 204), Enum.Font.GothamBold)
+rlabel("CLICK YOUR GUN OR A GADGET SLOT, THEN PICK FROM YOUR RESERVE  //  J OR ESC TO CLOSE", 13, 356, Color3.fromRGB(130, 135, 146), Enum.Font.GothamBold)
+
+local function readLoadout()
+	local l = { Weapon = Catalog.DefaultWeapon, Move = "", Gadgets = { "", "", "" }, Reserve = { "", "", "" } }
+	local raw = player:GetAttribute("LoadoutJson")
+	if type(raw) == "string" and raw ~= "" then
+		local ok, t = pcall(HttpService.JSONDecode, HttpService, raw)
+		if ok and type(t) == "table" then
+			if type(t.Weapon) == "string" and Catalog.Is(t.Weapon, "weapon") then l.Weapon = t.Weapon end
+			if type(t.Move) == "string" then l.Move = t.Move end
+			for i = 1, 3 do
+				if type(t.Gadgets) == "table" and type(t.Gadgets[i]) == "string" then l.Gadgets[i] = t.Gadgets[i] end
+				if type(t.Reserve) == "table" and type(t.Reserve[i]) == "string" then l.Reserve[i] = t.Reserve[i] end
+			end
+		end
+	end
+	return l
+end
+
+local rdock, rstrip, rconn
+local function closeStrip()
+	if rstrip then
+		local s = rstrip
+		rstrip = nil
+		s:Destroy()
+	end
+	if rdock then rdock:Select(nil) end
+end
+
+local function openStrip(t)
+	local same = rstrip ~= nil and rdock ~= nil and rdock.selectedTile == t
+	closeStrip()
+	if same then return end
+	local l = readLoadout()
+	local items, seen = {}, {}
+	for j = 1, 3 do
+		local id = l.Reserve[j]
+		if id ~= "" and not seen[id] and Catalog.Is(id, t.kind) then
+			local blocked = false
+			if t.kind == "gadget" then -- a gadget you already carry in another slot cannot be equipped twice
+				for k = 1, 3 do if k ~= t.idx and l.Gadgets[k] == id then blocked = true end end
+			elseif l.Weapon == id then blocked = true end
+			if not blocked then
+				seen[id] = true
+				table.insert(items, Catalog.ById[id])
+			end
+		end
+	end
+	rdock.selectedTile = t
+	rdock:Select(t)
+	rstrip = LoadoutPicker.Strip(rcv, {
+		title = t.kind == "weapon" and "RESERVE  /  GUNS" or ("RESERVE  /  GADGETS  /  SLOT " .. t.idx),
+		items = items,
+		current = t.kind == "weapon" and l.Weapon or l.Gadgets[t.idx],
+		allowNone = false,
+		emptyText = t.kind == "weapon" and "NO OTHER GUN IN YOUR RESERVE" or "NO OTHER GADGET IN YOUR RESERVE",
+		x = t.btn.Position.X.Offset + t.btn.Size.X.Offset / 2,
+		bottomY = t.btn.Position.Y.Offset - 34,
+		z = 20,
+		onPick = function(id)
+			if id ~= "" then snd("ReserveSwap") ReserveSwapR:FireServer(t.kind, t.idx, id) end
+		end,
+		onClose = function()
+			rstrip = nil
+			if rdock then rdock.selectedTile = nil; rdock:Select(nil) end
+		end,
+	})
+end
+
+function closeReserve()
+	if not reserveOpen then return end
+	reserveOpen = false
+	snd("ReserveClose")
+	closeStrip()
+	if rdock then rdock:Destroy() rdock = nil end
+	if rconn then rconn:Disconnect() rconn = nil end
+	rgui.Enabled = false
+	rmodal.Visible = false
+	if player:GetAttribute("GunMenuOpen") == true then player:SetAttribute("GunMenuOpen", nil) end
+end
+
+local function openReserve()
+	if reserveOpen or not active or MatchState:GetAttribute("Phase") ~= "Playing" then return end
+	reserveOpen = true
+	snd("ReserveOpen")
+	rgui.Enabled = true
+	rmodal.Visible = true
+	player:SetAttribute("GunMenuOpen", true)
+	rdock = LoadoutPicker.Dock(rcv, {
+		y = 830, z = 8,
+		itemAt = function(kind, idx)
+			local l = readLoadout()
+			if kind == "weapon" then return l.Weapon elseif kind == "move" then return l.Move
+			elseif kind == "gadget" then return l.Gadgets[idx] else return l.Reserve[idx] end
+		end,
+		enabled = function(t) return t.kind == "weapon" or t.kind == "gadget" end, -- only the active gun + gadgets open the reserve scroll
+		onClick = openStrip,
+	})
+	-- the server changed your loadout (a swap went through): repaint the dock and refresh the open scroll
+	rconn = player:GetAttributeChangedSignal("LoadoutJson"):Connect(function()
+		if not rdock then return end
+		local keep = rdock.selectedTile
+		closeStrip()
+		rdock:Paint()
+		if keep then rdock.selectedTile = nil end
+	end)
+end
+
+UIS.InputBegan:Connect(function(input, gpe)
+	if input.KeyCode == Enum.KeyCode.J and not gpe then
+		if reserveOpen then closeReserve() else openReserve() end
+	elseif input.KeyCode == Enum.KeyCode.Escape and reserveOpen and not rstrip then
+		closeReserve()
+	end
+end)
+
 ------------------------------------------------------------------ switching with the mouse / keys
 UIS.InputBegan:Connect(function(input, gpe)
-	if not active or gpe then return end
+	if not active or gpe or reserveOpen then return end
 	if os.clock() < switchCooldown then return end
 	local mode = player:GetAttribute("DeathMode")
 	if mode == "roam" then return end
@@ -345,6 +531,7 @@ RunService.RenderStepped:Connect(function(dt)
 		lastSec = nil
 	elseif not dead and active then
 		active = false
+		if closeReserve then closeReserve() end -- v5.7: revived / respawned (personal or team respawn): kick out of the reserve screen
 		gui.Enabled = false
 		pcall(function() RunService:UnbindFromRenderStep(BIND) end)
 		target = nil
@@ -399,4 +586,6 @@ RunService.RenderStepped:Connect(function(dt)
 		hintLbl.Text = n > 1 and "CLICK  /  A D   SWITCH PLAYER" or ""
 	end
 	timerCap.Text = mode == "roam" and "TEAM WIPE" or "RESPAWN IN"
+	hintLbl.Text = (hintLbl.Text ~= "" and (hintLbl.Text .. "      ") or "") .. "J  RESERVE" -- v5.7
+	if MatchState:GetAttribute("Phase") ~= "Playing" and reserveOpen and closeReserve then closeReserve() end
 end)
