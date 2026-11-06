@@ -224,7 +224,7 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 		if h.hum.Health > 0 then
 			local dealt = Vitals.Damage(h.hum, h.dmg) -- shield first, then health
 			local killed = h.hum.Health <= 0
-			if h.player then -- match stats for the souls screen (MatchServer resets them every round)
+			if h.player or model:GetAttribute("IsBot") then -- match stats for the souls screen (MatchServer resets them every round); v5.7: bots count too
 				player:SetAttribute("StatDamage", (player:GetAttribute("StatDamage") or 0) + dealt)
 				if killed then player:SetAttribute("StatKills", (player:GetAttribute("StatKills") or 0) + 1) end
 			end
