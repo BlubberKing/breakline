@@ -1,3 +1,7 @@
+-- GunClient v3.4 (GUN FEEL): Rivals-style recoil. Only guns with Recoil = "Climb" (WeaponConfig; the AK-47) really move your aim. Every other
+--       gun is "Kick": the bullet goes exactly where the crosshair was, while the viewmodel + camera still kick, flinch and settle for feel
+--       (the camera flinch and getting hit never move your aim any more). Also: stylish draw animations per gun (Swing / Flip / Twirl /
+--       Heavy), springy ADS in / out, sprint in / out swing, reload start / finish snap, crosshair pulse, a softer hitmarker (HitFX).
 -- GunClient v3.3: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
 -- v3.3: never changes mouse sensitivity (your Roblox setting is used as-is, hip and aim); the old ammo panel is gone,
 --       ammo/weapon info is published as local Player attributes (HUDWeapon, HUDAmmo, HUDMag, HUDReload, HUDMode) for MatchHUD.
@@ -265,6 +269,12 @@ local landSpring = Spring.new(220, 16)
 
 local climbTarget, climbOffset, applied = Vector2.zero, Vector2.zero, Vector2.zero
 local lastPitch = nil
+-- v3.4: the part of the camera rotation that is PURELY visual (camera flinch, being hit, slide rumble). Shots are fired from the camera
+-- with this part taken back out, so a flinch can never throw your aim off. Only real recoil (climbOffset) moves where you shoot.
+local visPitch, visYaw = 0, 0
+local rollSide, crossKick = 1, 0               -- alternating roll direction of the viewmodel kick; crosshair pulse
+local equipSettled, wasSprinting, wasAimDone, wasReloading = true, false, false, false
+local equipPivot = Vector3.zero -- the middle of the gun: flips / twirls turn about this point, not the model origin
 
 local fx = HitFX.new(gui)
 
@@ -279,6 +289,12 @@ end
 local function seg(u, a, b) return math.clamp((u - a) / (b - a), 0, 1) end
 local function smooth(x) return x * x * (3 - 2 * x) end
 local function rnd() return math.random() * 2 - 1 end
+local function easeOutCubic(x) return 1 - (1 - x) ^ 3 end
+local function easeOutBack(x) -- overshoots a little, then settles (the "snap into place" of every draw)
+	local c1 = 1.70158
+	local c3 = c1 + 1
+	return 1 + c3 * (x - 1) ^ 3 + c1 * (x - 1) ^ 2
+end
 local function magFov(mag) -- zoomed FOV for a magnified optic
 	return math.deg(2 * math.atan(math.tan(rad(BASE_FOV / 2)) / mag))
 end
@@ -351,6 +367,14 @@ local function rotateCamera(dPitch, dYaw)
 	camera.CFrame = CFrame.Angles(0, rad(dYaw), 0) * (cf - pos) * CFrame.Angles(rad(dPitch), 0, 0) + pos
 end
 
+-- v3.4: where the player is really aiming = the camera with the visual flinch taken back out (real recoil climb stays in)
+local function aimLook()
+	local cf = camera.CFrame
+	if math.abs(visPitch) < 1e-4 and math.abs(visYaw) < 1e-4 then return cf.LookVector end
+	local rot = CFrame.Angles(0, rad(-visYaw), 0) * (cf - cf.Position) * CFrame.Angles(rad(-visPitch), 0, 0)
+	return rot.LookVector
+end
+
 local function ejectShell()
 	if not cfg.Shell then return end
 	local s = Instance.new("Part")
@@ -392,6 +416,7 @@ local function equip(id, sightId)
 	end
 
 	reloadAnim = ReloadAnims.Make(cfg.Model, built.Points, VM_SCALE)
+	equipPivot = built.Points.Fore.Position:Lerp(built.Points.Eject.Position, 0.5)
 	NEUTRAL_POSE = { tilt = IDENT, mag = IDENT, hand = built.Points.Fore.Position, grab = 0, fall = false }
 	local v = built.View or {}
 	HIP = CFrame.new(v.X or 0.6, v.Y or -1.0, v.Z or -1.15) * CFrame.Angles(0, rad(2.5), 0)
@@ -410,6 +435,7 @@ local function equip(id, sightId)
 	cycleStart = -10
 	climbTarget = Vector2.zero
 	equipStart = os.clock()
+	equipSettled = false
 	flashVisible = true -- forces the flash refresh next frame
 	Sfx.Play("Equip", nil, nil, nil, WEAPON)
 	updateHUD()
@@ -428,6 +454,8 @@ local function startReload()
 	burstQueue, semiPending = 0, nil
 	reloadStart = os.clock()
 	reloadEvents = {}
+	recoilRot:Impulse(Vector3.new(-45, 0, -28)) -- v3.4: the gun dips + rolls as the hands go for the mag
+	recoilPos:Impulse(Vector3.new(0.6, -2.2, 1.6))
 	for _, e in reloadAnim.Events do
 		table.insert(reloadEvents, { at = e.at, fn = function()
 			Sfx.Play(e.snd, nil, e.pitch, e.vol, WEAPON)
@@ -447,7 +475,7 @@ local function fire()
 	lastShotTime = now
 
 	local origin = camera.CFrame.Position
-	local baseDir = spreadDirection(shotShift:VectorToWorldSpace(camera.CFrame.LookVector), currentSpread())
+	local baseDir = spreadDirection(shotShift:VectorToWorldSpace(aimLook()), currentSpread())
 	local pelletSpread = cfg.PelletSpread * (1 + (cfg.ADSPelletMult - 1) * aimAlpha)
 	local muzzlePos = (gunCF * built.Points.Muzzle).Position
 	local shots, hitModels = {}, {}
@@ -489,13 +517,22 @@ local function fire()
 
 	FireRemote:FireServer(WEAPON, origin, shots)
 
-	local pat = cfg.RecoilPattern[math.min(sprayIndex, #cfg.RecoilPattern)]
+	-- v3.4 recoil. "Climb" (AK-47 only): the real aim climbs along RecoilPattern, you pull down to hold it. "Kick" (everything else): the aim
+	-- never moves; the shot only kicks the gun and flinches the camera (visual), which is why those guns feel crisp and laser-like.
 	local m = 1 + (cfg.ADSRecoilMult - 1) * aimAlpha
-	climbTarget += Vector2.new(pat.X, pat.Y + rnd() * cfg.RecoilJitter) * m
-	camPunch:Impulse(Vector3.new(cfg.CamPunch, rnd() * cfg.CamPunch * 0.35, rnd() * cfg.CamRoll) * m)
+	local climbs = cfg.Recoil == "Climb"
+	if climbs then
+		local pat = cfg.RecoilPattern[math.min(sprayIndex, #cfg.RecoilPattern)]
+		climbTarget += Vector2.new(pat.X, pat.Y + rnd() * cfg.RecoilJitter) * m
+	end
+	local fl = climbs and 1 or cfg.Flinch
+	local vk = climbs and cfg.ViewKick or cfg.ViewKick * (1 + 0.15 * math.min(sprayIndex, 6) / 6) -- long sprays kick a touch harder
+	rollSide = -rollSide                                                   -- the kick rolls left, right, left... (predictable + stylish)
+	camPunch:Impulse(Vector3.new(cfg.CamPunch * fl, rnd() * cfg.CamPunch * 0.35 * fl, rollSide * (0.55 + math.random() * 0.45) * cfg.CamRoll * fl) * m)
 	fovPunch:Impulse(Vector3.new(cfg.FovPunch, 0, 0))
-	recoilPos:Impulse(Vector3.new(rnd() * 0.4, 0.3, cfg.KickBack))
-	recoilRot:Impulse(Vector3.new(cfg.KickUp * (0.85 + math.random() * 0.3), rnd() * cfg.KickYaw, rnd() * cfg.KickRoll))
+	recoilPos:Impulse(Vector3.new(rnd() * 0.4 * vk, 0.3 * vk, cfg.KickBack * vk))
+	recoilRot:Impulse(Vector3.new(cfg.KickUp * vk * (0.85 + math.random() * 0.3), rnd() * cfg.KickYaw * vk, rollSide * (0.5 + math.random() * 0.5) * cfg.KickRoll * vk))
+	crossKick = math.min(crossKick + (climbs and 0.6 or 1), 1.4)
 	bloom = math.min(bloom + cfg.BloomPerShot, cfg.BloomMax)
 
 	updateHUD()
@@ -688,6 +725,34 @@ local function onRender(dt)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
 	mantleAlpha = approach(mantleAlpha, mantling and 1 or 0, dt, 0.1)
 
+	-- v3.4 transition accents (small impulses through the viewmodel springs, so every state change has a little snap to it)
+	if sprinting ~= wasSprinting and alive then
+		wasSprinting = sprinting
+		if sprinting then -- gun swings up into the carry
+			recoilRot:Impulse(Vector3.new(-70, 50, 80))
+			recoilPos:Impulse(Vector3.new(3, -3, 2))
+		else              -- gun drops back into the hip hold
+			recoilRot:Impulse(Vector3.new(55, -35, -60))
+			recoilPos:Impulse(Vector3.new(-2, 2.5, -1.5))
+		end
+	end
+	local adsDone = aimAlpha > 0.97
+	if adsDone ~= wasAimDone then
+		wasAimDone = adsDone
+		if adsDone then -- the sight settles onto your eye
+			recoilRot:Impulse(Vector3.new(26, 0, 0))
+			recoilPos:Impulse(Vector3.new(0, 0, 1.4))
+		elseif alive then
+			recoilRot:Impulse(Vector3.new(-18, 0, 14))
+		end
+	end
+	if wasReloading and not reloading and alive then -- reload finished: the gun snaps back up
+		recoilRot:Impulse(Vector3.new(48, 0, 16))
+		recoilPos:Impulse(Vector3.new(0, -1, -3))
+	end
+	wasReloading = reloading
+	crossKick = math.max(0, crossKick - dt * 9)
+
 	-- firing
 	local cycling = cfg.Cycle and cfg.Cycle ~= "Slide" and (now - cycleStart) < (cfg.CycleDelay + cfg.CycleTime)
 	local canFire = alive and not carryingBox and not reloading and ammo > 0 and sprintAlpha < 0.3 and mantleAlpha < 0.4
@@ -735,6 +800,7 @@ local function onRender(dt)
 	local shakeY = math.noise(0.7, now * 9) * shakeAmt * 0.6
 	shakeRoll = math.noise(now * 7, 5.1) * shakeAmt * 1.5
 	local desired = climbOffset + Vector2.new(cp.X + shakeP, cp.Y + shakeY)
+	visPitch, visYaw = cp.X + shakeP, cp.Y + shakeY -- v3.4: the visual-only part of the rotation (taken back out of every shot, see aimLook)
 	local d = desired - applied
 	applied = desired
 	rotateCamera(d.X, d.Y)
@@ -786,9 +852,34 @@ local function onRender(dt)
 	local br = 1 - aimAlpha * 0.8
 	local breathe = CFrame.new(0, math.sin(now * 1.7) * 0.01 * br, 0) * CFrame.Angles(rad(math.sin(now * 1.7) * 0.3 * br), 0, 0)
 
-	local e = math.clamp((now - equipStart) / math.max(cfg.EquipTime + 0.15, 0.3), 0, 1)
-	local ie = (1 - e) ^ 3
-	local equipCF = CFrame.new(0.1 * ie, -0.9 * ie, 0.2 * ie) * CFrame.Angles(rad(-35 * ie), rad(-15 * ie), rad(20 * ie))
+	-- v3.4 stylish draw. Swing = comes up from low right and snaps in (small overshoot); Flip = a full flip in the air (SMG / pistol);
+	-- Twirl = a barrel roll (revolver); Heavy = slow and weighty, lands with a thunk (LMG / sniper / shotgun). All finish with a settle kick.
+	local style = cfg.EquipStyle
+	local equipDur = math.max(cfg.EquipTime + (style == "Heavy" and 0.2 or 0.1), 0.34)
+	local e = math.clamp((now - equipStart) / equipDur, 0, 1)
+	local equipCF
+	if e >= 1 then
+		equipCF = IDENT
+		if not equipSettled then
+			equipSettled = true
+			local w = style == "Heavy" and 2 or 1
+			recoilPos:Impulse(Vector3.new(0, -0.8 * w, 2.2 * w))
+			recoilRot:Impulse(Vector3.new(30 * w, 0, 10 * w))
+		end
+	else
+		local back = 1 - easeOutBack(e) -- 1 -> a small negative overshoot -> 0
+		if style == "Flip" or style == "Twirl" then
+			local spin = 1 - easeOutCubic(e)
+			local turn = style == "Flip" and CFrame.Angles(rad(-360 * spin - 18 * back), 0, rad(16 * back))
+				or CFrame.Angles(rad(-20 * back), 0, rad(360 * spin + 18 * back))
+			equipCF = CFrame.new(0.12 * back, -0.8 * back, 0.25 * back) * CFrame.new(equipPivot) * turn * CFrame.new(-equipPivot)
+		elseif style == "Heavy" then
+			local hv = 1 - easeOutCubic(e)
+			equipCF = CFrame.new(0.25 * hv, -1.0 * hv, 0.4 * hv) * CFrame.Angles(rad(-30 * hv), rad(-26 * hv), rad(24 * hv))
+		else
+			equipCF = CFrame.new(0.3 * back, -1.0 * back, 0.3 * back) * CFrame.Angles(rad(-45 * back), rad(-20 * back), rad(25 * back))
+		end
+	end
 
 	local sk = smooth(slideAlpha)
 	local skPos = sk * (1 - aimAlpha * 0.9)
@@ -823,7 +914,8 @@ local function onRender(dt)
 		local angle = math.min(math.acos(math.clamp(a:Dot(b), -1, 1)), rad(25)) * aimAlpha
 		shotShift = axis.Magnitude > 1e-5 and CFrame.fromAxisAngle(axis.Unit, angle) or CFrame.identity
 	end
-	gunCF = camCF * base * mantleCF * slideCF * crouchCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(rad(-lp.Y * 20), 0, 0)
+	local adsArc = math.sin(math.pi * math.clamp(aimAlpha, 0, 1)) -- v3.4: the gun rolls through a small arc on the way in / out of ADS
+	gunCF = camCF * base * CFrame.Angles(0, 0, rad(-3.5 * adsArc)) * mantleCF * slideCF * crouchCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(rad(-lp.Y * 20), 0, 0)
 		* breathe * bob * CFrame.Angles(rad(sw.X), rad(sw.Y), rad(sw.Z + strafeRoll))
 		* tiltCF * recoilCF
 
@@ -895,7 +987,7 @@ local function onRender(dt)
 	-- crosshair: spread gap, fades out fast and is fully hidden while aiming down sights
 	local spread = currentSpread() + (cfg.Pellets > 1 and cfg.PelletSpread or 0)
 	local gap = math.tan(rad(spread)) / math.tan(rad(camera.FieldOfView / 2)) * (camera.ViewportSize.Y / 2) + 5
-	gap = math.min(gap, 110)
+	gap = math.min(gap + crossKick * 3, 110) -- v3.4: the crosshair pulses outward on every shot
 	for _, c in crossLines do
 		c.f.Position = UDim2.new(0.5, c.d.X * (gap + 4), 0.5, c.d.Y * (gap + 4))
 	end
