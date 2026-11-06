@@ -8,6 +8,7 @@ P.BREAKLINE_PLACE_ID = 103313739791329     -- TODO: Place ID of the BREAKLINE pl
 P.TEAM_SIZE   = 3            -- players per team (3 = real 3v3). Set 1 to test a 1v1 match with two accounts.
 P.MAX_PARTY   = 3            -- biggest party (cannot be bigger than TEAM_SIZE in a real game)
 P.QUEUE_TIMEOUT = 300        -- seconds a party can sit in the queue before it is removed
+P.BOT_WAIT = 60              -- v5.7: seconds somebody has waited in the queue with nobody to play against before the match starts WITH BOTS (0 = never use bots)
 
 -- Breakline server behavior
 P.ROSTER_WAIT = 45           -- seconds a match server waits for everybody in the roster to arrive before it starts anyway
