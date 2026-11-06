@@ -242,7 +242,9 @@ task.spawn(function()
 end)
 
 -- ===== matchmaker =====
-local function matchMode(items, modeId)
+-- v5.7: fillBots = false -> only a FULL match is made (as before). fillBots = true -> whoever is in the queue is packed into teams and the empty
+-- slots become BOTS (Breakline's BotServer spawns them). Only used for entries that waited PC.BOT_WAIT seconds with nobody to play against.
+local function matchMode(items, modeId, fillBots)
 	local size = MODE_SIZE[modeId]
 	local teams = { Red = {}, Blue = {} }
 	local usedKeys, seen = {}, {}
@@ -265,19 +267,24 @@ local function matchMode(items, modeId)
 			end
 		end
 	end
-	if #teams.Red < size or #teams.Blue < size then return end
+	local bots
+	if #teams.Red < size or #teams.Blue < size then
+		if not fillBots or #usedKeys == 0 then return false end
+		bots = { Red = size - #teams.Red, Blue = size - #teams.Blue }
+	end
 
 	local okS, code, serverId = pcall(function() return TeleportService:ReserveServer(PC.BREAKLINE_PLACE_ID) end)
-	if not okS then warn("[Lobby] ReserveServer failed:", code) return end
+	if not okS then warn("[Lobby] ReserveServer failed:", code) return false end
 	local all = {}
 	for _, uid in teams.Red do table.insert(all, uid) end
 	for _, uid in teams.Blue do table.insert(all, uid) end
-	local saved = pcall(function() matches:SetAsync(serverId, { Red = teams.Red, Blue = teams.Blue, Mode = MODE_NAME[modeId] }, 3600) end)
-	if not saved then return end
+	local saved = pcall(function() matches:SetAsync(serverId, { Red = teams.Red, Blue = teams.Blue, Mode = MODE_NAME[modeId], Bots = bots }, 3600) end)
+	if not saved then return false end
 	for _, k in usedKeys do pcall(function() queue:RemoveAsync(k) end) end
 	for _, uid in all do pcall(function() assign:SetAsync(tostring(uid), code, 120) end) end
 	publish("MatchFound", { code = code, ids = all })
-	print("[Lobby] match made (" .. modeId .. "):", #teams.Red, "vs", #teams.Blue)
+	print("[Lobby] match made (" .. modeId .. "):", #teams.Red, "vs", #teams.Blue, bots and ("with bots " .. bots.Red .. " / " .. bots.Blue) or "")
+	return true
 end
 
 local function tryMatch()
@@ -293,8 +300,19 @@ local function tryMatch()
 
 	local okR, items = pcall(function() return queue:GetRangeAsync(Enum.SortDirection.Ascending, 50) end)
 	if not okR or type(items) ~= "table" then return end
-	matchMode(items, "breakline")
-	matchMode(items, "1v1")
+	-- v5.7: a full match first. If it did not work out and the OLDEST waiting entry of a mode has been in the queue for PC.BOT_WAIT seconds,
+	-- nobody else is queueing with them: start that mode's match with bots filling the empty slots.
+	for _, modeId in { "breakline", "1v1" } do
+		if not matchMode(items, modeId, false) and (PC.BOT_WAIT or 0) > 0 then
+			local oldest
+			for _, it in items do
+				local v = it.value
+				local itMode = (type(v) == "table" and v.mode == "1v1") and "1v1" or "breakline"
+				if itMode == modeId and type(it.sortKey) == "number" and (not oldest or it.sortKey < oldest) then oldest = it.sortKey end
+			end
+			if oldest and os.time() - oldest >= PC.BOT_WAIT then matchMode(items, modeId, true) end
+		end
+	end
 end
 
 task.spawn(function()
