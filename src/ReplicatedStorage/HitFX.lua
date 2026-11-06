@@ -183,7 +183,18 @@ function HitFX:_burst(pos, dir, count, p)
 	return att
 end
 
-function HitFX:_flash(model, color)
+-- v5.7: the hit flash. Every bullet that lands makes the enemy pop WHITE for a blink (white fill + white outline), then
+-- the body washes RED (slightly) and fades out. Tune the numbers in HIT_FLASH. Headshots flash a little stronger.
+local HIT_FLASH = {
+	WhiteFill = 0.05,    -- fill transparency of the white pop (0 = solid white, 1 = nothing)
+	WhiteTime = 0.05,    -- seconds the white pop is held
+	RedFill   = 0.55,    -- fill transparency the red wash starts at (higher = fainter red)
+	RedTime   = 0.2,     -- seconds the red wash takes to fade out
+	Red       = Color3.fromRGB(255, 40, 40),
+	HeadRedFill = 0.4,   -- headshots: stronger red
+}
+
+function HitFX:_getHighlight(model)
 	local h = self.highlights[model]
 	if not h or not h.Parent then
 		h = Instance.new("Highlight")
@@ -194,8 +205,42 @@ function HitFX:_flash(model, color)
 		h.Parent = model
 		self.highlights[model] = h
 	end
+	return h
+end
+
+function HitFX:_hitFlash(model, head)
+	local h = self:_getHighlight(model)
+	self.flashToken = self.flashToken or {}
+	local token = (self.flashToken[model] or 0) + 1
+	self.flashToken[model] = token
+	self.flashTween = self.flashTween or {}
+	if self.flashTween[model] then self.flashTween[model]:Cancel() end -- an older fade must not fight the new pop
+	-- stage 1: white pop (instant)
+	h.FillColor = WHITE
+	h.OutlineColor = WHITE
+	h.FillTransparency = HIT_FLASH.WhiteFill
+	h.OutlineTransparency = 0
+	task.delay(HIT_FLASH.WhiteTime, function()
+		if self.flashToken[model] ~= token or not h.Parent then return end -- a newer hit took over
+		-- stage 2: the body goes red and fades
+		h.FillColor = HIT_FLASH.Red
+		h.OutlineColor = HIT_FLASH.Red
+		h.FillTransparency = head and HIT_FLASH.HeadRedFill or HIT_FLASH.RedFill
+		h.OutlineTransparency = 0.5
+		local tw = TweenService:Create(h, TweenInfo.new(HIT_FLASH.RedTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ FillTransparency = 1, OutlineTransparency = 1 })
+		self.flashTween[model] = tw
+		tw:Play()
+	end)
+end
+
+function HitFX:_flash(model, color)
+	local h = self:_getHighlight(model)
+	if self.flashToken then self.flashToken[model] = (self.flashToken[model] or 0) + 1 end
+	if self.flashTween and self.flashTween[model] then self.flashTween[model]:Cancel() end
 	h.FillColor = color
 	h.FillTransparency = 0.2
+	h.OutlineTransparency = 1
 	TweenService:Create(h, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { FillTransparency = 1 }):Play()
 end
 
@@ -247,7 +292,7 @@ end
 
 -- ===== public =====
 function HitFX:Hit(model, pos, normal, dmg, head)
-	self:_flash(model, head and HEAD or WHITE)
+	self:_hitFlash(model, head)
 	self:_burst(pos, normal, head and 12 or 7, {
 		Color = head and HEAD or Color3.fromRGB(255, 240, 220), Size = NumberSequence.new(0.14, 0),
 		Speed = NumberRange.new(14, 28), Lifetime = NumberRange.new(0.1, 0.22),
