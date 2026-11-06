@@ -247,6 +247,7 @@ local HIP, SPRINT, AIM = CFrame.identity, CFrame.identity, CFrame.identity
 local adsFov, adsSens = 58, 0.7
 
 local ammo, reloading, reloadStart, reloadEvents = 0, false, 0, {}
+local reloadDur, magCenter = 2, Vector3.zero -- v7: seconds of the CURRENT reload (round-fed guns: depends on how many rounds are missing)
 local triggerDown, aimHeld, shiftHeld = false, false, false
 local sprintToggle, stillTime = false, 0 -- mobile button / gamepad L3 sprint (tap to toggle)
 local speedFov, speedLineAlpha, wasSliding, shakeRoll = 0, 0, false, 0
@@ -263,6 +264,7 @@ local wasGrounded, airVelY = true, 0
 local flashUntil, flashRoll, flashVisible = 0, 0, false
 local dmgAlpha = 0
 local gunCF = camera.CFrame
+local adsDropAng = 0
 local shotShift = CFrame.identity -- rotation from the camera center to where the sight/reticle really points (slides, crouch, mantle)
 local scoped = false
 local cleaned = false
@@ -423,7 +425,13 @@ local function equip(id, sightId)
 		end
 	end
 
-	reloadAnim = ReloadAnims.Make(cfg.Model, built.Points, VM_SCALE)
+	do -- v7: where the fist closes on a mag = the centre of the mag parts (relative to the mag pivot, gun units)
+		local acc, cnt = Vector3.zero, 0
+		for _, g in built.Groups.mag do acc += g.Offset.Position; cnt += 1 end
+		magCenter = cnt > 0 and (acc / cnt / VM_SCALE) or Vector3.zero
+	end
+	reloadAnim = ReloadAnims.Make(cfg.Model, built.Points, VM_SCALE, { magCenter = magCenter, n = cfg.MagSize, rr = cfg.RoundReload,
+		T = Weapons.ReloadDuration(cfg, 0) })
 	equipPivot = built.Points.Fore.Position:Lerp(built.Points.Eject.Position, 0.5)
 	NEUTRAL_POSE = { tilt = IDENT, mag = IDENT, hand = built.Points.Fore.Position, grab = 0, fall = false }
 	local v = built.View or {}
@@ -432,8 +440,12 @@ local function equip(id, sightId)
 	SPRINT = CFrame.new((v.X or 0.6) - 0.2, (v.Y or -1.0) - 0.15, (v.Z or -1.15) + 0.25) * CFrame.Angles(rad(sr.X), rad(sr.Y), rad(sr.Z))
 	-- puts the sight's aim point exactly at screen center, Eye studs in front of the camera
 	local eye = built.Eye or 0.45
-	if not sight.Mag then eye = math.max(ADS_EYE_MIN, eye * ADS_EYE_MULT) end
-	AIM = CFrame.new(0, 0, -eye) * built.Points.Aim:Inverse()
+	local vw = built.View or {}
+	-- v7: pistols / revolver sit too high + big when aimed: AdsEyeMult pushes the gun further out, AdsDrop lowers it on screen
+	-- (bullets still leave through the sight, see shotShift below). Both live in GunModels (k.view) per gun.
+	if not sight.Mag then eye = math.max(ADS_EYE_MIN, eye * ADS_EYE_MULT * (vw.AdsEyeMult or 1)) end
+	AIM = CFrame.new(0, -(vw.AdsDrop or 0), -eye) * built.Points.Aim:Inverse()
+	adsDropAng = math.atan((vw.AdsDrop or 0) / eye)
 
 	adsFov = sight.Mag and magFov(sight.Mag) or cfg.ADSFov
 	adsSens = cfg.ADSSensitivity * (sight.Mag and math.tan(rad(adsFov / 2)) / math.tan(rad(cfg.ADSFov / 2)) or 1)
@@ -462,6 +474,10 @@ local function startReload()
 	burstQueue, semiPending = 0, nil
 	reloadStart = os.clock()
 	reloadEvents = {}
+	-- v7: round-fed guns only play (and only take the time for) the rounds that are missing; mag guns always swap the whole mag
+	reloadDur = Weapons.ReloadDuration(cfg, ammo)
+	reloadAnim = ReloadAnims.Make(cfg.Model, built.Points, VM_SCALE, { magCenter = magCenter, n = Weapons.RoundsToLoad(cfg, ammo), rr = cfg.RoundReload,
+		T = reloadDur })
 	recoilRot:Impulse(Vector3.new(-30, 0, -18)) -- v3.4: the gun dips + rolls as the hands go for the mag (v5.6: softer, same spot as the hip)
 	recoilPos:Impulse(Vector3.new(0.4, -1.2, 1.0))
 	for _, e in reloadAnim.Events do
@@ -775,14 +791,14 @@ local function onRender(dt)
 	local reloadU = 0
 	if reloading then
 		local t = now - reloadStart
-		reloadU = t / cfg.ReloadTime
+		reloadU = t / reloadDur
 		for _, ev in reloadEvents do
 			if not ev.done and reloadU >= ev.at then ev.done = true; ev.fn() end
 		end
 		barFill.BackgroundColor3 = ACCENT
 		barFill.Size = UDim2.fromScale(math.clamp(reloadU, 0, 1), 1)
 		player:SetAttribute("HUDReloadU", math.clamp(reloadU, 0, 1))
-		if t >= cfg.ReloadTime then
+		if t >= reloadDur then
 			reloading = false
 			ammo = cfg.MagSize
 			updateHUD()
@@ -902,6 +918,9 @@ local function onRender(dt)
 		local axis = a:Cross(b)
 		local angle = math.min(math.acos(math.clamp(a:Dot(b), -1, 1)), rad(25)) * aimAlpha
 		shotShift = axis.Magnitude > 1e-5 and CFrame.fromAxisAngle(axis.Unit, angle) or CFrame.identity
+		if adsDropAng > 0 then -- v7: the ADS pose sits a little low on screen (pistols): the shot still leaves through the sight
+			shotShift = CFrame.fromAxisAngle(camCF.RightVector, -adsDropAng * aimAlpha) * shotShift
+		end
 	end
 	local adsArc = math.sin(math.pi * math.clamp(aimAlpha, 0, 1)) -- v3.4: the gun rolls through a small arc on the way in / out of ADS
 	gunCF = camCF * base * CFrame.Angles(0, 0, rad(-3.5 * adsArc)) * mantleCF * slideCF * crouchCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(rad(-lp.Y * 20), 0, 0)
@@ -943,8 +962,8 @@ local function onRender(dt)
 		end
 		if cfg.Cycle == "Pump" and grab == 0 then handPos += Vector3.new(0, 0, cycleZ) end
 		-- v3.1: drop the whole left hand so it wraps UNDER the handguard instead of floating above it (tune HAND_DROP)
-		local HAND_DROP = 0.4
-		handPos += Vector3.new(0, -HAND_DROP, 0)
+		local HAND_DROP = ReloadAnims.HAND_DROP
+		handPos += Vector3.new(0, -HAND_DROP * (1 - (rpose.hold or 0)), 0) -- v7: no drop while the hand is carrying / holding something
 		local leftCF = gunCF * CFrame.new(handPos) * CFrame.Angles(rad(-20 * grab), 0, rad(-35 * grab))
 		-- left arm: sleeve + cuff point from the hand to a fixed shoulder point below + behind the camera, so when the hand
 		-- goes up to cock the gun the arm tilts down off screen instead of its back end showing
