@@ -272,8 +272,8 @@ local function runPregame(token)
 	local cdLayer = makeCanvas(root, 5)
 	local cdDim = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(4000, 3000),
 		BackgroundColor3 = BLACK, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 1 }, cdLayer)
-	local cdTitle = label(cdLayer, "MATCH STARTS IN", 30, F.M, K.text, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 250),
-		Size = UDim2.fromOffset(800, 40), TextTransparency = 1, ZIndex = 4 })
+	-- v7: the big "MATCH STARTS IN" line used to sit right on the squad's faces + names. It is now the small caption above the clock at the top
+	-- of the screen (see clockCap below), so nothing covers the players during the last 5 seconds.
 	local bigNum = label(cdLayer, "", 440, F.H, WHITE, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 500), Size = UDim2.fromOffset(900, 460),
 		TextTransparency = 1, ZIndex = 5 })
 	local bigStroke = new("UIStroke", { Color = BLACK, Thickness = 7, Transparency = 1 }, bigNum)
@@ -330,16 +330,32 @@ local function runPregame(token)
 		return table.concat(k, "|")
 	end
 
-	-- ---- clock ----
-	local clock = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 34), Size = UDim2.fromOffset(190, 118),
-		BackgroundColor3 = K.panel, BackgroundTransparency = 0.1, BorderSizePixel = 0, ZIndex = 8 }, cv)
-	local clockStroke = new("UIStroke", { Color = K.line2, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, clock)
-	label(clock, "DEPLOYING IN", 15, F.M, K.dim, { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 18), ZIndex = 9 })
-	local clockNum = label(clock, tostring(C.PREGAME_TIME), 74, F.H, K.text, { Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 0, 78), ZIndex = 9 })
+	-- ---- clock (v7: slick, no box - big number, a thin progress line, the map name underneath) ----
+	local clock = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 26), Size = UDim2.fromOffset(300, 134),
+		BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 8 }, cv)
+	local clockCap = label(clock, "DEPLOYING IN", 14, F.M, K.dim, { Position = UDim2.fromOffset(0, 0), Size = UDim2.new(1, 0, 0, 18), ZIndex = 9 })
+	local clockNum = label(clock, tostring(C.PREGAME_TIME), 84, F.H, K.text, { Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 90), ZIndex = 9 })
+	new("UIStroke", { Color = BLACK, Thickness = 2, Transparency = 0.45 }, clockNum)
 	local clockScale = new("UIScale", { Scale = 1 }, clockNum)
-	local barBg = new("Frame", { Position = UDim2.new(0, 0, 1, -6), Size = UDim2.new(1, 0, 0, 6), BackgroundColor3 = K.line, BorderSizePixel = 0, ZIndex = 9 }, clock)
+	local barBg = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 112), Size = UDim2.fromOffset(170, 3),
+		BackgroundColor3 = K.line, BackgroundTransparency = 0.35, BorderSizePixel = 0, ZIndex = 9 }, clock)
 	local barFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = myCol, BorderSizePixel = 0, ZIndex = 10 }, barBg)
-	label(cv, "CHOOSE YOUR LOADOUT", 18, F.M, K.dim, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 162), Size = UDim2.fromOffset(500, 24), ZIndex = 8 })
+	-- map name: from the map folder name (test_map -> TEST), set by MatchServer
+	local mapName = tostring(State:GetAttribute("MapName") or "")
+	local mapLbl = label(cv, string.upper(mapName), 26, F.H, K.text, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 166),
+		Size = UDim2.fromOffset(500, 30), ZIndex = 8, Visible = mapName ~= "" })
+	new("UIStroke", { Color = BLACK, Thickness = 2, Transparency = 0.5 }, mapLbl)
+	local mapCap = label(cv, "MAP", 12, F.MB, K.dim, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 150),
+		Size = UDim2.fromOffset(200, 16), ZIndex = 8, Visible = mapName ~= "" })
+	label(cv, "CHOOSE YOUR LOADOUT", 15, F.M, K.dim, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, mapName ~= "" and 200 or 168), Size = UDim2.fromOffset(500, 22), ZIndex = 8 })
+	do -- the map attribute can arrive a moment after this screen opens
+		local conn
+		conn = State:GetAttributeChangedSignal("MapName"):Connect(function()
+			local n = tostring(State:GetAttribute("MapName") or "")
+			mapLbl.Text, mapLbl.Visible, mapCap.Visible = string.upper(n), n ~= "", n ~= ""
+		end)
+		mapLbl.Destroying:Connect(function() conn:Disconnect() end)
+	end
 	-- team strip top left
 	do
 		local t = player.Team
@@ -533,7 +549,6 @@ local function runPregame(token)
 			if left <= 5 and left >= 1 then
 				sfx("Countdown")
 				clockNum.TextColor3 = K.redHi
-				clockStroke.Color = K.red
 				barFill.BackgroundColor3 = K.red
 				clockScale.Scale = 1.35
 				tween(clockScale, POP, { Scale = 1 })
@@ -555,7 +570,8 @@ local function runPregame(token)
 					end
 				end)
 				tween(cdDim, TweenInfo.new(0.3), { BackgroundTransparency = hot and 0.45 or 0.6 })
-				tween(cdTitle, TweenInfo.new(0.3), { TextTransparency = 0.15 })
+				clockCap.Text = "MATCH STARTS IN"
+				clockCap.TextColor3 = K.redHi
 				-- shock ring
 				cdRing.Size = UDim2.fromOffset(300, 300)
 				cdRingStroke.Color, cdRingStroke.Transparency, cdRingStroke.Thickness = col, 0.1, hot and 10 or 6
