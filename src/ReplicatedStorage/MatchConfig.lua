@@ -132,4 +132,25 @@ C.CARRY_VM = {
 	RaiseTime = 0.3,
 }
 
+-- ===== v5.7 AI BOTS (queue fill) =====
+-- When nobody else queues with you for PlaceConfig.BOT_WAIT seconds, the lobby matchmaker starts a match with bots in the empty slots.
+-- The roster carries { Bots = { Red = n, Blue = n } }. BotServer spawns them. All numbers here; bots are meant to be "good enough", not smart.
+C.BOTS = {
+	StudioRed = 0, StudioBlue = 0,     -- TEST IN STUDIO: how many bots Red / Blue get when you press Play (live servers read the roster instead)
+	Weapons = { "VX9", "KR47", "HX3", "WASP", "LONGSHOT", "V9" }, -- each bot gets one of these at random
+	Skin = nil,                         -- nil = the default skin
+	Health = 250,
+	WalkSpeed = 15.5,
+	ReactTime = 0.45,                   -- seconds between first seeing an enemy and the first shot
+	Sight = 150,                        -- studs they can see enemies at (needs a clear line)
+	Spread = 3.2,                       -- degrees of random aim error (bigger = worse aim)
+	DamageMult = 0.55,                  -- their damage = the gun's damage x this
+	FireRateMult = 0.7,                 -- they shoot at this fraction of the gun's fire rate
+	BurstTime = { 0.5, 1.1 },           -- seconds of firing, then...
+	PauseTime = { 0.35, 0.9 },          -- ...seconds of not firing
+	MaxFireRange = 110,                 -- they will not shoot farther than this (or the gun's own range, if shorter)
+	RespawnTime = 14,                   -- seconds a dead bot stays down in a Breakline match (1v1 uses V1.RespawnTime)
+	BuilderPerTeam = 1,                 -- Breakline only: this many bots per team carry boxes to the holes instead of roaming
+}
+
 return C
