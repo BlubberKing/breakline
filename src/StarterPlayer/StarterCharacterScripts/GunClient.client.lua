@@ -36,6 +36,13 @@ local VM_SCALE = 0.78 -- viewmodel gun size (v3.7: 0.85 -> 0.78, guns read too b
 -- lower = gun closer to your face. ADS_EYE_MIN keeps it out of the camera's near plane.
 local ADS_EYE_MULT, ADS_EYE_MIN = 0.7, 0.22
 local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 86, 7
+-- v5.6 SATISFYING ADS: while aiming the gun stays glued in place. 1 = same kick as the hip, 0 = none. Tune these.
+local ADS_KICK_SIDE = 0.07  -- viewmodel sideways / up-down shake (the left-right "centimeters")
+local ADS_KICK_BACK = 0.30  -- viewmodel push straight back (the tiny satisfying kick)
+local ADS_KICK_ROT = 0.06   -- viewmodel muzzle flip / twist (this is what used to swing the scope around)
+local ADS_CAM_PUNCH = 0.10  -- camera flinch
+local ADS_FOV_PUNCH = 0.25  -- zoom pulse per shot
+local RELOAD_SPRINT_HOLD = 0.85 -- 0..1: how much of the sprint pose a reload drops (1 = gun stays exactly at the hip hold)
 local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
 local MatchCfg = require(RS:WaitForChild("MatchConfig"))
 local function isCarrying() return player:GetAttribute("Carrying") == true end -- holding a Wall Push box: no guns/gadgets
@@ -250,6 +257,7 @@ local cycleStart = -10
 local aimAlpha, sprintAlpha, equipStart = 0, 0, os.clock()
 local lastHeldGadget = false
 local slideAlpha, mantleAlpha, crouchAlpha = 0, 0, 0
+local reloadHold = 0
 local bobT, bobAmt, strafeRoll = 0, 0, 0
 local wasGrounded, airVelY = true, 0
 local flashUntil, flashRoll, flashVisible = 0, 0, false
@@ -454,8 +462,8 @@ local function startReload()
 	burstQueue, semiPending = 0, nil
 	reloadStart = os.clock()
 	reloadEvents = {}
-	recoilRot:Impulse(Vector3.new(-45, 0, -28)) -- v3.4: the gun dips + rolls as the hands go for the mag
-	recoilPos:Impulse(Vector3.new(0.6, -2.2, 1.6))
+	recoilRot:Impulse(Vector3.new(-30, 0, -18)) -- v3.4: the gun dips + rolls as the hands go for the mag (v5.6: softer, same spot as the hip)
+	recoilPos:Impulse(Vector3.new(0.4, -1.2, 1.0))
 	for _, e in reloadAnim.Events do
 		table.insert(reloadEvents, { at = e.at, fn = function()
 			Sfx.Play(e.snd, nil, e.pitch, e.vol, WEAPON)
@@ -528,8 +536,9 @@ local function fire()
 	local fl = climbs and 1 or cfg.Flinch
 	local vk = climbs and cfg.ViewKick or cfg.ViewKick * (1 + 0.15 * math.min(sprayIndex, 6) / 6) -- long sprays kick a touch harder
 	rollSide = -rollSide                                                   -- the kick rolls left, right, left... (predictable + stylish)
-	camPunch:Impulse(Vector3.new(cfg.CamPunch * fl, rnd() * cfg.CamPunch * 0.35 * fl, rollSide * (0.55 + math.random() * 0.45) * cfg.CamRoll * fl) * m)
-	fovPunch:Impulse(Vector3.new(cfg.FovPunch, 0, 0))
+	local camAds = 1 + (ADS_CAM_PUNCH - 1) * aimAlpha -- v5.6: nearly no camera flinch while aiming
+	camPunch:Impulse(Vector3.new(cfg.CamPunch * fl, rnd() * cfg.CamPunch * 0.35 * fl, rollSide * (0.55 + math.random() * 0.45) * cfg.CamRoll * fl) * m * camAds)
+	fovPunch:Impulse(Vector3.new(cfg.FovPunch * (1 + (ADS_FOV_PUNCH - 1) * aimAlpha), 0, 0))
 	recoilPos:Impulse(Vector3.new(rnd() * 0.4 * vk, 0.3 * vk, cfg.KickBack * vk))
 	recoilRot:Impulse(Vector3.new(cfg.KickUp * vk * (0.85 + math.random() * 0.3), rnd() * cfg.KickYaw * vk, rollSide * (0.5 + math.random() * 0.5) * cfg.KickRoll * vk))
 	crossKick = math.min(crossKick + (climbs and 0.6 or 1), 1.4)
@@ -724,16 +733,18 @@ local function onRender(dt)
 	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
 	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
 	mantleAlpha = approach(mantleAlpha, mantling and 1 or 0, dt, 0.1)
+	reloadHold = approach(reloadHold, reloading and 1 or 0, dt, 0.14)
 
 	-- v3.4 transition accents (small impulses through the viewmodel springs, so every state change has a little snap to it)
 	if sprinting ~= wasSprinting and alive then
 		wasSprinting = sprinting
+		local rq = reloading and 0.25 or 1 -- v5.6: no big swing while the reload is playing
 		if sprinting then -- gun swings up into the carry
-			recoilRot:Impulse(Vector3.new(-70, 50, 80))
-			recoilPos:Impulse(Vector3.new(3, -3, 2))
+			recoilRot:Impulse(Vector3.new(-70, 50, 80) * rq)
+			recoilPos:Impulse(Vector3.new(3, -3, 2) * rq)
 		else              -- gun drops back into the hip hold
-			recoilRot:Impulse(Vector3.new(55, -35, -60))
-			recoilPos:Impulse(Vector3.new(-2, 2.5, -1.5))
+			recoilRot:Impulse(Vector3.new(55, -35, -60) * rq)
+			recoilPos:Impulse(Vector3.new(-2, 2.5, -1.5) * rq)
 		end
 	end
 	local adsDone = aimAlpha > 0.97
@@ -825,7 +836,7 @@ local function onRender(dt)
 	-- ===== viewmodel =====
 	local camCF = camera.CFrame
 	local md = UIS:GetMouseDelta()
-	local swayMult = 1 - aimAlpha * 0.7
+	local swayMult = 1 - aimAlpha * 0.85
 	swaySpring.Target = Vector3.new(
 		math.clamp(md.Y * 0.35, -5, 5), math.clamp(md.X * 0.35, -5, 5), math.clamp(md.X * 0.25, -4, 4)
 	) * swayMult
@@ -899,11 +910,14 @@ local function onRender(dt)
 	local tiltCF, handPos, grab = rpose.tilt, rpose.hand, rpose.grab
 
 	local rp, rr = recoilPos:Update(dt), recoilRot:Update(dt)
-	local kp, kr = 1 - aimAlpha * 0.45, 1 - aimAlpha * 0.6
-	local recoilCF = CFrame.new(rp.X * kp, rp.Y * kp, rp.Z * kp) * CFrame.Angles(rad(rr.X * kr), rad(rr.Y * kr), rad(rr.Z * kr))
+	-- v5.6: aiming scales the viewmodel kick right down so the gun/scope stays put (tiny side shake + a small push back)
+	local kpS = 1 + (ADS_KICK_SIDE - 1) * aimAlpha
+	local kpZ = 1 + (ADS_KICK_BACK - 1) * aimAlpha
+	local kr = 1 + (ADS_KICK_ROT - 1) * aimAlpha
+	local recoilCF = CFrame.new(rp.X * kpS, rp.Y * kpS, rp.Z * kpZ) * CFrame.Angles(rad(rr.X * kr), rad(rr.Y * kr), rad(rr.Z * kr))
 
 	local ea = smooth(aimAlpha)
-	local base = HIP:Lerp(AIM, ea):Lerp(SPRINT, sprintAlpha * (1 - aimAlpha))
+	local base = HIP:Lerp(AIM, ea):Lerp(SPRINT, sprintAlpha * (1 - aimAlpha) * (1 - reloadHold * RELOAD_SPRINT_HOLD))
 
 	do -- bullets follow the sight: if a slide/crouch/mantle pushes the reticle off screen center, shoot through the reticle
 		local aimLocal = CFrame.new(built.Points.Aim.Position)
