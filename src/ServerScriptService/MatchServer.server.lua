@@ -1,6 +1,6 @@
 -- MatchServer v3 (v4.1: 1v1 mode, death screen hand-off, revive spawns). Wall Push main mode (GDD 2.1). Server-authoritative.
--- v4.1 MODES: the MapBounds part has a CHILD that says which mode this map is: a child NAMED "Breakline" or "1v1" (any instance type), or a
---   StringValue / TextLabel inside it whose Value / Text is "Breakline" / "1v1", or the attribute Mode on MapBounds. No child = Breakline.
+-- v5 MAPS: no more mode child on MapBounds. The mode comes from the lobby queue; the map is a random <name>_map folder out of ServerStorage >
+--   breaklineMaps or 1v1Maps (MatchConfig.MAPS), cloned into Workspace; its own MapBounds part is what the match is fitted to.
 --   1v1 = one player per team (Red vs Blue), no wall, no boxes, first to MatchConfig.V1.KillsToWin (5) kills wins the round.
 --   MatchState attributes: Mode, KillsA, KillsB, KillsToWin.
 -- It builds ONLY the gameplay pieces and fits them inside YOUR part named "MapBounds" (Workspace):
@@ -37,8 +37,63 @@ SIGN[TEAM_B] = -SIGN[TEAM_A]
 local TEAM_COLOR = { [TEAM_A] = C.Teams[1].Color.Color, [TEAM_B] = C.Teams[2].Color.Color }
 local CARRY_OFFSET = CFrame.new(0, 0.25, -(0.5 + BOX.Size / 2 + 0.1)) -- carried box, relative to HumanoidRootPart
 
--- ===================== MapBounds =====================
-local bounds = workspace:FindFirstChild("MapBounds") or workspace:WaitForChild("MapBounds", 8)
+-- ===================== MODE + MAP (v5: one folder of maps per mode) =====================
+-- 1. MODE: the lobby queue decides it (Roster.Mode). In Studio it is MatchConfig.MAPS.StudioMode, or the Workspace attribute "TestMode".
+-- 2. MAP: ServerStorage.breaklineMaps / ServerStorage.1v1Maps (names in MatchConfig.MAPS) hold one folder per map, named <name>_map.
+--    One is chosen at random, cloned into Workspace, and the match is fitted to ITS MapBounds part (no mode child is needed any more).
+local MODE = "Breakline"
+local function parseMode(v)
+	local n = string.lower(tostring(v or "")):gsub("[%s_%-]", "")
+	if n == "1v1" or n == "onevone" or n == "oneonone" or n == "1on1" or n == "duel" then return "1v1" end
+	if n == "breakline" or n == "wallpush" then return "Breakline" end
+	return nil
+end
+do
+	local m = (Roster.Reserved and parseMode(Roster.Mode)) or parseMode(workspace:GetAttribute("TestMode")) or parseMode(C.MAPS.StudioMode)
+	MODE = m or "Breakline"
+end
+
+local function folderNamed(parent, want)
+	for _, ch in parent:GetChildren() do
+		if string.lower(ch.Name) == want then return ch end
+	end
+end
+-- gamemode map folders that were left in Workspace go to ServerStorage first, so the maps that are not chosen never show up
+for _, fname in C.MAPS.Folders do
+	local f = folderNamed(workspace, string.lower(fname))
+	if f then f.Parent = ServerStorage end
+end
+local function findModeFolder(modeName)
+	local want = string.lower(C.MAPS.Folders[modeName] or "")
+	return folderNamed(ServerStorage, want) or folderNamed(RS, want)
+end
+local function listMaps(folder)
+	local out = {}
+	local suffix = string.lower(C.MAPS.Suffix)
+	for _, ch in folder:GetChildren() do
+		if (ch:IsA("Folder") or ch:IsA("Model")) and string.sub(string.lower(ch.Name), -#suffix) == suffix then table.insert(out, ch) end
+	end
+	table.sort(out, function(x, y) return x.Name < y.Name end)
+	return out
+end
+
+local MAP_NAME, loadedMap = "", nil
+do
+	local folder = findModeFolder(MODE)
+	local maps = folder and listMaps(folder) or {}
+	if #maps > 0 then
+		local pick = maps[rnd:NextInteger(1, #maps)] -- 1 map: always it, 2 maps: 50 / 50 ...
+		loadedMap = pick:Clone()
+		loadedMap.Parent = workspace
+		MAP_NAME = string.sub(pick.Name, 1, #pick.Name - #C.MAPS.Suffix):gsub("_", " ")
+		print(("[MatchServer] mode %s: loaded map '%s' (1 of %d)"):format(MODE, pick.Name, #maps))
+	else
+		warn(("[MatchServer] no maps for mode %s - put folders named like 'test_map' inside ServerStorage > %s. Falling back to a MapBounds part in Workspace."):format(
+			MODE, C.MAPS.Folders[MODE] or "?"))
+	end
+end
+
+local bounds = (loadedMap and loadedMap:FindFirstChild("MapBounds", true)) or workspace:FindFirstChild("MapBounds")
 local bCF, bSize
 if bounds and bounds:IsA("BasePart") then
 	bCF, bSize = bounds.CFrame, bounds.Size
@@ -47,46 +102,36 @@ if bounds and bounds:IsA("BasePart") then
 elseif bounds and bounds:IsA("Model") then
 	bCF, bSize = bounds:GetBoundingBox()
 else
-	warn("[MatchServer] No part named MapBounds in Workspace - using a default 140 x 60 x 260 area at the origin. "
-		.. "Add an anchored, transparent Part named MapBounds around your map (see GDD section 9).")
-	local p = Instance.new("Part")
-	p.Name = "MapBounds"
-	p.Anchored = true
-	p.Size = Vector3.new(140, 60, 260)
-	p.Position = Vector3.new(0, 30, 0)
-	p.Transparency = 1
-	p.CanCollide, p.CanQuery, p.CanTouch = false, false, false
-	p.Parent = workspace
-	bCF, bSize = p.CFrame, p.Size
-end
-local MAP_W, MAP_H, MAP_L = bSize.X, bSize.Y, bSize.Z -- width (X), height (Y), length (Z)
-
--- v4.1: which mode is this map? (see the header)
-local MODE = "Breakline"
-do
-	local function parse(v)
-		local n = string.lower(tostring(v or "")):gsub("[%s_%-]", "")
-		if n == "1v1" or n == "onevone" or n == "oneonone" or n == "1on1" or n == "duel" then return "1v1" end
-		if n == "breakline" or n == "wallpush" then return "Breakline" end
-		return nil
-	end
-	local m
-	if bounds then
-		m = parse(bounds:GetAttribute("Mode"))
-		if not m then
-			for _, ch in bounds:GetDescendants() do
-				m = parse(ch.Name)
-				if not m and ch:IsA("StringValue") then m = parse(ch.Value) end
-				if not m and (ch:IsA("TextLabel") or ch:IsA("TextButton") or ch:IsA("TextBox")) then m = parse(ch.Text) end
-				if m then break end
+	local lo, hi
+	if loadedMap then -- no MapBounds in the map: use the box round all of its parts
+		for _, d in loadedMap:GetDescendants() do
+			if d:IsA("BasePart") then
+				local h = d.Size / 2
+				local mn, mx = d.Position - h, d.Position + h
+				lo = lo and Vector3.new(math.min(lo.X, mn.X), math.min(lo.Y, mn.Y), math.min(lo.Z, mn.Z)) or mn
+				hi = hi and Vector3.new(math.max(hi.X, mx.X), math.max(hi.Y, mx.Y), math.max(hi.Z, mx.Z)) or mx
 			end
 		end
 	end
-	MODE = m or "Breakline"
-	if Roster.Reserved and Roster.Mode == "1v1" then MODE = "1v1" end -- v4.2: the lobby queue decides the mode
-	if Roster.Reserved and Roster.Mode == "Breakline" then MODE = "Breakline" end
-	print("[MatchServer] mode: " .. MODE)
+	if lo and hi then
+		warn("[MatchServer] the loaded map has no part named MapBounds - using the box around all of its parts. Add an anchored, transparent Part named MapBounds to it.")
+		bCF, bSize = CFrame.new((lo + hi) / 2), hi - lo
+	else
+		warn("[MatchServer] No part named MapBounds - using a default 140 x 60 x 260 area at the origin. "
+			.. "Add an anchored, transparent Part named MapBounds inside every <name>_map folder (see GDD section 9).")
+		local p = Instance.new("Part")
+		p.Name = "MapBounds"
+		p.Anchored = true
+		p.Size = Vector3.new(140, 60, 260)
+		p.Position = Vector3.new(0, 30, 0)
+		p.Transparency = 1
+		p.CanCollide, p.CanQuery, p.CanTouch = false, false, false
+		p.Parent = loadedMap or workspace
+		bCF, bSize = p.CFrame, p.Size
+	end
 end
+local MAP_W, MAP_H, MAP_L = bSize.X, bSize.Y, bSize.Z -- width (X), height (Y), length (Z)
+print("[MatchServer] mode: " .. MODE .. (MAP_NAME ~= "" and (" | map: " .. MAP_NAME) or ""))
 local ONE_V_ONE = MODE == "1v1"
 local _, yaw = bCF:ToOrientation()
 -- "origin": ground level at the center of MapBounds. Everything below is built in this local space (X across, Y up, Z = length).
@@ -113,6 +158,7 @@ remotes.Parent = RS
 local stateFolder = Instance.new("Folder")
 stateFolder.Name = "MatchState"
 stateFolder:SetAttribute("Mode", MODE)
+stateFolder:SetAttribute("MapName", MAP_NAME) -- v5: shown under the clock on the loadout screen
 stateFolder:SetAttribute("KillsA", 0)
 stateFolder:SetAttribute("KillsB", 0)
 stateFolder:SetAttribute("KillsToWin", C.V1.KillsToWin)
