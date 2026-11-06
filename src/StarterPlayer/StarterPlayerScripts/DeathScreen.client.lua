@@ -181,7 +181,7 @@ local function cycle(dir)
 end
 
 local function bounds()
-	local b = workspace:FindFirstChild("MapBounds")
+	local b = workspace:FindFirstChild("MapBounds", true) -- v5: it now lives inside the loaded <name>_map folder
 	if b and b:IsA("BasePart") then return b.CFrame, b.Size end
 	return nil
 end
