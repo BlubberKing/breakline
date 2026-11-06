@@ -405,15 +405,9 @@ function GM.BuildHand(parent)
 		p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
 		p.Parent = model
 	end
-	part("Palm", Vector3.new(0.32, 0.1, 0.32), CFrame.new(0, -0.01, 0.04), GLOVE)
-	part("PalmPad", Vector3.new(0.2, 0.03, 0.16), CFrame.new(0, 0.045, 0.0), PAD)
-	part("FingerBase", Vector3.new(0.3, 0.08, 0.12), CFrame.new(0, 0.02, -0.16), GLOVE)
-	part("Fingers", Vector3.new(0.3, 0.26, 0.08), CFrame.new(0, 0.15, -0.22), GLOVE)
-	part("FingerTips", Vector3.new(0.3, 0.07, 0.1), CFrame.new(0, 0.27, -0.17), GLOVE)
-	for _, x in { -0.075, 0, 0.075 } do
-		part("FingerLine", Vector3.new(0.015, 0.26, 0.084), CFrame.new(x, 0.15, -0.222), PAD)
-	end
-	part("Thumb", Vector3.new(0.08, 0.24, 0.08), CFrame.new(-0.19, 0.16, -0.06) * CFrame.Angles(0, 0, rad(-15)), GLOVE)
+	-- v9: plain block hand: one palm block, one block that curls up the front of the item, one wrist block. No finger lines, no thumb.
+	part("Palm", Vector3.new(0.34, 0.12, 0.34), CFrame.new(0, -0.01, 0.04), GLOVE)
+	part("Fingers", Vector3.new(0.34, 0.3, 0.12), CFrame.new(0, 0.12, -0.19), GLOVE)
 	part("Wrist", Vector3.new(0.3, 0.22, 0.2), CFrame.new(0, -0.03, 0.27), PAD)
 	model.WorldPivot = CFrame.identity
 	model.Parent = parent
