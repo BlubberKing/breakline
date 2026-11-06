@@ -471,14 +471,14 @@ function ReloadAnims.Make(modelId, P, s)
 	local keys, tl = spec.keys, spec.tilt
 	-- keep the action on screen: the mag swap is authored low (real reload height); squash anything that dips below
 	-- the magwell so the hand/mag stay inside the camera frame. The intentional mag "drop" (< -1.2) stays offscreen.
-	local y0, DIP = MPcf.Position.Y, 0.55
+	local y0, DIP = MPcf.Position.Y, 0.8 -- v5.6: 0.55 -> 0.8 (hands + mag travel further, easier to see)
 	local function sq(v, rel)
 		local d = rel and v.Y or (v.Y - y0)
 		if d < 0 and d > -1.2 then d *= DIP; return V(v.X, (rel and 0 or y0) + d, v.Z) end
 		return v
 	end
-	-- the gun barely moves on screen during a reload (it used to swing toward the center and took up too much space)
-	local TILT = 0.15
+	-- v5.6: a bit more prominent (0.15 -> 0.45): the gun tips toward the center so the mag swap reads clearly, but it stays near the hip hold
+	local TILT = 0.45
 	tl.roll, tl.pitch, tl.yaw, tl.lift = tl.roll * TILT, tl.pitch * TILT, tl.yaw * TILT, tl.lift * TILT
 	local neutral = { tilt = IDENT, mag = IDENT, hand = P.Fore.Position, grab = 0, fall = false }
 
