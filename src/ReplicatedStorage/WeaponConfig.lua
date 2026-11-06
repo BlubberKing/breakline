@@ -63,7 +63,7 @@ W.Weapons = {
 		Name = "M4A1", Class = "Assault Rifle",
 		Inspiration = "Real: M4 / AR-15 · Finals: FCAR / ARN-220 · Rivals: Assault Rifle",
 		Sights = { "Iron", "RedDot", "Holo", "Ranger3x" }, DefaultSight = "RedDot",
-		Damage = 18, HeadMultiplier = 1.6, RPM = 650, MagSize = 30, ReloadTime = 1.9, Range = 700,
+		Damage = 18, HeadMultiplier = 1.6, RPM = 650, MagSize = 30, ReloadTime = 2.9, Range = 700,
 		FalloffStart = 40, FalloffEnd = 100, FalloffMin = 0.7,
 		SpreadHip = 1.0, SpreadMove = 0.4, SpreadAir = 2.0, BloomPerShot = 0.08, BloomMax = 0.8,
 		RecoilPattern = {
@@ -78,7 +78,7 @@ W.Weapons = {
 		Name = "AK-47", Class = "Assault Rifle",
 		Inspiration = "Real: AKM · Finals: AKM · Rivals: Assault Rifle (heavier)",
 		Sights = { "Iron", "RedDot", "Holo" }, DefaultSight = "Iron",
-		Damage = 22, HeadMultiplier = 1.5, RPM = 540, MagSize = 30, ReloadTime = 2.3, Range = 650,
+		Damage = 22, HeadMultiplier = 1.5, RPM = 540, MagSize = 30, ReloadTime = 3.3, Range = 650,
 		FalloffStart = 35, FalloffEnd = 90, FalloffMin = 0.62,
 		SpreadHip = 1.3, SpreadMove = 0.5, BloomPerShot = 0.1, BloomMax = 1.0,
 		ADSTime = 0.17,
@@ -101,7 +101,7 @@ W.Weapons = {
 		Inspiration = "Real: FAMAS (bullpup) · Finals: FAMAS · Rivals: Burst Rifle",
 		Sights = { "Iron", "RedDot", "Holo", "Ranger3x" }, DefaultSight = "RedDot",
 		FireMode = "Burst", BurstCount = 3, BurstRPM = 900, BurstDelay = 0.3,
-		Damage = 22, HeadMultiplier = 1.55, MagSize = 24, ReloadTime = 2.0, Range = 750,
+		Damage = 22, HeadMultiplier = 1.55, MagSize = 24, ReloadTime = 3.0, Range = 750,
 		FalloffStart = 60, FalloffEnd = 140, FalloffMin = 0.75,
 		SpreadHip = 1.1, BloomPerShot = 0.05, BloomMax = 0.6, ADSFov = 55,
 		RecoilPattern = climb(0.4, 0.05, 6, 0.2), SprayResetTime = 0.45,
@@ -112,7 +112,7 @@ W.Weapons = {
 		Name = "WASP", Class = "SMG",
 		Inspiration = "Real: MP7 / Vector · Finals: XP-54 / M11 · Rivals: Uzi",
 		Sights = { "Iron", "RedDot", "Holo" }, DefaultSight = "RedDot",
-		Damage = 14, HeadMultiplier = 1.4, RPM = 900, MagSize = 40, ReloadTime = 1.8, Range = 400,
+		Damage = 14, HeadMultiplier = 1.4, RPM = 900, MagSize = 40, ReloadTime = 2.7, Range = 400,
 		FalloffStart = 22, FalloffEnd = 55, FalloffMin = 0.55,
 		SpreadHip = 0.9, SpreadMove = 0.2, SpreadAir = 1.2, BloomPerShot = 0.05, BloomMax = 0.6,
 		ADSTime = 0.11, ADSFov = 62,
@@ -126,7 +126,7 @@ W.Weapons = {
 		Name = "ANVIL", Class = "LMG",
 		Inspiration = "Real: M249 / M60 · Finals: M60 / Lewis Gun · Rivals: Minigun (role)",
 		Sights = { "Iron", "RedDot", "Holo", "Ranger3x" }, DefaultSight = "Holo",
-		Damage = 17, HeadMultiplier = 1.4, RPM = 620, MagSize = 80, ReloadTime = 3.8, Range = 700,
+		Damage = 17, HeadMultiplier = 1.4, RPM = 620, MagSize = 80, ReloadTime = 5.6, Range = 700,
 		FalloffStart = 45, FalloffEnd = 110, FalloffMin = 0.7,
 		SpreadHip = 1.8, SpreadMove = 0.8, BloomPerShot = 0.06, BloomMax = 1.2,
 		ADSTime = 0.24, ADSFov = 56, ADSRecoilMult = 0.6,
@@ -141,7 +141,7 @@ W.Weapons = {
 		Inspiration = "Real: M14 EBR · Finals: LH1 · Rivals: (none — fills the gap)",
 		Sights = { "Iron", "RedDot", "Ranger3x" }, DefaultSight = "Ranger3x",
 		FireMode = "Semi", RPM = 260,
-		Damage = 38, HeadMultiplier = 1.75, MagSize = 15, ReloadTime = 2.4, Range = 900,
+		Damage = 38, HeadMultiplier = 1.75, MagSize = 15, ReloadTime = 3.4, Range = 900,
 		FalloffStart = 90, FalloffEnd = 200, FalloffMin = 0.75,
 		SpreadHip = 1.6, SpreadMove = 0.6, BloomPerShot = 0.35, BloomMax = 1.2, BloomRecovery = 4,
 		ADSTime = 0.2, ADSFov = 52, ADSSensitivity = 0.65,
@@ -155,7 +155,7 @@ W.Weapons = {
 		Inspiration = "Real: AWM · Finals: SR-84 · Rivals: Sniper",
 		Sights = { "Sniper8x", "Ranger3x", "Iron" }, DefaultSight = "Sniper8x",
 		FireMode = "Semi", RPM = 48,
-		Damage = 85, HeadMultiplier = 2.0, MagSize = 5, ReloadTime = 3.0, Range = 1500,
+		Damage = 85, HeadMultiplier = 2.0, MagSize = 5, ReloadTime = 4.15, RoundReload = { Open = 0.8, Per = 0.55, Close = 0.6 }, Range = 1500,
 		FalloffStart = 2000, FalloffEnd = 2001, FalloffMin = 1,
 		SpreadHip = 5, SpreadADS = 0, SpreadMove = 3, SpreadMoveADS = 0, SpreadAir = 6,
 		BloomPerShot = 0, BloomMax = 0,
@@ -174,7 +174,7 @@ W.Weapons = {
 		Inspiration = "Real: Remington 870 · Finals: M26 Matter / SA1216 · Rivals: Shotgun",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
 		FireMode = "Semi", RPM = 80, Pellets = 10, PelletSpread = 4.5, ADSPelletMult = 0.85,
-		Damage = 9, HeadMultiplier = 1.25, MagSize = 6, ReloadTime = 2.6, Range = 300,
+		Damage = 9, HeadMultiplier = 1.25, MagSize = 6, ReloadTime = 4.3, RoundReload = { Open = 0.5, Per = 0.5, Close = 0.8 }, Range = 300,
 		FalloffStart = 15, FalloffEnd = 40, FalloffMin = 0.35,
 		SpreadHip = 0, SpreadMove = 0, SpreadAir = 0.5, BloomPerShot = 0, BloomMax = 0,
 		ADSTime = 0.16, ADSFov = 64,
@@ -192,7 +192,7 @@ W.Weapons = {
 		Model = "V9",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
 		FireMode = "Semi", RPM = 420,
-		Damage = 24, HeadMultiplier = 1.6, MagSize = 15, ReloadTime = 1.3, Range = 500,
+		Damage = 24, HeadMultiplier = 1.6, MagSize = 15, ReloadTime = 2.1, Range = 500,
 		FalloffStart = 25, FalloffEnd = 60, FalloffMin = 0.6,
 		SpreadHip = 0.8, SpreadMove = 0.3, BloomPerShot = 0.2, BloomMax = 0.9,
 		ADSTime = 0.1, ADSFov = 64,
@@ -210,7 +210,7 @@ W.Weapons = {
 		Inspiration = "Real: S&W Model 29 · Finals: R.357 · Rivals: Revolver",
 		Sights = { "Iron", "RedDot" }, DefaultSight = "Iron",
 		FireMode = "Semi", RPM = 140,
-		Damage = 45, HeadMultiplier = 1.6, MagSize = 6, ReloadTime = 2.4, Range = 700,
+		Damage = 45, HeadMultiplier = 1.6, MagSize = 6, ReloadTime = 3.9, RoundReload = { Open = 1.0, Per = 0.42, Close = 0.5 }, Range = 700,
 		FalloffStart = 50, FalloffEnd = 120, FalloffMin = 0.7,
 		SpreadHip = 1.0, BloomPerShot = 0.4, BloomMax = 1.2, BloomRecovery = 4,
 		ADSTime = 0.15, ADSFov = 60,
@@ -230,6 +230,17 @@ end
 
 function W.Get(id)
 	return W.Weapons[id] or W.Weapons[W.Default]
+end
+
+-- v7 RELOADS: mag guns always play the full mag swap (cfg.ReloadTime). Round-fed guns (cfg.RoundReload: AWP, shotgun, revolver) load ONE round at a
+-- time and only the missing ones: Open + (MagSize - ammo) * Per + Close seconds. ReloadTime of those guns = the time of a full reload from empty.
+function W.RoundsToLoad(cfg, ammo)
+	return math.max(0, cfg.MagSize - math.clamp(ammo or 0, 0, cfg.MagSize))
+end
+function W.ReloadDuration(cfg, ammo)
+	local rr = cfg.RoundReload
+	if not rr then return cfg.ReloadTime end
+	return rr.Open + math.max(1, W.RoundsToLoad(cfg, ammo)) * rr.Per + rr.Close
 end
 
 function W.HasSight(cfg, sight)
