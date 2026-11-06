@@ -248,7 +248,7 @@ function K.fillers(B, Z, col, mat, legCol, legMat)
 end
 
 -- BLOCK HAND v9: a SLIM glove block (narrower + shallower than the sleeve, so a held gun stays visible), a wrist cuff that bridges
--- the sleeve to the glove, a knuckle plate on the back of the hand and a thumb block on the front. Same on the character + the figure.
+-- the sleeve to the glove. v10: JUST a plain block hand (no knuckle plate, no thumb). Same on the character + the figure.
 K.HAND = { w = 0.66, d = 0.62, len = 1.4 } -- glove block = hand part X * w, Z * d, Y * len (the old v8 mitten was 1.02 x 0.94 x 1.7)
 function K.hand(B, Z, side, glove, pad, cuff, o)
 	o = o or {}
@@ -262,8 +262,6 @@ function K.hand(B, Z, side, glove, pad, cuff, o)
 	B.blk(base, V3(s.X * 0.8, 0.12 * u, s.Z * 0.8), V3(0, top - 0.02 * u, 0), cuff or pad, o.cuffMat or SP)                 -- cuff
 	local gy = top - 0.08 * u - gl * 0.5
 	B.blk(base, V3(gw, gl, gd), V3(0, gy, 0), glove, o.mat or SP)                                                            -- glove
-	B.blk(base, V3(0.04 * u, gl * 0.42, gd * 0.8), V3(sg * (gw * 0.5 + 0.02 * u), gy - gl * 0.12, 0), pad, SP)              -- knuckle plate
-	B.blk(base, V3(gw * 0.34, gl * 0.5, 0.09 * u), V3(-sg * gw * 0.24, gy + gl * 0.06, -gd * 0.5 - 0.045 * u), glove, o.mat or SP) -- thumb
 end
 
 -- BOOT: shaft on the lower leg, foot block with a toe that sticks out, sole, toe slope, heel, laces
