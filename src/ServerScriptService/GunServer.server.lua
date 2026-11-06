@@ -19,7 +19,6 @@ local function remote(name)
 	local r = Instance.new("RemoteEvent"); r.Name = name; r.Parent = remotes; return r
 end
 local FireRemote, ReloadRemote = remote("Fire"), remote("Reload")
-local DevSetWeapon = remote("DevSetWeapon") -- DEV-TEST ONLY (delete with DevGunMenu.client.lua)
 local HitConfirm, ShotFX, Damaged = remote("HitConfirm"), remote("ShotFX"), remote("Damaged")
 remotes.Parent = RS
 
@@ -32,16 +31,6 @@ local function getState(player, weapon)
 	end
 	return s
 end
-
--- DEV-TEST ONLY: lets the DevGunMenu switch to any gun + sight. Delete this block (and the remote above) when testing is done.
-DevSetWeapon.OnServerEvent:Connect(function(p, id, sightId)
-	if type(id) ~= "string" or not Weapons.Weapons[id] then return end
-	local cfg = Weapons.Get(id)
-	if type(sightId) ~= "string" or not Weapons.HasSight(cfg, sightId) then sightId = cfg.DefaultSight end
-	state[p] = nil
-	p:SetAttribute("Sight", sightId)
-	p:SetAttribute("Weapon", id)
-end)
 
 local function onPlayer(p)
 	p:SetAttribute("Weapon", Weapons.Default)
