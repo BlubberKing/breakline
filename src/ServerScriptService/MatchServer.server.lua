@@ -152,6 +152,7 @@ local ThrowRemote, DropRemote, NotifyRemote = remote("Throw"), remote("Drop"), r
 local BoxBreakRemote, SoulRemote = remote("BoxBreak"), remote("SoulFX") -- client-side effects: box destroyed / player died
 local ClientReadyRemote, PregameLoadoutRemote = remote("ClientReady"), remote("PregameLoadout") -- client -> server: finished loading / loadout change
 local ResultRemote, ContinueRemote = remote("MatchResult"), remote("Continue")                  -- server -> client: souls breakdown / client -> server: back to lobby
+local ReserveSwapRemote = remote("ReserveSwap") -- v5.7: client -> server: swap an active gun / gadget with one from your RESERVE while you are dead
 local CardPickRemote = remote("CardPick") -- v4.3: client -> server: which of the 3 rolled cards you picked (1 / 2 / 3)
 remotes.Parent = RS
 
@@ -332,6 +333,7 @@ local holes = { [TEAM_A] = {}, [TEAM_B] = {} } -- team -> hole index -> box reco
 local boxes = {}    -- set of box records
 local byPart = {}   -- part -> record
 local carrying = {} -- player -> record
+local botCarry = {} -- v5.7: bot character model -> box record (a bot carries a box like a player does)
 local nextSpawnAt = 0
 local v1 = { round = 1, endsAt = 0, lastTotal = 0, resetting = false } -- v4.2: 1v1 round state
 
@@ -361,6 +363,7 @@ local function teamKills(team)
 	for _, p in Players:GetPlayers() do
 		if p.Team and p.Team.Name == team then n += (p:GetAttribute("StatKills") or 0) end
 	end
+	n += stateFolder:GetAttribute("BotKills_" .. team) or 0 -- v5.7: kills made by bots
 	return n
 end
 
@@ -379,6 +382,8 @@ local function resetStats()
 	end
 	stateFolder:SetAttribute("KillsA", 0)
 	stateFolder:SetAttribute("KillsB", 0)
+	stateFolder:SetAttribute("BotKills_" .. TEAM_A, 0)
+	stateFolder:SetAttribute("BotKills_" .. TEAM_B, 0)
 end
 
 -- world CFrame of a hole's box position
@@ -684,6 +689,7 @@ end
 local function destroyBox(rec, reason)
 	if reason == "shot" and rec.holeTeam then addStat(rec.lastShooter, "StatDestroyed", 1) end
 	if rec.carrier then release(rec.carrier, Vector3.zero, "Loose") end
+	if rec.botCarrier then botCarry[rec.botCarrier] = nil; rec.botCarrier = nil end
 	local team = rec.holeTeam
 	local pos = rec.part.Position
 	leaveHole(rec)
@@ -703,6 +709,7 @@ local function clearBoxes()
 	for rec in boxes do table.insert(list, rec) end
 	for _, rec in list do destroyBox(rec, "clear") end
 	table.clear(carrying)
+	table.clear(botCarry)
 	for _, p in Players:GetPlayers() do p:SetAttribute("Carrying", false) end
 end
 
@@ -1175,6 +1182,25 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
+	-- v5.7: boxes carried by BOTS float into their own side's empty holes the same way
+	for model, rec in botCarry do
+		local broot = model.Parent and model:FindFirstChild("HumanoidRootPart")
+		local bteam = model:GetAttribute("OwnerTeam")
+		if not broot or rec.state ~= "Carried" then
+			botCarry[model] = nil
+		elseif bteam and holes[bteam] and now - rec.carriedAt > 0.5 and (toLocal(broot.Position).Z - wallZ) * SIGN[bteam] > 0 then
+			local idx = nearestHoleFor(bteam, (broot.CFrame * CARRY_OFFSET).Position)
+			if idx then
+				botCarry[model] = nil
+				rec.botCarrier = nil
+				local w = rec.part:FindFirstChild("CarryWeld")
+				if w then w:Destroy() end
+				rec.team = bteam
+				beginPlug(rec, bteam, idx, nil)
+			end
+		end
+	end
+
 	-- a new box on EACH side every SpawnInterval
 	if now >= nextSpawnAt then
 		nextSpawnAt += BOX.SpawnInterval
@@ -1231,6 +1257,127 @@ PregameLoadoutRemote.OnServerEvent:Connect(function(player, l)
 	if WeaponCfg.Weapons[clean.Weapon] then
 		player:SetAttribute("Sight", WeaponCfg.Get(clean.Weapon).DefaultSight)
 		player:SetAttribute("Weapon", clean.Weapon)
+	end
+end)
+
+-- ===================== v5.7: bot API (BotServer uses this, see BotAPI) =====================
+do
+	local BotAPI = require(script.Parent:WaitForChild("BotAPI"))
+	BotAPI.Phase = function() return phase end
+	BotAPI.Mode = MODE
+	BotAPI.Teams = { TEAM_A, TEAM_B }
+	BotAPI.SpawnCF = function(teamName, slot)
+		local x = spawnX[(slot % #spawnX) + 1]
+		local z = SIGN[teamName] * LINE_Z
+		local from = origin * Vector3.new(x, 20, z)
+		local rp = RaycastParams.new()
+		rp.FilterType = Enum.RaycastFilterType.Exclude
+		local ignore = { mapFolder }
+		for _, pl in Players:GetPlayers() do if pl.Character then table.insert(ignore, pl.Character) end end
+		rp.FilterDescendantsInstances = ignore
+		local hit = workspace:Raycast(from, Vector3.new(0, -(MAP_H + 60), 0), rp)
+		local pos = hit and (hit.Position + Vector3.new(0, 4.4, 0)) or (origin * Vector3.new(x, 4, z))
+		local look = origin:PointToWorldSpace(Vector3.new(x, 0, 0))
+		return CFrame.lookAt(pos, Vector3.new(look.X, pos.Y, look.Z))
+	end
+	BotAPI.RandomSpot = function(teamName, enemy)
+		local sign = SIGN[teamName] * (enemy and -1 or 1)
+		return findSpot(sign)
+	end
+	BotAPI.LooseBoxes = function()
+		local list = {}
+		for rec in boxes do
+			if rec.state == "Loose" and rec.part.Parent then table.insert(list, rec.part) end
+		end
+		return list
+	end
+	BotAPI.EmptyHoles = function(teamName)
+		local list = {}
+		if not holes[teamName] then return list end
+		for i = 1, #holeX do
+			if not holes[teamName][i] then table.insert(list, holeCF(teamName, i).Position) end
+		end
+		return list
+	end
+	BotAPI.GrabBox = function(model, part)
+		local rec = byPart[part]
+		if not rec or rec.state ~= "Loose" or botCarry[model] or phase ~= "Playing" then return false end
+		local root = model:FindFirstChild("HumanoidRootPart")
+		local hum = model:FindFirstChildOfClass("Humanoid")
+		if not root or not hum or hum.Health <= 0 then return false end
+		local p = rec.part
+		leaveHole(rec)
+		rec.thrower = nil
+		setState(rec, "Carried")
+		p.AssemblyLinearVelocity, p.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+		p.CFrame = root.CFrame * CARRY_OFFSET
+		local w = Instance.new("Weld")
+		w.Name = "CarryWeld"
+		w.Part0, w.Part1, w.C0 = root, p, CARRY_OFFSET
+		w.Parent = p
+		rec.carrier, rec.carriedAt, rec.botCarrier = nil, os.clock(), model
+		botCarry[model] = rec
+		return true
+	end
+	BotAPI.DropBox = function(model)
+		local rec = botCarry[model]
+		if not rec then return end
+		botCarry[model] = nil
+		rec.botCarrier = nil
+		local p = rec.part
+		local w = p:FindFirstChild("CarryWeld")
+		if w then w:Destroy() end
+		setState(rec, "Loose")
+		local root = model:FindFirstChild("HumanoidRootPart")
+		if root then p.CFrame = CFrame.new(root.Position + Vector3.new(0, 1, 0) + root.CFrame.LookVector * 3) * p.CFrame.Rotation end
+		p.AssemblyLinearVelocity = Vector3.new(0, 4, 0)
+		pcall(p.SetNetworkOwner, p, nil)
+	end
+	BotAPI.IsCarrying = function(model) return botCarry[model] ~= nil end
+	BotAPI.AddBotKill = function(teamName)
+		stateFolder:SetAttribute("BotKills_" .. teamName, (stateFolder:GetAttribute("BotKills_" .. teamName) or 0) + 1)
+	end
+	BotAPI.ResetBotKills = function()
+		stateFolder:SetAttribute("BotKills_" .. TEAM_A, 0)
+		stateFolder:SetAttribute("BotKills_" .. TEAM_B, 0)
+	end
+end
+
+-- ===================== v5.7: RESERVE swap (press J while dead) =====================
+-- ReserveSwap:FireServer(kind, idx, id)   kind = "weapon" | "gadget", idx = gadget slot 1..3 (ignored for the gun), id = the item to equip.
+-- The item must sit in one of your 3 RESERVE slots. It is equipped and the item it replaces goes into that same reserve slot (a real swap).
+-- Only while you are DEAD in a Playing round. Match-only: your saved lobby loadout is NOT changed. A gadget you already carry in
+-- another slot cannot be equipped a second time.
+local lastSwapAt = {}
+ReserveSwapRemote.OnServerEvent:Connect(function(player, kind, idx, id)
+	if phase ~= "Playing" or player:GetAttribute("IsDead") ~= true then return end
+	if os.clock() - (lastSwapAt[player] or 0) < 0.15 then return end
+	lastSwapAt[player] = os.clock()
+	if (kind ~= "weapon" and kind ~= "gadget") or type(id) ~= "string" or id == "" or not Catalog.Is(id, kind) then return end
+	local raw = player:GetAttribute("LoadoutJson")
+	if type(raw) ~= "string" then return end
+	local ok, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+	if not ok or type(decoded) ~= "table" then return end
+	local l = cleanLoadout(player, decoded)
+	local slot
+	for j = 1, 3 do if l.Reserve[j] == id then slot = j break end end
+	if not slot then return end -- not in your reserve
+	if kind == "weapon" then
+		if l.Weapon == id then return end
+		l.Reserve[slot], l.Weapon = l.Weapon, id
+	else
+		idx = math.floor(tonumber(idx) or 0)
+		if idx < 1 or idx > 3 then return end
+		for k = 1, 3 do if k ~= idx and l.Gadgets[k] == id then return end end
+		l.Reserve[slot], l.Gadgets[idx] = l.Gadgets[idx], id
+	end
+	player:SetAttribute("LoadoutJson", HttpService:JSONEncode(l))
+	if kind == "weapon" then
+		local WeaponCfg = require(RS:WaitForChild("WeaponConfig"))
+		if WeaponCfg.Weapons[l.Weapon] then
+			player:SetAttribute("Sight", WeaponCfg.Get(l.Weapon).DefaultSight)
+			player:SetAttribute("Weapon", l.Weapon)
+		end
 	end
 end)
 
