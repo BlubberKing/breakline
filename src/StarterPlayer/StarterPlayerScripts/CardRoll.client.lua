@@ -35,6 +35,7 @@ local APPEAR = { 0.15, 0.65, 1.15 } -- reel i pops up at this time (s after the 
 local ROLL = 1.5                     -- each reel spins this long -> lands at 1.65 / 2.15 / 2.65 s
 local WIND = 0.14                    -- the little wind-back before a reel launches
 local CW, CH = 300, 420              -- card size on this screen
+local HM = 4                         -- v7: margin between a card and its outline (was 14: the card looked too small for its frame)
 local GAP = 70                       -- space between reels
 local STEP = CH + 26                 -- card spacing on a spinning strip
 local N = 6                          -- cards per strip (holder 0 = the card it lands on, holder 1 = the one shown just before it)
@@ -266,7 +267,7 @@ local function runRoll(my)
 	local function buildReel(i)
 		local cx = 960 + (i - 2) * (CW + GAP)
 		local r = { i = i, cx = cx, id = offer.cards[i], R = Cards.Rarity(offer.cards[i]), landed = false, started = false, lastTick = 0 }
-		local housing = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, CY), Size = UDim2.fromOffset(CW + 28, CH + 28),
+		local housing = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, CY), Size = UDim2.fromOffset(CW + HM * 2, CH + HM * 2),
 			BackgroundColor3 = K.panel, BorderSizePixel = 0, Visible = false }, cv)
 		new("UIStroke", { Color = K.line2, Thickness = 1 }, housing)
 		new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.fromOffset(60, 3), BackgroundColor3 = K.red, BorderSizePixel = 0 }, housing)
@@ -277,7 +278,7 @@ local function runRoll(my)
 		end
 		r.housing = housing
 		r.hscale = new("UIScale", { Scale = 0.7 }, housing)
-		local win = new("Frame", { Position = UDim2.fromOffset(14, 14), Size = UDim2.fromOffset(CW, CH), BackgroundColor3 = K.void, BorderSizePixel = 0,
+		local win = new("Frame", { Position = UDim2.fromOffset(HM, HM), Size = UDim2.fromOffset(CW, CH), BackgroundColor3 = K.void, BorderSizePixel = 0,
 			ClipsDescendants = true }, housing)
 		r.win = win
 		r.holders = {}
