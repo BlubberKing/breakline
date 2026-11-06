@@ -477,11 +477,16 @@ end
 function Models.ANVIL(k)
 	stdGrip(k, C.Dark)
 	k.box("Receiver", V(0.24, 0.3, 1.36), CF(0, 0.38, -0.32), C.Gun, METAL)
-	k.group = "cover"
-	k.box("FeedCover", V(0.24, 0.08, 0.7), CF(0, 0.57, -0.25), C.Metal, METAL)
-	for i = 0, 3 do k.box("CoverRib", V(0.246, 0.085, 0.03), CF(0, 0.57, -0.5 + i * 0.15), C.Gun, METAL) end
+	-- v7: the feed cover used to carry the sight rail with it and swung up THROUGH the scope. Now the rail + plate stay put and only the
+	-- right-hand flap (hinged on the outer edge, opens sideways and flat) lifts, so nothing mounted on top is ever in its way.
+	k.box("FeedCoverFixed", V(0.18, 0.08, 0.7), CF(-0.03, 0.57, -0.25), C.Metal, METAL)
+	for i = 0, 3 do k.box("CoverRib", V(0.186, 0.085, 0.03), CF(-0.03, 0.57, -0.5 + i * 0.15), C.Gun, METAL) end
 	k.box("CoverLatch", V(0.1, 0.05, 0.06), CF(0, 0.6, -0.6), C.Black)
 	k.box("Rail", V(0.12, 0.03, 0.6), CF(0, 0.625, -0.25), C.Black)
+	k.group = "cover"
+	k.box("FeedFlap", V(0.06, 0.08, 0.7), CF(0.09, 0.57, -0.25), C.Metal, METAL)
+	k.box("FlapRib", V(0.066, 0.085, 0.03), CF(0.09, 0.57, -0.35), C.Gun, METAL)
+	k.box("FlapRib", V(0.066, 0.085, 0.03), CF(0.09, 0.57, -0.05), C.Gun, METAL)
 	k.group = "gun"
 	k.pair("Rivet", V(0.016, 0.035, 0.035), 0.123, 0.46, -0.85, C.GunLight, METAL)
 	k.pair("Rivet", V(0.016, 0.035, 0.035), 0.123, 0.3, -0.85, C.GunLight, METAL)
@@ -593,7 +598,8 @@ function Models.HALO50(k)
 	stdGrip(k, C.Olive, 0.04, -20)
 	k.box("Chassis", V(0.2, 0.24, 1.1), CF(0, 0.25, -0.5), C.Olive)
 	k.cylZ("Receiver", 0.95, 0.2, CF(0, 0.42, -0.35), C.Gun, METAL)
-	k.box("EjectPort", V(0.014, 0.09, 0.3), CF(0.098, 0.43, -0.15), C.Black)
+	k.box("EjectPort", V(0.02, 0.11, 0.34), CF(0.099, 0.44, -0.15), C.Black)
+	k.box("LoadPort", V(0.075, 0.014, 0.34), CF(0.06, 0.508, -0.15), C.Black) -- v7: rounds drop in through here
 	k.box("Rail", V(0.1, 0.04, 0.9), CF(0, 0.54, -0.35), C.Black)
 	k.teeth("RailTooth", 0.565, -0.7, 0.14, 6, 0.12)
 	-- deep forend with a flat bottom for the hand
@@ -678,10 +684,10 @@ function Models.BREACHER(k)
 	-- the pump: a big forend that wraps the tube, rides back and forth (cycle group)
 	k.group = "cycle"
 	local pump = CF(0, 0.12, -1.2)
-	k.box("PumpGrip", V(0.2, 0.5, 0.5), pump, C.Polymer)
-	k.box("PumpTop", V(0.15, 0.1, 0.5), pump * CF(0, 0.27, 0), C.Polymer)
-	for i = 0, 5 do k.box("PumpRidge", V(0.212, 0.46, 0.04), pump * CF(0, 0, -0.2 + i * 0.08), C.Black) end
-	k.box("PumpCap", V(0.21, 0.5, 0.03), pump * CF(0, 0, -0.265), C.Rubber)
+	-- v7: the pump forend was a comically big slab (0.5 tall x 0.5 long): now a slim wrapped sleeve round the tube
+	k.box("PumpGrip", V(0.17, 0.26, 0.4), pump * CF(0, 0.12, 0), C.Polymer)
+	for i = 0, 3 do k.box("PumpRidge", V(0.178, 0.22, 0.03), pump * CF(0, 0.12, -0.14 + i * 0.09), C.Black) end
+	k.box("PumpCap", V(0.18, 0.26, 0.03), pump * CF(0, 0.12, -0.215), C.Rubber)
 	k.cylZ("ActionBar", 0.55, 0.028, CF(0.07, 0.34, -0.98), C.Chrome, METAL)
 	k.cylZ("ActionBar", 0.55, 0.028, CF(-0.07, 0.34, -0.98), C.Chrome, METAL)
 	k.foreAt(0, 0.12, -1.2)
@@ -740,7 +746,7 @@ function Models.V9(k)
 	k.box("MagBase", V(0.16, 0.05, 0.28), g * CF(0, -0.3, 0), C.Rubber)
 	k.magwell(g * CF(0, -0.28, 0))
 	k.group = "gun"
-	k.view = { X = 0.5, Y = -1.12, Z = -1.4, SprintRot = V(-40, 20, 10) }
+	k.view = { X = 0.45, Y = -0.8, Z = -1.3, SprintRot = V(-40, 20, 10), AdsEyeMult = 1.3, AdsDrop = 0.07 } -- hip pose unchanged; ADS: gun further out + lower on screen
 end
 
 -- .44 Magnum: fluted cylinder, long barrel with ribbed top, wood grips
@@ -793,7 +799,7 @@ function Models.MAGNUM(k)
 	addAux(k, 1, 6, 0.2, 0.06, BRASS)
 	addAux(k, 7, 6, 0.22, 0.055, BRASS)
 	k.group = "gun"
-	k.view = { X = 0.5, Y = -1.12, Z = -1.4, SprintRot = V(-40, 20, 10) }
+	k.view = { X = 0.45, Y = -0.8, Z = -1.3, SprintRot = V(-40, 20, 10), AdsEyeMult = 1.3, AdsDrop = 0.07 } -- hip pose unchanged; ADS: gun further out + lower on screen
 end
 
 GunModels.Models = Models
@@ -996,21 +1002,15 @@ function GunModels.HandParts(desc, glove, pad)
 	end
 
 	-- ---------- right hand (frame = pistol grip: X right, Y up the grip, Z back) ----------
+	-- v9 PLAIN BLOCK HANDS: one mitten block per hand (+ a wrist block). No finger blocks, no thumb, no pad lines, no web.
 	local G = pts.Grip
-	local hx = gw / 2
-	put("right", "HandBack", V(0.11, 0.36, gd + 0.1), G * CF(hx + 0.055, 0.04, 0.03), glove)
-	put("right", "HandBackPad", V(0.03, 0.26, gd * 0.7), G * CF(hx + 0.125, 0.04, 0.0), pad)
-	put("right", "Fingers", V(gw + 0.16, 0.3, 0.1), G * CF(0, -0.01, -gd / 2 - 0.05), glove)
-	put("right", "HandWeb", V(gw + 0.06, 0.07, 0.16), G * CF(0, 0.255, 0.14), glove)
-	put("right", "WristR", V(0.22, 0.22, 0.22), G * CF(hx + 0.03, 0.0, 0.3), glove)
+	put("right", "Hand", V(gw + 0.22, 0.4, gd + 0.12), G * CF(0, 0.0, 0.04), glove)
+	put("right", "WristR", V(0.22, 0.22, 0.22), G * CF(gw / 2 + 0.03, 0.0, 0.3), glove)
 
 	-- ---------- left hand (frame = palm point, gun axes) ----------
 	local L = CFrame.identity
-	local lw = 0.09
-	put("left", "LHandBack", V(0.11, 0.34, 0.28), L * CF(-lw - 0.06, 0.0, 0.06), glove)
-	put("left", "LHandBackPad", V(0.03, 0.26, 0.2), L * CF(-lw - 0.125, 0.0, 0.06), pad)
-	put("left", "LFingers", V(2 * lw + 0.14, 0.28, 0.1), L * CF(0, 0.0, -0.175), glove)
-	put("left", "LWrist", V(0.22, 0.22, 0.22), L * CF(-lw - 0.03, -0.02, 0.26), glove)
+	put("left", "LHand", V(0.3, 0.28, 0.34), L * CF(-0.03, 0.0, 0.02), glove)
+	put("left", "LWrist", V(0.22, 0.22, 0.22), L * CF(-0.12, -0.02, 0.26), glove)
 	return out
 end
 
