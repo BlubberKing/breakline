@@ -67,8 +67,9 @@ ReloadRemote.OnServerEvent:Connect(function(player, weapon)
 	local cfg = Weapons.Get(weapon)
 	local w = getState(player, weapon)
 	local now = os.clock()
-	if now < w.reloadUntil then return end
-	w.reloadUntil = now + cfg.ReloadTime * 0.9
+	if now < w.reloadUntil or w.ammo >= cfg.MagSize then return end
+	-- v7: round-fed guns (AWP / shotgun / revolver) only load what is missing, and a short top-up is a short reload
+	w.reloadUntil = now + Weapons.ReloadDuration(cfg, w.ammo) * 0.9
 	w.ammo = cfg.MagSize
 end)
 
