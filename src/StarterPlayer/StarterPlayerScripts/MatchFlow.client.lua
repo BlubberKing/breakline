@@ -24,6 +24,7 @@ local TimeScale = require(RS:WaitForChild("TimeScale"))
 local Levels = require(RS:WaitForChild("Levels")) -- v3.8: XP bar on the summary screen
 local Sfx = require(RS:WaitForChild("Sfx"))
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
+local LoadoutPicker = require(RS:WaitForChild("LoadoutPicker")) -- v5.7: shared dock + big picker
 local GM = RS:FindFirstChild("GadgetModels") and require(RS.GadgetModels) or nil -- v4.1: real gadget pictures
 local State = RS:WaitForChild("MatchState")
 local Remotes = RS:WaitForChild("MatchRemotes")
@@ -296,7 +297,7 @@ local function runPregame(token)
 	local scene = newScene(root, 3, true)
 	scene.cam.FieldOfView = 34
 	local cam = scene.cam
-	local baseCam = Vector3.new(0, 4.2, 28)
+	local baseCam = Vector3.new(0, 4.9, 28) -- v5.7: look point is higher + camera a bit higher, so the squad sits lower on the screen
 	addStars(scene.world, 160, 60, Vector3.new(0, 4, -30), 40)
 	local figs, figKey = {}, ""
 
@@ -347,7 +348,7 @@ local function runPregame(token)
 	new("UIStroke", { Color = BLACK, Thickness = 2, Transparency = 0.5 }, mapLbl)
 	local mapCap = label(cv, "MAP", 12, F.MB, K.dim, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 150),
 		Size = UDim2.fromOffset(200, 16), ZIndex = 8, Visible = mapName ~= "" })
-	label(cv, "CHOOSE YOUR LOADOUT", 15, F.M, K.dim, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, mapName ~= "" and 200 or 168), Size = UDim2.fromOffset(500, 22), ZIndex = 8 })
+	-- v5.7: the faint CHOOSE YOUR LOADOUT line behind the player names is gone
 	do -- the map attribute can arrive a moment after this screen opens
 		local conn
 		conn = State:GetAttributeChangedSignal("MapName"):Connect(function()
@@ -365,57 +366,20 @@ local function runPregame(token)
 			TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 8 })
 	end
 
-	-- ---- loadout dock ----
-	local SQ, GAP, GGAP = 92, 12, 40
-	local dockY = 905
-	local defs = {
-		{ kind = "move", idx = 1, tag = "MOVE", group = 1 },
-		{ kind = "weapon", idx = 1, tag = "PRIMARY", group = 2 },
-		{ kind = "gadget", idx = 1, tag = "2", group = 3 }, { kind = "gadget", idx = 2, tag = "3", group = 3 }, { kind = "gadget", idx = 3, tag = "4", group = 3 },
-		{ kind = "reserve", idx = 1, tag = "R1", group = 4 }, { kind = "reserve", idx = 2, tag = "R2", group = 4 }, { kind = "reserve", idx = 3, tag = "R3", group = 4 },
+	-- ---- loadout dock (v5.7: lower on the screen; a click opens the BIG lobby-style menu with everything you own) ----
+	local dockY = 962
+	local selected, bigPicker, dock
+	local PICK_SUBS = {
+		move = "SPECIAL MOVEMENT ABILITY  //  EVERYONE KEEPS SPRINT, SLIDE AND MANTLE",
+		weapon = "THE GUN YOU DEPLOY WITH",
+		gadget = "GADGETS SIT ON KEYS 2 - 4 IN THE MATCH",
+		reserve = "SWAP IN WHILE YOU ARE DEAD (PRESS J)  //  ONE GUN OR GADGET PER SLOT",
 	}
-	local totalW = 0
-	for i, d in defs do
-		if i > 1 then totalW += (d.group == defs[i - 1].group) and GAP or GGAP end
-		totalW += SQ
-	end
-	local x = 960 - totalW / 2
-	local tiles = {}
-	local pickerFrame, pickerKey
-	local selected
-
 	local function itemAt(kind, idx)
 		if kind == "weapon" then return loadout.Weapon
 		elseif kind == "move" then return loadout.Move
 		elseif kind == "gadget" then return loadout.Gadgets[idx]
 		else return loadout.Reserve[idx] end
-	end
-	local function paintTile(t)
-		for _, c in t.content:GetChildren() do c:Destroy() end
-		local id = itemAt(t.kind, t.idx)
-		local it = id ~= "" and Catalog.ById[id] or nil
-		if it and it.kind == "weapon" then
-			gunPicture(t.content, it.id)
-		elseif it and it.kind == "move" then -- v3.8: drawn ability icon
-			local ic = UI.AbilityIcon(t.content, it.id, 46, it.color)
-			ic.AnchorPoint, ic.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.4)
-		elseif it and it.kind == "gadget" and GM then -- v4.1: the real model, like the guns
-			local holder = new("Frame", { Size = UDim2.new(1, 0, 0.72, 0), BackgroundTransparency = 1 }, t.content)
-			GM.Picture(holder, it.id)
-		elseif it then
-			label(t.content, it.glyph, 30, F.H, it.color, { Size = UDim2.new(1, 0, 0.7, 0) })
-		else
-			label(t.content, "+", 34, F.H, K.mute, { Size = UDim2.new(1, 0, 0.7, 0) })
-		end
-		t.name.Text = it and string.upper(it.name) or "EMPTY"
-		t.name.TextColor3 = it and K.text or K.mute
-	end
-	local function paintAll()
-		for _, t in tiles do
-			paintTile(t)
-			t.stroke.Color = (selected == t) and K.red or K.line2
-			t.stroke.Thickness = (selected == t) and 2 or 1
-		end
 	end
 	local function applyItem(kind, idx, id)
 		if kind == "weapon" then loadout.Weapon = id
@@ -423,19 +387,24 @@ local function runPregame(token)
 		elseif kind == "gadget" then loadout.Gadgets[idx] = id
 		else loadout.Reserve[idx] = id end
 		LoadoutR:FireServer({ Weapon = loadout.Weapon, Move = loadout.Move, Gadgets = table.clone(loadout.Gadgets), Reserve = table.clone(loadout.Reserve) })
-		paintAll()
+		if dock then dock:Paint() end
 	end
 	local function closePicker()
-		if pickerFrame then pickerFrame:Destroy() pickerFrame = nil end
+		if bigPicker then
+			local pk = bigPicker
+			bigPicker = nil
+			pk:Destroy()
+		end
 		selected = nil
-		paintAll()
+		if dock then dock:Select(nil) end
 	end
 	local function openPicker(t)
 		local same = selected == t
 		closePicker()
 		if same then return end
 		selected = t
-		paintAll()
+		dock:Select(t)
+		sfx("MenuOpen")
 		local items = {}
 		-- v4.7: only what you own (bought in the lobby shop)
 		local function addOwned(list) for _, it in list do if Catalog.Owns(player, it.id) then table.insert(items, it) end end end
@@ -446,70 +415,16 @@ local function runPregame(token)
 			addOwned(Catalog.Gadgets)
 			addOwned(Catalog.Weapons)
 		end
-		local CW, CH = 118, 142
-		local w = math.min(1500, #items * (CW + 10) + 40 + (t.kind ~= "weapon" and (CW + 10) or 0))
-		pickerFrame = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(960, dockY - 52), Size = UDim2.fromOffset(w, CH + 74),
-			BackgroundColor3 = K.panel, BackgroundTransparency = 0.04, BorderSizePixel = 0, ZIndex = 12 }, cv)
-		new("UIStroke", { Color = K.line2, Thickness = 1 }, pickerFrame)
-		new("Frame", { Size = UDim2.fromOffset(3, CH + 74), BackgroundColor3 = K.red, BorderSizePixel = 0, ZIndex = 13 }, pickerFrame)
-		label(pickerFrame, PICK_TITLES[t.kind] .. ((t.kind == "gadget" or t.kind == "reserve") and ("  /  SLOT " .. t.idx) or ""), 22, F.H, K.text,
-			{ Position = UDim2.fromOffset(20, 10), Size = UDim2.fromOffset(500, 28), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 13 })
-		local sf = new("ScrollingFrame", { Position = UDim2.fromOffset(14, 48), Size = UDim2.new(1, -28, 0, CH + 16), BackgroundTransparency = 1, BorderSizePixel = 0,
-			CanvasSize = UDim2.fromOffset(#items * (CW + 10) + (t.kind ~= "weapon" and (CW + 10) or 0), 0), ScrollBarThickness = 3, ScrollingDirection = Enum.ScrollingDirection.X,
-			ZIndex = 13 }, pickerFrame)
-		local ix = 0
-		local function card(it)
-			local b = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(ix, 0), Size = UDim2.fromOffset(CW, CH),
-				BackgroundColor3 = K.panel2, BorderSizePixel = 0, ZIndex = 14 }, sf)
-			local cur = itemAt(t.kind, t.idx)
-			local st = new("UIStroke", { Color = (it and it.id == cur or (not it and cur == "")) and K.red or K.line, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
-			local art = new("Frame", { Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 0, 78), BackgroundTransparency = 1, ZIndex = 15 }, b)
-			if it and it.kind == "weapon" then gunPicture(art, it.id)
-			elseif it and it.kind == "gadget" and GM then GM.Picture(art, it.id)
-			elseif it and it.kind == "move" then
-				local ic = UI.AbilityIcon(art, it.id, 52, it.color)
-				ic.AnchorPoint, ic.Position, ic.ZIndex = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5), 15
-				for _, d in ic:GetDescendants() do if d:IsA("GuiObject") then d.ZIndex = 15 end end
-			elseif it then label(art, it.glyph, 34, F.H, it.color, { Size = UDim2.fromScale(1, 1), ZIndex = 15 })
-			else label(art, "NONE", 22, F.H, K.mute, { Size = UDim2.fromScale(1, 1), ZIndex = 15 }) end
-			label(b, it and string.upper(it.name) or "EMPTY", 16, F.H, K.text, { Position = UDim2.fromOffset(4, 92), Size = UDim2.new(1, -8, 0, 22), ZIndex = 15 })
-			label(b, it and it.sub or "clear slot", 12, F.M, K.dim, { Position = UDim2.fromOffset(4, 114), Size = UDim2.new(1, -8, 0, 18), ZIndex = 15 })
-			b.MouseEnter:Connect(function() tween(b, QUICK, { BackgroundColor3 = K.panel3 }) end)
-			b.MouseLeave:Connect(function() tween(b, QUICK, { BackgroundColor3 = K.panel2 }) end)
-			b.MouseButton1Click:Connect(function()
-				applyItem(t.kind, t.idx, it and it.id or "")
-				closePicker()
-			end)
-			ix += CW + 10
-		end
-		if t.kind ~= "weapon" then card(nil) end
-		for _, it in items do card(it) end
+		-- v5.7: the big menu (same look as the lobby loadout), not the tiny horizontal scroll any more
+		bigPicker = LoadoutPicker.Big(cv, {
+			title = PICK_TITLES[t.kind] .. ((t.kind == "gadget" or t.kind == "reserve") and ("  /  SLOT " .. t.idx) or ""),
+			sub = PICK_SUBS[t.kind] or "",
+			items = items, current = itemAt(t.kind, t.idx), allowNone = t.kind ~= "weapon", z = 30,
+			onPick = function(id) sfx("LoadoutPick") applyItem(t.kind, t.idx, id) end,
+			onClose = function() bigPicker = nil; selected = nil; if dock then dock:Select(nil) end end,
+		})
 	end
-
-	-- group captions + tiles
-	local groupX = {}
-	for i, d in defs do
-		if i > 1 then x += (d.group == defs[i - 1].group) and GAP or GGAP end
-		local btn = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(x, dockY), Size = UDim2.fromOffset(SQ, SQ),
-			BackgroundColor3 = K.panel, BackgroundTransparency = 0.05, BorderSizePixel = 0, ZIndex = 8 }, cv)
-		local stroke = new("UIStroke", { Color = K.line2, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, btn)
-		local content = new("Frame", { Position = UDim2.fromOffset(4, 2), Size = UDim2.new(1, -8, 1, -22), BackgroundTransparency = 1, ZIndex = 9 }, btn)
-		local nameL = label(btn, "", 12, F.M, K.text, { Position = UDim2.new(0, 2, 1, -20), Size = UDim2.new(1, -4, 0, 18), ZIndex = 9 })
-		label(btn, d.tag, 12, F.MB, K.dim, { Position = UDim2.fromOffset(6, 3), Size = UDim2.fromOffset(40, 14), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 10 })
-		local t = { kind = d.kind, idx = d.idx, btn = btn, stroke = stroke, content = content, name = nameL }
-		table.insert(tiles, t)
-		btn.MouseEnter:Connect(function() tween(btn, QUICK, { BackgroundColor3 = K.panel3 }) end)
-		btn.MouseLeave:Connect(function() tween(btn, QUICK, { BackgroundColor3 = K.panel }) end)
-		btn.MouseButton1Click:Connect(function() openPicker(t) end)
-		groupX[d.group] = groupX[d.group] or { x, x }
-		groupX[d.group][2] = x + SQ
-		x += SQ -- next tile starts after this one (this was missing: every tile used to land on the same spot)
-	end
-	local CAPTIONS = { "MOVEMENT", "WEAPON", "GADGETS", "RESERVE" }
-	for g, r in groupX do
-		label(cv, CAPTIONS[g], 13, F.MB, K.mute, { Position = UDim2.fromOffset(r[1], dockY - 24), Size = UDim2.fromOffset(r[2] - r[1], 18), ZIndex = 8 })
-	end
-	paintAll()
+	dock = LoadoutPicker.Dock(cv, { y = dockY, z = 8, itemAt = itemAt, onClick = openPicker })
 	setModal(true)
 
 	-- fade in from black
@@ -523,7 +438,7 @@ local function runPregame(token)
 	renderFns.pregame = function(dt)
 		local t = os.clock() - t0
 		-- camera drift
-		cam.CFrame = CFrame.lookAt(baseCam + Vector3.new(math.sin(t * 0.35) * 0.9, math.sin(t * 0.5) * 0.15, 0), Vector3.new(0, 3.6, 0))
+		cam.CFrame = CFrame.lookAt(baseCam + Vector3.new(math.sin(t * 0.35) * 0.9, math.sin(t * 0.5) * 0.15, 0), Vector3.new(0, 5.3, 0)) -- (was 3.6)
 		for _, f in figs do f.fig:Update(t, dt) end
 		local vs = scene.vp.AbsoluteSize
 		for i, f in figs do
