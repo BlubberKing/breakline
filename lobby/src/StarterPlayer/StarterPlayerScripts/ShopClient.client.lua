@@ -254,7 +254,7 @@ local function gunStats(parent, y, id)
 	y = statBar(parent, y, "DAMAGE", cfg.Pellets > 1 and (cfg.Damage .. " x " .. cfg.Pellets) or tostring(cfg.Damage), perShot / 90)
 	y = statBar(parent, y, "FIRE RATE", rpm .. " RPM", rpm / 900)
 	y = statBar(parent, y, "MAGAZINE", tostring(cfg.MagSize), cfg.MagSize / 80)
-	y = statBar(parent, y, "RELOAD", ("%.1f s"):format(cfg.ReloadTime), 1 - (cfg.ReloadTime - 1) / 3.6)
+	y = statBar(parent, y, "RELOAD", ("%.1f s"):format(cfg.ReloadTime), math.clamp(1 - (cfg.ReloadTime - 1) / 5, 0.05, 1))
 	y = statBar(parent, y, "RANGE", cfg.Range .. " studs", cfg.Range / 1500)
 	y = statBar(parent, y, "MOBILITY", ("%d%%"):format(math.floor(cfg.MoveSpeed * 100 + 0.5)), (cfg.MoveSpeed - 0.8) / 0.3)
 	y += 6
