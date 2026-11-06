@@ -60,15 +60,18 @@ local CFG = {
 	WR_REGEN = 2.6,         -- seconds to refill from empty (on the ground; 15% as fast in the air)
 	WR_MIN_START = 0.25,    -- after running dry you need this much stamina back to start again
 	WR_MIN_SPEED = 18,      -- you need this much flat speed to start a wall run (sprint = 30, walk = 16)
-	WR_REACH = 2.9,         -- how far ahead / beside you a wall counts
+	WR_REACH = 3.6,         -- v5.7: how far AHEAD of you a wall counts for a head-on run (was 2.9)
+	WR_SIDE_REACH = 4.8,    -- v5.7: how far to your SIDE a wall counts: run past a wall within this distance and you latch on at once (was 2.9, air only)
+	WR_ALONG_MAX = 0.62,    -- v5.7: running at the wall at a steeper angle than this (1 = head-on) = run UP it, shallower = run ALONG it
 	WR_WALL_H = 5.5,        -- the wall must still be there this high above your feet (lower = a ledge: jump / mantle it)
 	WR_HEAD_ON = 0.6,       -- from the ground you must run at the wall this straight on (1 = perpendicular)
 	WR_JUMP_OUT = 24, WR_JUMP_UP = 40,
-	WR_LEAN_SIDE = 15, WR_LEAN_UP = 12, -- degrees the body leans into the wall
+	WR_LEAN_SIDE = 8, WR_LEAN_UP = 8,   -- degrees the body leans into the wall (v5.7: was 15 / 12, it twisted the view)
 	WR_IDLE_EXIT = 0.3,     -- seconds with no move key before you drop off
 	-- wall climb
 	WC_SPEED = 17,
 	WC_REACH = 3.0,         -- SPACE grab reach (walls, overhangs, ceilings)
+	WC_CORNER_REACH = 4.2,  -- v5.7: a ceiling / wall AHEAD of you inside this distance takes over as your surface (wall <-> ceiling)
 	WC_AUTO_REACH = 1.9,    -- walk-into-wall grab reach
 	WC_AUTO_HOLD = 0.14,    -- seconds you must push into the wall before you grab it
 	WC_COOLDOWN = 3.5,
@@ -79,11 +82,11 @@ local CFG = {
 	DASH_CHARGES = 3,
 	DASH_RECHARGE = 10,     -- seconds per charge
 	-- shared
-	HOLD_SIDE = 1.45,       -- how far the root floats off the wall (running along it)
+	HOLD_SIDE = 2.0,        -- how far the root floats off the wall (running along it) (v5.7: was 1.45, the camera was jammed into the wall)
 	HOLD_FACE = 1.75,       -- ... when facing the wall (up-run / climb)
 	ATTACH_LOCK = 0.4,      -- seconds you cannot re-attach after leaving a surface
 	SAME_WALL_LOCK = 0.9,   -- seconds you cannot re-attach to the wall you just left
-	ROLL_DEG = 6,           -- camera roll while running along a wall
+	ROLL_DEG = 3,           -- camera roll while running along a wall (v5.7: was 6)
 }
 
 local NAMES = { DASH = "DASH", DJUMP = "DOUBLE JUMP", MJUMP = "MEGA JUMP", WRUN = "WALL RUN", WCLIMB = "WALL CLIMB" }
@@ -171,6 +174,24 @@ local function surfaceDir(n, input)
 	local want = (f.Magnitude > 0.05 and f.Unit * input.Y or Vector3.zero) + (r.Magnitude > 0.05 and r.Unit * input.X or Vector3.zero)
 	if want.Magnitude < 0.05 then return Vector3.zero end
 	return want.Unit * math.min(1, input.Magnitude)
+end
+
+-- v5.7: direction while running ALONG a wall. The run stays horizontal (never drifts up the wall because the camera looks into it):
+-- the move keys are turned into "which way along the wall" from where the camera points. W with the camera pointing along the wall = that
+-- way, S = back, A / D follow the camera's right. If the camera points straight into the wall (no clear direction) you keep your way.
+local function sideDir(n, input, current)
+	if input.Magnitude < 0.1 then return Vector3.zero end
+	local t = Vector3.yAxis:Cross(n)
+	if t.Magnitude < 0.05 then return Vector3.zero end
+	t = t.Unit
+	local cf = camera.CFrame
+	local f, r = flat(cf.LookVector), flat(cf.RightVector)
+	local along = (f.Magnitude > 0.05 and f.Unit:Dot(t) * input.Y or 0) + (r.Magnitude > 0.05 and r.Unit:Dot(t) * input.X or 0)
+	if math.abs(along) < 0.25 then
+		local c = flat(current)
+		return c.Magnitude > 0.05 and c.Unit or t
+	end
+	return t * (along > 0 and 1 or -1)
 end
 
 local function makeCF(pos, up, look)
@@ -279,7 +300,7 @@ local function enterMode(m, hit, initDir, initSpeed)
 	driver.Enabled = true
 	align.Enabled = true
 	wallRing(root.Position - normal * (surfDist - 0.1), normal, 5, ICON_COL[move] or K.soul)
-	playSound("WallStart")
+	playSound(m == "climb" and "ClimbGrab" or "WallStart") -- v5.7: ClimbGrab falls back to WallStart
 end
 
 local function exitMode(launch)
@@ -292,7 +313,7 @@ local function exitMode(launch)
 	uprightUntil = os.clock() + 0.28 -- stand back up smoothly instead of snapping
 	attachLock = os.clock() + CFG.ATTACH_LOCK
 	lastWall, lastWallUntil = wallPart, os.clock() + CFG.SAME_WALL_LOCK
-	if was == "climb" then startCooldown(CFG.WC_COOLDOWN) end
+	if was == "climb" then startCooldown(CFG.WC_COOLDOWN) playSound("ClimbRelease") end -- v5.7 sound hook
 	if launch then root.AssemblyLinearVelocity = launch end
 	hum:ChangeState(Enum.HumanoidStateType.Freefall)
 end
@@ -336,11 +357,13 @@ end
 -- is the surface in `hit` a real wall (still there WR_WALL_H above your feet), not just a ledge you can jump or mantle?
 local function wallTall(hit)
 	local o = Vector3.new(root.Position.X, feetY() + CFG.WR_WALL_H, root.Position.Z)
-	local r = cast(o, -hit.Normal * (CFG.WR_REACH + 1.5))
+	local r = cast(o, -hit.Normal * (hit.Distance + 1.6))
 	return r ~= nil and math.abs(r.Normal.Y) < 0.5
 end
 
--- wall run auto-start. From the ground only a (nearly) head-on sprint counts; in the air any wall in front / beside you does.
+-- wall run auto-start (v5.7: ground AND air, no jump needed, no need to be pressed against the wall).
+--   * a wall within WR_SIDE_REACH beside you while you move past it  -> you latch on and run ALONG it
+--   * a wall right ahead (WR_REACH) and you run at it fairly straight -> you run UP it
 -- returns hit, initial run direction on the wall, initial speed
 local function probeWallRun(grounded)
 	local v = root.AssemblyLinearVelocity
@@ -349,29 +372,27 @@ local function probeWallRun(grounded)
 	local fwd = hv.Unit
 	local right = fwd:Cross(Vector3.yAxis)
 	local best, bestInto
-	local function try(d, airOnly)
-		if airOnly and grounded then return end
-		local r = cast(root.Position, d * CFG.WR_REACH)
+	local function try(d, reach)
+		local r = cast(root.Position, d * reach)
 		if not r or math.abs(r.Normal.Y) > 0.3 then return end
 		if r.Instance == lastWall and os.clock() < lastWallUntil then return end
-		if not best or r.Distance < best.Distance then
-			best, bestInto = r, -r.Normal:Dot(fwd)
-		end
+		local into = -r.Normal:Dot(fwd)
+		if into < -0.2 then return end -- moving away from that wall
+		if not best or r.Distance < best.Distance then best, bestInto = r, into end
 	end
-	try(fwd, false)
-	try((fwd + right).Unit, true)
-	try((fwd - right).Unit, true)
-	try(right, true)
-	try(-right, true)
+	try(fwd, CFG.WR_REACH)
+	try((fwd + right).Unit, CFG.WR_SIDE_REACH)
+	try((fwd - right).Unit, CFG.WR_SIDE_REACH)
+	try(right, CFG.WR_SIDE_REACH)
+	try(-right, CFG.WR_SIDE_REACH)
 	if not best then return nil end
-	if grounded and bestInto < CFG.WR_HEAD_ON then return nil end
 	if not wallTall(best) then return nil end
 	local dir
-	if bestInto > 0.55 then
+	if bestInto > CFG.WR_ALONG_MAX and best.Distance <= CFG.WR_REACH then
 		dir = Vector3.yAxis -- running at it: up
 	else
 		dir = onPlane(fwd, best.Normal)
-		dir = dir.Magnitude > 0.05 and dir.Unit or fwd
+		dir = dir.Magnitude > 0.05 and flat(dir).Unit or fwd
 	end
 	return best, dir, hv.Magnitude
 end
@@ -392,6 +413,7 @@ end
 local function doubleJump()
 	usedDJ = true
 	startCooldown(CFG.DJ_COOLDOWN)
+	playSound("DoubleJump") -- v5.7 sound hook
 	ring(feetPos(), 9, ICON_COL.DJUMP)
 	local vy = math.sqrt(2 * workspace.Gravity * CFG.DJ_HEIGHT)
 	local v = root.AssemblyLinearVelocity
@@ -472,6 +494,7 @@ end
 local function startCharge()
 	charging, chargeStart = true, os.clock()
 	char:SetAttribute("AbilitySlow", CFG.MJ_CHARGE_SLOW)
+	playSound("MegaCharge") -- v5.7 sound hook
 end
 local function endCharge()
 	charging = false
@@ -489,6 +512,7 @@ local function releaseCharge()
 	local h = CFG.MJ_MIN_HEIGHT + (CFG.MJ_MAX_HEIGHT - CFG.MJ_MIN_HEIGHT) * frac ^ 0.85
 	local vy = math.sqrt(2 * workspace.Gravity * h)
 	startCooldown(CFG.MJ_COOLDOWN)
+	playSound("MegaLaunch") -- v5.7 sound hook
 	ring(feetPos(), 8 + 10 * frac, ICON_COL.MJUMP)
 	hum:ChangeState(Enum.HumanoidStateType.Jumping)
 	local v = root.AssemblyLinearVelocity
@@ -639,10 +663,11 @@ local function updateWallRun(dt)
 	stamina -= dt / CFG.WR_SECONDS * (upRun and 1.4 or 1)
 	if stamina <= 0 then
 		stamina, exhausted = 0, true
+		playSound("WallExhausted") -- v5.7 sound hook
 		exitMode(normal * 5)
 		return
 	end
-	local hit = cast(root.Position, -normal * (CFG.WR_REACH + 0.8))
+	local hit = cast(root.Position, -normal * (CFG.WR_SIDE_REACH + 0.8))
 	if hit and math.abs(hit.Normal.Y) <= 0.35 then
 		normal = normal:Lerp(hit.Normal, 0.5).Unit
 		surfDist, missT = hit.Distance, 0
@@ -655,7 +680,14 @@ local function updateWallRun(dt)
 			return
 		end
 	end
-	local want = surfaceDir(normal, moveInput())
+	local inp = moveInput()
+	local want
+	if runDir.Y > 0.55 then
+		want = surfaceDir(normal, inp) -- running UP: camera-relative on the wall (A / D slide you sideways, which turns it into a side run)
+	else
+		want = sideDir(normal, inp, runDir) -- running ALONG: stays horizontal, the camera cannot tilt it up the wall
+		if inp.Y > 0.3 and camera.CFrame.LookVector.Y > 0.82 then want = Vector3.yAxis; upT = 0 end -- look straight up + W = run up
+	end
 	if want.Magnitude < 0.1 then
 		idleT += dt
 		if idleT > CFG.WR_IDLE_EXIT then exitMode(normal * 4) return end
@@ -688,20 +720,25 @@ local function updateWallRun(dt)
 		if fl and fl.Normal.Y > 0.5 then exitMode(nil) return end
 	end
 	local hold = upRun and CFG.HOLD_FACE or CFG.HOLD_SIDE
-	local pull = clamp((surfDist - hold) * 12, -10, 10)
+	local pull = clamp((surfDist - hold) * 12, -14, 14)
 	driver.VectorVelocity = runDir * speedNow - normal * pull
 	alignTo(dt)
 end
 
 local function climbHit(dir)
 	local pos = root.Position
+	-- v5.7: look for the NEXT surface first. Before, the wall under your hands always won, so a ceiling in front of you was only noticed once
+	-- the wall was already gone (which never happened) - you could not get from a wall onto a ceiling. Now a ceiling / wall that is ahead of
+	-- you in the direction you climb (inside corner) takes over as soon as it is within WC_CORNER_REACH.
+	if dir.Magnitude > 0.1 then
+		local d = dir.Unit
+		local ahead = cast(pos, d * CFG.WC_CORNER_REACH)
+		if ahead and ahead.Normal.Y < 0.5 and ahead.Normal:Dot(normal) < 0.8 and -ahead.Normal:Dot(d) > 0.25 then return ahead end
+	end
 	local r = cast(pos, -normal * (CFG.WC_REACH + 0.8))
 	if r and r.Normal.Y < 0.5 then return r end
 	if dir.Magnitude > 0.1 then
 		local d = dir.Unit
-		-- inside corner (wall into ceiling): the surface is ahead of you
-		r = cast(pos, d * (CFG.WC_REACH))
-		if r and r.Normal.Y < 0.5 and r.Normal:Dot(normal) < 0.95 then return r end
 		-- outside corner (over an edge): the new surface is the side face just past the edge
 		r = cast(pos + d * 2.4 - normal * (surfDist + 0.8), -d * 3.2)
 		if r and r.Normal.Y < 0.5 and r.Normal:Dot(d) > 0.5 then return r end
