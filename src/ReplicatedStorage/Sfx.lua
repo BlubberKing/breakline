@@ -11,7 +11,7 @@ local Debris = game:GetService("Debris")
 local Bank = require(script.Parent:WaitForChild("SoundBank"))
 
 local Sfx = {}
-local SECTIONS = { "Global", "Combat", "Movement", "Boxes", "Death", "Match" }
+local SECTIONS = { "Global", "Combat", "Body", "Movement", "Abilities", "Gadgets", "Boxes", "Death", "Match", "UI", "Cards" } -- v5.7: more sections (names only group the SoundBank, any section works)
 local flat = {}    -- name -> info
 local perGun = {}  -- gunId -> name -> info
 local preload = {}
