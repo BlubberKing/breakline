@@ -13,6 +13,7 @@ local PC = require(RS:WaitForChild("PlaceConfig"))
 local R = {}
 R.Reserved = (game.PrivateServerId ~= "" and game.PrivateServerOwnerId == 0) and not RunService:IsStudio()
 R.Total = 0
+R.Bots = nil  -- v5.7: { Red = n, Blue = n } bots to add (set by the lobby matchmaker when nobody else queued)
 R.Mode = nil -- v4.2: "1v1" or "Breakline", saved by the lobby matchmaker
 local teamOf = {}
 local bootClock = os.clock()
@@ -23,8 +24,9 @@ if R.Reserved then
 		local ok, data = pcall(function() return matches:GetAsync(game.PrivateServerId) end)
 		if ok and type(data) == "table" then
 			if type(data.Mode) == "string" then R.Mode = data.Mode end
+			if type(data.Bots) == "table" then R.Bots = { Red = tonumber(data.Bots.Red) or 0, Blue = tonumber(data.Bots.Blue) or 0 } end
 			for teamName, ids in data do
-				if type(ids) ~= "table" then continue end -- (skips the Mode field)
+				if type(ids) ~= "table" or teamName == "Bots" then continue end -- (skips the Mode + Bots fields)
 				for _, uid in ids do
 					teamOf[uid] = teamName
 					R.Total += 1
