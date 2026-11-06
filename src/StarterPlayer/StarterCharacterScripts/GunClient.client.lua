@@ -863,34 +863,9 @@ local function onRender(dt)
 	local br = 1 - aimAlpha * 0.8
 	local breathe = CFrame.new(0, math.sin(now * 1.7) * 0.01 * br, 0) * CFrame.Angles(rad(math.sin(now * 1.7) * 0.3 * br), 0, 0)
 
-	-- v3.4 stylish draw. Swing = comes up from low right and snaps in (small overshoot); Flip = a full flip in the air (SMG / pistol);
-	-- Twirl = a barrel roll (revolver); Heavy = slow and weighty, lands with a thunk (LMG / sniper / shotgun). All finish with a settle kick.
-	local style = cfg.EquipStyle
-	local equipDur = math.max(cfg.EquipTime + (style == "Heavy" and 0.2 or 0.1), 0.34)
-	local e = math.clamp((now - equipStart) / equipDur, 0, 1)
-	local equipCF
-	if e >= 1 then
-		equipCF = IDENT
-		if not equipSettled then
-			equipSettled = true
-			local w = style == "Heavy" and 2 or 1
-			recoilPos:Impulse(Vector3.new(0, -0.8 * w, 2.2 * w))
-			recoilRot:Impulse(Vector3.new(30 * w, 0, 10 * w))
-		end
-	else
-		local back = 1 - easeOutBack(e) -- 1 -> a small negative overshoot -> 0
-		if style == "Flip" or style == "Twirl" then
-			local spin = 1 - easeOutCubic(e)
-			local turn = style == "Flip" and CFrame.Angles(rad(-360 * spin - 18 * back), 0, rad(16 * back))
-				or CFrame.Angles(rad(-20 * back), 0, rad(360 * spin + 18 * back))
-			equipCF = CFrame.new(0.12 * back, -0.8 * back, 0.25 * back) * CFrame.new(equipPivot) * turn * CFrame.new(-equipPivot)
-		elseif style == "Heavy" then
-			local hv = 1 - easeOutCubic(e)
-			equipCF = CFrame.new(0.25 * hv, -1.0 * hv, 0.4 * hv) * CFrame.Angles(rad(-30 * hv), rad(-26 * hv), rad(24 * hv))
-		else
-			equipCF = CFrame.new(0.3 * back, -1.0 * back, 0.3 * back) * CFrame.Angles(rad(-45 * back), rad(-20 * back), rad(25 * back))
-		end
-	end
+	-- v6: no draw / swing-in animation any more (it looked bad): the gun is simply there when you equip it
+	local equipCF = IDENT
+	equipSettled = true
 
 	local sk = smooth(slideAlpha)
 	local skPos = sk * (1 - aimAlpha * 0.9)
