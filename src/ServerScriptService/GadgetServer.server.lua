@@ -246,6 +246,7 @@ local function smokeBlocks(a, b)
 end
 
 local function buildSmoke(owner, pos)
+	FxR:FireAllClients("SmokePop", pos) -- v5.7: sound hook (GadgetClient)
 	local cfg = Cfg.Items.SMOKE
 	local R = cfg.radius
 	local center = mkPart({ Name = "SmokeCloud", Transparency = 1, Size = Vector3.one * R * 0.9, Position = pos + Vector3.new(0, 2, 0) })
@@ -330,6 +331,7 @@ local function buildSentry(owner, pos, facing)
 	model:SetAttribute("OwnerId", owner.UserId)
 	CS:AddTag(model, "Sentry")
 	model.Parent = fxFolder
+	FxR:FireAllClients("SentryDeploy", headPos) -- v5.7: sound hook
 	local rec = {
 		model = model, hum = hum, owner = owner, headPos = headPos, parts = parts, eye = eye, muzzleOff = muzzleOff, alive = true,
 		aim = facing, base = facing, scan = 0, nextFire = 0, nextScan = 0, armAt = os.clock() + cfg.armTime, dieAt = os.clock() + cfg.life, target = nil,
@@ -411,6 +413,7 @@ local function sentryShoot(rec, cfg, target)
 	local tr = mkPart({ Size = Vector3.new(0.12, 0.12, len), CFrame = CFrame.lookAt(muzzle, endPos) * CFrame.new(0, 0, -len / 2),
 		Material = Enum.Material.Neon, Color = teamColor(rec.owner), Transparency = 0.15 })
 	Debris:AddItem(tr, 0.06)
+	FxR:FireAllClients("SentryShot", muzzle) -- v5.7: sound hook
 end
 
 ------------------------------------------------------------------ mines
@@ -506,6 +509,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 			m.armed = true
 			m.eye.Color = Color3.fromRGB(255, 50, 50)
 			m.light.Enabled = true
+			FxR:FireAllClients("MineArm", m.pos) -- v5.7: sound hook
 		end
 		if m.armed then
 			m.blink += dt
@@ -513,6 +517,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 			if m.blink >= rate then
 				m.blink = 0
 				m.light.Enabled = not m.light.Enabled
+				if m.light.Enabled and not m.trig then FxR:FireAllClients("MineBeep", m.pos) end -- v5.7: sound hook
 				m.eye.Transparency = m.light.Enabled and 0 or 0.6
 			end
 			if not m.trig and now >= m.nextCheck then
@@ -524,6 +529,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 							local d = root.Position - m.pos
 							if Vector3.new(d.X, 0, d.Z).Magnitude <= mc.trigger and math.abs(d.Y - m.pos.Y) < 6 then
 								m.trig = now + mc.delay
+								FxR:FireAllClients("MineTrigger", m.pos) -- v5.7: sound hook
 								break
 							end
 						end
@@ -800,7 +806,7 @@ PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing)
 	elseif id == "SHIELD" then buildShield(player, pos)
 	elseif id == "MINE" then buildMine(player, pos, normal) end
 	commit(player, s, slot, cfg, t, char)
-	FxR:FireAllClients("Placed", pos, normal)
+	FxR:FireAllClients("Placed", pos, normal, id)
 end)
 
 -- recharge loop
