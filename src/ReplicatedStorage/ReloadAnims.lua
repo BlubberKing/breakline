@@ -22,139 +22,149 @@ local function smooth(x) return x * x * (3 - 2 * x) end
 local IDENT = CF()
 local Defs = {}
 
--- ================= M4A1: drop the mag, fresh mag from the pouch, slap, charge =================
+local ZERO = V(0, 0, 0)
+local TOSS = V(-2.6, -0.9, -0.6) -- where a thrown mag flies to (left + forward, then it is hidden)
+local POUCH = V(-1.0, -0.85, 0.3) -- where the fresh mag comes from (relative to the mag pivot)
+local function base(FO)
+	return { t = 0, hand = FO, grab = 0, mag = ZERO, rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0, tr = 0, tp = 0, ty = 0, gp = ZERO }
+end
+
+-- ================= M4A1: thumb the release, yank the mag (gun jerks), FLICK it away, fresh mag from the pouch, slam + tap, charge =================
 function Defs.VX9(a)
 	local MP, FO = a.MP, a.FO
 	local function m(x, y, z) return MP + V(x, y, z) end
 	return {
-		tilt = { roll = -30, pitch = 12, yaw = 10, lift = V(-0.3, 0.55, 0.25), rise = 0.14, fall = 0.86 },
+		tilt = { roll = -30, pitch = 12, yaw = 10, lift = V(-0.3, 0.55, 0.25), rise = 0.12, fall = 0.9 },
 		keys = {
-			{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
-			{ t = 0.10 },
-			{ t = 0.19, hand = m(0, 0, 0), grab = 1 },
-			{ t = 0.27 },
-			{ t = 0.37, hand = m(-0.45, -0.5, 0.1), mag = V(-0.45, -0.5, 0.1), rx = 15, rz = -10 },
-			{ t = 0.46, hand = m(-0.8, -0.8, 0.35), grab = 0.3, mag = V(-1.1, -3.5, 0.4), rx = 50, rz = -30, fall = true },
-			{ t = 0.47, mag = V(-0.9, -3.0, 0.4), rx = 0, rz = 0, fall = true },
-			{ t = 0.53, hand = m(-0.9, -0.8, 0.35), grab = 1, mag = V(-0.9, -0.8, 0.35), fall = false },
-			{ t = 0.67, hand = m(-0.3, -0.5, 0.05), mag = V(-0.3, -0.5, 0.05) },
-			{ t = 0.75, hand = m(0, -0.14, 0), mag = V(0, -0.14, 0) },
-			{ t = 0.80, hand = m(0, 0, 0), mag = V(0, 0, 0) },
-			{ t = 0.83 },
-			{ t = 0.88, hand = V(-0.1, 0.6, -0.1) },
-			{ t = 0.93, hand = V(-0.1, 0.6, 0.3), cyc = 0.35 },
-			{ t = 0.97, hand = V(-0.1, 0.6, -0.1), cyc = 0 },
-			{ t = 1, hand = FO, grab = 0 },
+			base(FO),
+			{ t = 0.07, tr = -6 },
+			{ t = 0.15, hand = m(0, -0.05, 0), grab = 1 },
+			{ t = 0.21, hand = m(0, -0.12, 0), tr = -10, gp = V(0, -0.04, 0.05) },
+			{ t = 0.27, hand = m(-0.1, -0.65, 0.05), mag = V(-0.1, -0.6, 0.05), rx = 12, tr = -16, tp = 5, gp = V(0.04, -0.06, 0.12) },
+			{ t = 0.33, hand = m(-0.6, -0.75, 0.2), grab = 0.4, mag = V(-0.6, -0.7, 0.2), rz = -35, tr = -8, tp = 0, gp = ZERO },
+			{ t = 0.38, hand = m(-0.9, -0.8, 0.3), grab = 0, mag = TOSS, rx = 220, rz = -170, fall = true },
+			{ t = 0.45, hand = MP + POUCH, grab = 1, mag = POUCH, rx = 0, rz = 0, tr = -12 },
+			{ t = 0.58, hand = m(-0.35, -0.55, 0.1), mag = V(-0.35, -0.5, 0.1), rx = 10 },
+			{ t = 0.64, hand = m(0, -0.2, 0), mag = V(0, -0.18, 0), rx = 0 },
+			{ t = 0.67, hand = m(0, 0, 0), mag = ZERO, tr = -6, gp = V(0, 0.06, -0.12) },
+			{ t = 0.71, hand = m(0, -0.22, 0), grab = 0.5, tr = -4, gp = ZERO },
+			{ t = 0.77, hand = V(-0.1, 0.6, -0.1), grab = 1 },
+			{ t = 0.83, hand = V(-0.1, 0.6, 0.3), cyc = 0.35, tp = 3 },
+			{ t = 0.86, hand = V(-0.1, 0.6, -0.1), cyc = 0, tp = 0 },
+			{ t = 0.93, hand = FO, grab = 0, tr = 0 },
+			{ t = 1 },
 		},
 		events = {
 			{ at = 0.02, snd = "ReloadStart" },
-			{ at = 0.27, snd = "MagOut" },
-			{ at = 0.75, snd = "MagIn", kick = { V(0, 1.5, 0), V(-40, 0, 30) } },
-			{ at = 0.93, snd = "Bolt", kick = { V(0, 0, 2.5), V(0, 0, 0) } },
+			{ at = 0.25, snd = "MagOut", kick = { V(0.3, -0.4, 0.8), V(25, 0, -30) } },
+			{ at = 0.67, snd = "MagIn", kick = { V(0, 1.5, 0.2), V(-45, 0, 30) } },
+			{ at = 0.83, snd = "Bolt", kick = { V(0, 0, 2.5), V(0, 0, 0) } },
 		},
 	}
 end
 
--- ================= AK-47: rock the mag out forward, hook the new one in front and rock it back, charge from the side =================
+-- ================= AK-47: rock the mag out forward, tear it free and throw it, hook the new one on the front lip, rock it back hard, charge =================
 function Defs.KR47(a)
 	local MP, FO = a.MP, a.FO
 	local function m(x, y, z) return MP + V(x, y, z) end
 	return {
-		tilt = { roll = -26, pitch = 14, yaw = 12, lift = V(-0.3, 0.55, 0.2), rise = 0.14, fall = 0.86 },
+		tilt = { roll = -26, pitch = 14, yaw = 12, lift = V(-0.3, 0.55, 0.2), rise = 0.12, fall = 0.9 },
 		keys = {
-			{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
-			{ t = 0.10 },
-			{ t = 0.18, hand = m(0, -0.22, 0.05), grab = 1 },
-			{ t = 0.26 },
-			{ t = 0.36, hand = m(0, -0.35, -0.3), mag = V(0, -0.12, -0.22), rx = 40 },
-			{ t = 0.45, hand = m(-0.6, -0.9, 0.05), mag = V(-0.7, -0.8, -0.05), rx = 50, rz = -20 },
-			{ t = 0.50, hand = m(-0.8, -0.9, 0.2), grab = 0.3, mag = V(-0.9, -3.4, 0.0), rx = 70, rz = -40, fall = true },
-			{ t = 0.52, mag = V(-0.9, -3.0, 0.2), rx = 0, rz = 0, fall = true },
-			{ t = 0.58, hand = m(-0.95, -0.95, 0.3), grab = 1, mag = V(-0.9, -0.75, 0.3), fall = false },
-			{ t = 0.69, hand = m(-0.1, -0.55, -0.2), mag = V(-0.05, -0.38, -0.3), rx = 40 },
-			{ t = 0.76, hand = m(0, -0.38, -0.3), mag = V(0, -0.2, -0.28), rx = 38 },
-			{ t = 0.82, hand = m(0, -0.22, 0.12), mag = V(0, 0, 0), rx = 0 },
-			{ t = 0.85 },
-			{ t = 0.89, hand = V(0.17, 0.57, -0.6) },
-			{ t = 0.94, hand = V(0.17, 0.57, -0.15), cyc = 0.45 },
-			{ t = 0.97, hand = V(0.17, 0.57, -0.55), cyc = 0 },
-			{ t = 1, hand = FO, grab = 0 },
+			base(FO),
+			{ t = 0.07, tr = -8 },
+			{ t = 0.16, hand = m(0, -0.2, 0.05), grab = 1 },
+			{ t = 0.25, hand = m(0, -0.3, -0.3), mag = V(0, -0.12, -0.22), rx = 40, tr = -14, tp = 6 },
+			{ t = 0.32, hand = m(-0.5, -0.85, 0.0), mag = V(-0.6, -0.8, -0.05), rx = 60, rz = -20, tr = -18, gp = V(0.05, -0.08, 0.14) },
+			{ t = 0.38, hand = m(-0.9, -0.9, 0.2), grab = 0.3, mag = V(-0.9, -0.8, 0.1), rx = 70, rz = -40, tr = -8, tp = 0, gp = ZERO },
+			{ t = 0.42, hand = m(-1.0, -0.9, 0.2), grab = 0, mag = TOSS, rx = 260, rz = -200, fall = true },
+			{ t = 0.50, hand = MP + POUCH, grab = 1, mag = POUCH, rx = 0, rz = 0, tr = -12 },
+			{ t = 0.60, hand = m(-0.2, -0.5, -0.25), mag = V(-0.05, -0.38, -0.3), rx = 42 },
+			{ t = 0.66, hand = m(0, -0.4, -0.3), mag = V(0, -0.2, -0.28), rx = 38, tp = 4 },
+			{ t = 0.71, hand = m(0, -0.2, 0.12), mag = ZERO, rx = 0, tp = 0, tr = -6, gp = V(0, 0.05, -0.14) },
+			{ t = 0.75, hand = m(0, -0.3, 0.0), grab = 0.6, gp = ZERO, tr = -4 },
+			{ t = 0.80, hand = V(0.17, 0.57, -0.6), grab = 1 },
+			{ t = 0.86, hand = V(0.17, 0.57, -0.15), cyc = 0.45, ty = 3 },
+			{ t = 0.90, hand = V(0.17, 0.57, -0.55), cyc = 0, ty = 0 },
+			{ t = 0.95, hand = FO, grab = 0, tr = 0 },
+			{ t = 1 },
 		},
 		events = {
 			{ at = 0.02, snd = "ReloadStart" },
-			{ at = 0.26, snd = "MagOut" },
-			{ at = 0.78, snd = "MagIn", kick = { V(0, 1.2, 0.6), V(-50, 0, 30) } },
-			{ at = 0.94, snd = "Bolt", kick = { V(0, 0, 2.5), V(0, 0, 0) } },
+			{ at = 0.30, snd = "MagOut", kick = { V(0.3, -0.5, 1.0), V(30, 0, -35) } },
+			{ at = 0.71, snd = "MagIn", kick = { V(0, 1.4, 0.6), V(-55, 0, 35) } },
+			{ at = 0.86, snd = "Bolt", kick = { V(0, 0, 2.6), V(0, 0, 0) } },
 		},
 	}
 end
 
--- ================= FAMAS: bullpup, gun turned hard toward the center, mag swap behind the grip, cocking lever on top =================
+-- ================= FAMAS: bullpup, gun canted hard, mag spun out behind the grip, hammered home, cocking lever =================
 function Defs.HX3(a)
 	local MP, FO = a.MP, a.FO
 	local function m(x, y, z) return MP + V(x, y, z) end
 	return {
-		tilt = { roll = -50, pitch = 20, yaw = 12, lift = V(-0.4, 0.7, -0.3), rise = 0.14, fall = 0.86 },
+		tilt = { roll = -50, pitch = 20, yaw = 12, lift = V(-0.4, 0.7, -0.3), rise = 0.12, fall = 0.9 },
 		keys = {
-			{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
-			{ t = 0.10 },
-			{ t = 0.20, hand = m(0, -0.1, 0), grab = 1 },
-			{ t = 0.27 },
-			{ t = 0.38, hand = m(-0.15, -0.65, 0.05), mag = V(-0.15, -0.55, 0.05), rx = 8, rz = -8 },
-			{ t = 0.46, hand = m(-0.6, -0.7, 0.1), grab = 0.3, mag = V(-0.3, -2.8, 0.1), rx = 40, rz = -30, fall = true },
-			{ t = 0.47, mag = V(-0.5, -2.6, 0.1), rx = 0, rz = 0, fall = true },
-			{ t = 0.54, hand = m(-0.8, -0.55, 0.05), grab = 1, mag = V(-0.8, -0.45, 0.05), fall = false },
-			{ t = 0.68, hand = m(-0.2, -0.5, 0.05), mag = V(-0.2, -0.4, 0.05) },
-			{ t = 0.76, hand = m(0, -0.2, 0), mag = V(0, -0.12, 0) },
-			{ t = 0.80, hand = m(0, -0.1, 0), mag = V(0, 0, 0) },
-			{ t = 0.83 },
-			{ t = 0.88, hand = V(0, 0.74, -0.3) },
-			{ t = 0.93, hand = V(0, 0.74, 0.15), cyc = 0.45 },
-			{ t = 0.97, hand = V(0, 0.74, -0.25), cyc = 0 },
-			{ t = 1, hand = FO, grab = 0 },
+			base(FO),
+			{ t = 0.07, tr = -5 },
+			{ t = 0.16, hand = m(0, -0.1, 0), grab = 1 },
+			{ t = 0.22, hand = m(0, -0.18, 0), tr = -9 },
+			{ t = 0.28, hand = m(-0.15, -0.65, 0.05), mag = V(-0.15, -0.55, 0.05), rx = 8, rz = -8, tr = -15, tp = 6, gp = V(0.04, -0.06, 0.1) },
+			{ t = 0.34, hand = m(-0.6, -0.7, 0.1), grab = 0.3, mag = V(-0.5, -0.65, 0.1), rx = 40, rz = -30, tp = 0, tr = -8, gp = ZERO },
+			{ t = 0.38, hand = m(-0.8, -0.7, 0.15), grab = 0, mag = TOSS, rx = 300, rz = -140, fall = true },
+			{ t = 0.46, hand = MP + POUCH, grab = 1, mag = POUCH, rx = 0, rz = 0, tr = -12 },
+			{ t = 0.58, hand = m(-0.4, -0.55, 0.05), mag = V(-0.35, -0.48, 0.05) },
+			{ t = 0.65, hand = m(0, -0.2, 0), mag = V(0, -0.16, 0) },
+			{ t = 0.68, hand = m(0, -0.05, 0), mag = ZERO, tr = -5, gp = V(0, 0.06, -0.1) },
+			{ t = 0.72, hand = m(0, -0.25, 0), grab = 0.5, gp = ZERO },
+			{ t = 0.78, hand = V(0, 0.74, -0.3), grab = 1 },
+			{ t = 0.84, hand = V(0, 0.74, 0.15), cyc = 0.45, tp = 3 },
+			{ t = 0.88, hand = V(0, 0.74, -0.25), cyc = 0, tp = 0 },
+			{ t = 0.95, hand = FO, grab = 0, tr = 0 },
+			{ t = 1 },
 		},
 		events = {
 			{ at = 0.02, snd = "ReloadStart" },
-			{ at = 0.27, snd = "MagOut" },
-			{ at = 0.77, snd = "MagIn", kick = { V(0, 1.2, 0.4), V(-35, 0, 25) } },
-			{ at = 0.93, snd = "Bolt", kick = { V(0, 0, 2), V(0, 0, 0) } },
+			{ at = 0.26, snd = "MagOut", kick = { V(0.3, -0.4, 0.8), V(25, 0, -30) } },
+			{ at = 0.68, snd = "MagIn", kick = { V(0, 1.3, 0.4), V(-40, 0, 28) } },
+			{ at = 0.84, snd = "Bolt", kick = { V(0, 0, 2), V(0, 0, 0) } },
 		},
 	}
 end
 
--- ================= MP7: very fast mag flip, then pull the charging knob =================
+-- ================= SMG: YANK the mag so the whole gun lurches, whip it away, jam the new one in, pull the charging knob =================
 function Defs.WASP(a)
 	local MP, FO = a.MP, a.FO
 	local function m(x, y, z) return MP + V(x, y, z) end
+	local pouch = V(-0.9, -0.75, 0.3)
 	return {
 		tilt = { roll = -34, pitch = 8, yaw = 14, lift = V(-0.35, 0.5, 0.2), rise = 0.1, fall = 0.9 },
 		keys = {
-			{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
-			{ t = 0.07 },
-			{ t = 0.15, hand = m(0, -0.1, 0), grab = 1 },
-			{ t = 0.20 },
-			{ t = 0.29, hand = m(-0.7, -0.6, 0.1), mag = V(-0.7, -0.5, 0.1), rz = -35 },
-			{ t = 0.35, hand = m(-0.8, -0.7, 0.2), grab = 0.3, mag = V(-1.2, -3.2, 0.2), rz = -80, fall = true },
-			{ t = 0.36, mag = V(-1.0, -3.0, 0.3), rz = 0, fall = true },
-			{ t = 0.42, hand = m(-0.9, -0.75, 0.3), grab = 1, mag = V(-0.9, -0.7, 0.3), fall = false },
-			{ t = 0.57, hand = m(-0.2, -0.45, 0.05), mag = V(-0.2, -0.4, 0.05) },
-			{ t = 0.64, hand = m(0, -0.14, 0), mag = V(0, -0.12, 0) },
-			{ t = 0.68, hand = m(0, 0, 0), mag = V(0, 0, 0) },
-			{ t = 0.76, hand = V(0.15, 0.56, -0.1) },
-			{ t = 0.84, hand = V(0.15, 0.56, 0.3), cyc = 0.4 },
-			{ t = 0.90, hand = V(0.15, 0.56, -0.05), cyc = 0 },
-			{ t = 1, hand = FO, grab = 0 },
+			base(FO),
+			{ t = 0.05, tr = -6 },
+			{ t = 0.12, hand = m(0, -0.1, 0), grab = 1 },
+			{ t = 0.18, hand = m(-0.3, -0.55, 0.05), mag = V(-0.3, -0.5, 0.05), rz = -25, tr = -24, tp = 9, gp = V(0.06, -0.1, 0.16) },
+			{ t = 0.23, hand = m(-0.7, -0.65, 0.1), grab = 0.2, mag = V(-0.7, -0.6, 0.1), rz = -60, tr = -10, tp = 0, gp = ZERO },
+			{ t = 0.26, hand = m(-0.8, -0.7, 0.15), grab = 0, mag = TOSS, rx = 150, rz = -300, fall = true },
+			{ t = 0.34, hand = m(-0.9, -0.75, 0.3), grab = 1, mag = V(-0.9, -0.75, 0.3), rx = 0, rz = 0, tr = -12 },
+			{ t = 0.42, hand = m(-0.2, -0.4, 0.05), mag = V(-0.2, -0.38, 0.05) },
+			{ t = 0.47, hand = m(0, -0.1, 0), mag = ZERO, tr = -5, gp = V(0, 0.08, -0.14) },
+			{ t = 0.51, hand = m(0, -0.2, 0), grab = 0.5, gp = ZERO },
+			{ t = 0.59, hand = V(0.15, 0.56, -0.1), grab = 1 },
+			{ t = 0.67, hand = V(0.15, 0.56, 0.3), cyc = 0.4 },
+			{ t = 0.72, hand = V(0.15, 0.56, -0.05), cyc = 0 },
+			{ t = 0.80, hand = FO, grab = 0, tr = 0 },
+			{ t = 1 },
 		},
 		events = {
 			{ at = 0.02, snd = "ReloadStart" },
-			{ at = 0.20, snd = "MagOut" },
-			{ at = 0.65, snd = "MagIn", kick = { V(0, 1.2, 0), V(-30, 0, 20) } },
-			{ at = 0.84, snd = "Bolt", kick = { V(0, 0, 1.8), V(0, 0, 0) } },
+			{ at = 0.17, snd = "MagOut", kick = { V(0.5, -0.6, 1.4), V(40, 0, -45) } },
+			{ at = 0.47, snd = "MagIn", kick = { V(0, 1.6, 0.2), V(-45, 0, 30) } },
+			{ at = 0.67, snd = "Bolt", kick = { V(0, 0, 1.8), V(0, 0, 0) } },
 		},
 	}
 end
 
--- ================= M249: pop the feed cover, swap the box, lay the belt, slam the cover =================
+-- ================= M249: pop the feed cover, haul the old box out and heave it, swing the fresh box up, slam it, lay the belt, slam the cover =================
 function Defs.ANVIL(a)
 	local MP, FO = a.MP, a.FO
 	local function m(x, y, z) return MP + V(x, y, z) end
@@ -163,25 +173,24 @@ function Defs.ANVIL(a)
 		tilt = { roll = -10, pitch = 12, yaw = 20, lift = V(-0.35, 0.45, 0.0), rise = 0.12, fall = 0.9 },
 		hinge = V(0.13, 0.6, -0.25), hingeRoll = true,
 		keys = {
-			{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
-			{ t = 0.07 },
+			base(FO),
+			{ t = 0.07, tr = -3 },
 			{ t = 0.15, hand = V(0.2, 0.7, -0.1), grab = 1 },
-			{ t = 0.24, hand = V(0.3, 0.85, -0.25), cov = -125 },
-			{ t = 0.30 },
+			{ t = 0.24, hand = V(0.3, 0.85, -0.25), cov = -125, tp = 4, gp = V(0, -0.04, 0.08) },
+			{ t = 0.30, tp = 0, gp = ZERO },
 			{ t = 0.36, hand = m(-0.03, -0.25, 0), grab = 1 },
-			{ t = 0.40 },
-			{ t = 0.48, hand = m(-0.5, -0.55, 0.1), mag = V(-0.5, -0.45, 0.1), rz = -12 },
-			{ t = 0.54, hand = m(-0.7, -0.8, 0.2), grab = 0.3, mag = V(-0.8, -3.2, 0.2), rz = -40, fall = true },
-			{ t = 0.55, mag = V(-0.9, -3.0, 0.3), rz = 0, fall = true },
-			{ t = 0.62, hand = m(-0.9, -0.85, 0.3), grab = 1, mag = V(-0.9, -0.75, 0.3), fall = false },
+			{ t = 0.44, hand = m(-0.5, -0.55, 0.1), mag = V(-0.5, -0.45, 0.1), rz = -12, tr = -10, tp = 6, gp = V(0.05, -0.12, 0.16) },
+			{ t = 0.50, hand = m(-0.7, -0.8, 0.2), grab = 0.3, mag = V(-0.8, -0.8, 0.2), rz = -40, tr = -4, tp = 0, gp = ZERO },
+			{ t = 0.54, hand = m(-0.8, -0.85, 0.2), grab = 0, mag = TOSS, rx = 200, rz = -120, fall = true },
+			{ t = 0.62, hand = MP + POUCH, grab = 1, mag = POUCH, rx = 0, rz = 0 },
 			{ t = 0.70, hand = m(-0.3, -0.5, 0.05), mag = V(-0.3, -0.4, 0.05) },
-			{ t = 0.75, hand = m(-0.03, -0.25, 0), mag = V(0, 0, 0) },
-			{ t = 0.78, hand = m(-0.03, 0.05, 0), grab = 0.6 },
+			{ t = 0.75, hand = m(-0.03, -0.25, 0), mag = ZERO, gp = V(0, 0.05, -0.16) },
+			{ t = 0.78, hand = m(-0.03, 0.05, 0), grab = 0.6, gp = ZERO },
 			{ t = 0.86, hand = V(0.3, 0.8, -0.25) },
 			{ t = 0.88, hand = V(0.3, 0.85, -0.25), grab = 1 },
 			{ t = 0.93, hand = V(0.15, 0.72, -0.2), cov = 0 },
 			{ t = 0.96, hand = V(0.05, 0.66, -0.2) },
-			{ t = 1, hand = FO, grab = 0 },
+			{ t = 1, hand = FO, grab = 0, tr = 0 },
 		},
 		aux = function(u, c)
 			local out = {}
@@ -195,43 +204,44 @@ function Defs.ANVIL(a)
 		end,
 		events = {
 			{ at = 0.02, snd = "ReloadStart" },
-			{ at = 0.22, snd = "CoverOpen" },
-			{ at = 0.40, snd = "MagOut" },
-			{ at = 0.75, snd = "MagIn", kick = { V(0, 1.5, 0), V(-30, 0, 20) } },
+			{ at = 0.22, snd = "CoverOpen", kick = { V(0, 0.4, 0.8), V(10, 0, 10) } },
+			{ at = 0.42, snd = "MagOut", kick = { V(0.3, -0.8, 1.2), V(35, 0, -25) } },
+			{ at = 0.75, snd = "MagIn", kick = { V(0, 1.8, 0), V(-35, 0, 22) } },
 			{ at = 0.84, snd = "BeltIn" },
 			{ at = 0.92, snd = "CoverClose", kick = { V(0, -0.5, 2.5), V(-20, 0, 0) } },
 		},
 	}
 end
 
--- ================= M14: mag goes to the pouch and comes back, heavy seat, pull the op-rod =================
+-- ================= M14: rock the mag out, stuff it in the pouch, pull a fresh one, hook it on the lip, heavy rock-in, pull the op-rod =================
 function Defs.LONGSHOT(a)
 	local MP, FO = a.MP, a.FO
 	local function m(x, y, z) return MP + V(x, y, z) end
 	return {
-		tilt = { roll = -26, pitch = 14, yaw = 16, lift = V(-0.35, 0.6, 0.15), rise = 0.14, fall = 0.86 },
+		tilt = { roll = -26, pitch = 14, yaw = 16, lift = V(-0.35, 0.6, 0.15), rise = 0.12, fall = 0.9 },
 		keys = {
-			{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
-			{ t = 0.10 },
-			{ t = 0.18, hand = m(0, -0.1, 0), grab = 1 },
-			{ t = 0.26 },
-			{ t = 0.38, hand = m(-0.3, -0.55, 0.1), mag = V(-0.3, -0.45, 0.1), rx = 10, rz = -10 },
-			{ t = 0.50, hand = m(-0.95, -0.85, 0.3), mag = V(-0.95, -0.75, 0.3), rx = 0, rz = -25 },
-			{ t = 0.60 },
-			{ t = 0.65, rz = 0 },
-			{ t = 0.74, hand = m(-0.3, -0.5, 0.1), mag = V(-0.3, -0.4, 0.1) },
-			{ t = 0.81, hand = m(0, -0.15, 0), mag = V(0, -0.12, 0) },
-			{ t = 0.85, hand = m(0, 0, 0), mag = V(0, 0, 0) },
-			{ t = 0.89, hand = V(0.17, 0.5, -0.3) },
-			{ t = 0.94, hand = V(0.17, 0.5, 0.2), cyc = 0.5 },
-			{ t = 0.98, hand = V(0.17, 0.5, -0.25), cyc = 0 },
-			{ t = 1, hand = FO, grab = 0 },
+			base(FO),
+			{ t = 0.07, tr = -6 },
+			{ t = 0.15, hand = m(0, -0.1, 0), grab = 1 },
+			{ t = 0.23, hand = m(0, -0.3, -0.25), mag = V(0, -0.12, -0.2), rx = 35, tr = -12, tp = 4 },
+			{ t = 0.31, hand = m(-0.4, -0.7, 0.0), mag = V(-0.45, -0.65, 0.0), rx = 30, rz = -15, tr = -16, tp = 0, gp = V(0.04, -0.08, 0.12) },
+			{ t = 0.40, hand = m(-0.95, -0.85, 0.3), mag = V(-0.95, -0.75, 0.3), rx = 0, rz = -25, tr = -8, gp = ZERO },
+			{ t = 0.44, hand = m(-1.05, -0.95, 0.3), mag = V(-1.1, -1.0, 0.35), fall = true },
+			{ t = 0.52, hand = MP + POUCH, grab = 1, mag = POUCH, rx = 0, rz = 0, tr = -12 },
+			{ t = 0.60, hand = m(-0.3, -0.5, 0.0), mag = V(-0.3, -0.45, 0.0), rx = 25 },
+			{ t = 0.68, hand = m(0, -0.3, -0.25), mag = V(0, -0.2, -0.22), rx = 30, tp = 3 },
+			{ t = 0.75, hand = m(0, -0.1, 0.08), mag = ZERO, rx = 0, tp = 0, tr = -6, gp = V(0, 0.07, -0.18) },
+			{ t = 0.80, hand = m(0, -0.2, 0), grab = 0.5, gp = ZERO, tr = -4 },
+			{ t = 0.86, hand = V(0.17, 0.5, -0.3), grab = 1 },
+			{ t = 0.92, hand = V(0.17, 0.5, 0.2), cyc = 0.5, ty = 3 },
+			{ t = 0.97, hand = V(0.17, 0.5, -0.25), cyc = 0, ty = 0 },
+			{ t = 1, hand = FO, grab = 0, tr = 0 },
 		},
 		events = {
 			{ at = 0.02, snd = "ReloadStart" },
-			{ at = 0.26, snd = "MagOut", pitch = 0.9 },
-			{ at = 0.83, snd = "MagIn", pitch = 0.85, vol = 1.2, kick = { V(0, 1.8, 0.4), V(-45, 0, 30) } },
-			{ at = 0.94, snd = "Bolt", pitch = 0.85, kick = { V(0, 0, 2.8), V(0, 0, 0) } },
+			{ at = 0.30, snd = "MagOut", pitch = 0.9, kick = { V(0.3, -0.6, 1.0), V(30, 0, -30) } },
+			{ at = 0.75, snd = "MagIn", pitch = 0.85, vol = 1.2, kick = { V(0, 1.8, 0.4), V(-50, 0, 32) } },
+			{ at = 0.92, snd = "Bolt", pitch = 0.85, kick = { V(0, 0, 2.8), V(0, 0, 0) } },
 		},
 	}
 end
@@ -241,25 +251,25 @@ function Defs.HALO50(a)
 	local FO = a.FO
 	local pouch, side, inside = V(-0.6, -0.35, 0.1), V(-0.4, 0.3, -0.3), V(-0.1, 0.38, -0.3)
 	local keys = {
-		{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0, tr = 0 },
+		{ t = 0, hand = FO, grab = 0, mag = ZERO, rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0, tr = 0, tp = 0, ty = 0, gp = ZERO },
 		{ t = 0.06 },
 		{ t = 0.14, hand = V(0.22, 0.4, 0.1), grab = 1, tr = 15 },
-		{ t = 0.22, hand = V(0.22, 0.4, 0.42), cyc = 0.47 },
-		{ t = 0.26, tr = -32 },
+		{ t = 0.22, hand = V(0.22, 0.4, 0.42), cyc = 0.47, ty = 3 },
+		{ t = 0.26, tr = -32, ty = 0 },
 	}
-	local events = { { at = 0.02, snd = "ReloadStart" }, { at = 0.22, snd = "BoltOpen" } }
+	local events = { { at = 0.02, snd = "ReloadStart" }, { at = 0.22, snd = "BoltOpen", kick = { V(0, 0, 1.6), V(-12, 0, 8) } } }
 	for i = 0, 4 do
 		local t0 = 0.28 + i * 0.1
 		table.insert(keys, { t = t0, hand = pouch, grab = 1, tr = -32 })
 		table.insert(keys, { t = t0 + 0.055, hand = side, grab = 1 })
 		table.insert(keys, { t = t0 + 0.075, hand = inside, grab = 0.4 })
-		table.insert(events, { at = t0 + 0.075, snd = "RoundIn" })
+		table.insert(events, { at = t0 + 0.075, snd = "RoundIn", kick = { V(0, 0.1, 0.3), V(-5, 0, 3) } })
 	end
 	table.insert(keys, { t = 0.80, hand = V(0.22, 0.4, 0.42), grab = 1, cyc = 0.47, tr = 15 })
 	table.insert(keys, { t = 0.9, hand = V(0.22, 0.4, 0.1), cyc = 0 })
 	table.insert(keys, { t = 0.95, tr = 0 })
 	table.insert(keys, { t = 1, hand = FO, grab = 0 })
-	table.insert(events, { at = 0.9, snd = "BoltClose", kick = { V(0, 0, 3), V(-15, 0, 0) } })
+	table.insert(events, { at = 0.9, snd = "BoltClose", kick = { V(0, 0, 3.4), V(-18, 0, 0) } })
 	return {
 		tilt = { roll = 0, pitch = 14, yaw = 14, lift = V(-0.3, 0.6, 0.15), rise = 0.12, fall = 0.9 },
 		keys = keys,
@@ -280,12 +290,12 @@ function Defs.HALO50(a)
 	}
 end
 
--- ================= Remington 870: roll the gun, push 6 shells into the port under the receiver, pump =================
+-- ================= Remington 870: roll the gun, thumb 6 shells into the port (each one jolts the gun), rack the pump hard =================
 function Defs.BREACHER(a)
 	local FO = a.FO
 	local pouch, below, port = V(-0.9, -0.6, 0.0), V(0, 0.0, -0.45), V(0, 0.13, -0.45)
 	local keys = {
-		{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
+		{ t = 0, hand = FO, grab = 0, mag = ZERO, rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0, tr = 0, tp = 0, ty = 0, gp = ZERO },
 		{ t = 0.08 },
 	}
 	local events = { { at = 0.02, snd = "ReloadStart" } }
@@ -294,14 +304,14 @@ function Defs.BREACHER(a)
 		table.insert(keys, { t = t0, hand = pouch, grab = 1 })
 		table.insert(keys, { t = t0 + 0.055, hand = below, grab = 1 })
 		table.insert(keys, { t = t0 + 0.075, hand = port, grab = 0.5 })
-		table.insert(events, { at = t0 + 0.075, snd = "ShellIn" })
+		table.insert(events, { at = t0 + 0.075, snd = "ShellIn", kick = { V(0, 0.15, 0.5), V(-8, 0, 4) } })
 	end
 	table.insert(keys, { t = 0.77, hand = V(0, 0.32, -1.2), grab = 1 })
 	table.insert(keys, { t = 0.85, hand = V(0, 0.32, -0.7), cyc = 0.5 })
 	table.insert(keys, { t = 0.92, hand = V(0, 0.32, -1.2), cyc = 0 })
 	table.insert(keys, { t = 1, hand = FO, grab = 0 })
-	table.insert(events, { at = 0.84, snd = "PumpBack", kick = { V(0, 0, 2.5), V(0, 0, 0) } })
-	table.insert(events, { at = 0.92, snd = "PumpForward", kick = { V(0, 0, -2), V(0, 0, 0) } })
+	table.insert(events, { at = 0.84, snd = "PumpBack", kick = { V(0, 0, 2.8), V(0, 0, 0) } })
+	table.insert(events, { at = 0.92, snd = "PumpForward", kick = { V(0, 0, -2.4), V(-10, 0, 0) } })
 	return {
 		tilt = { roll = -55, pitch = 18, yaw = 10, lift = V(-0.35, 0.55, 0.15), rise = 0.1, fall = 0.9 },
 		keys = keys,
@@ -322,95 +332,98 @@ function Defs.BREACHER(a)
 	}
 end
 
--- ================= Glock: drop the mag, fresh mag from the belt, slap, rack the slide =================
+-- ================= Glock: press the release (mag drops free), fresh mag off the belt, slam it, slingshot the slide =================
 function Defs.V9(a)
 	local MP, FO = a.MP, a.FO
 	local function m(x, y, z) return MP + V(x, y, z) end
 	return {
 		tilt = { roll = -28, pitch = 12, yaw = 10, lift = V(-0.35, 0.5, 0.1), rise = 0.12, fall = 0.9 },
 		keys = {
-			{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
-			{ t = 0.08 },
-			{ t = 0.16, hand = m(0, -0.05, 0.05), grab = 0.8 },
-			{ t = 0.22 },
-			{ t = 0.30, hand = m(-0.3, -0.3, 0.1), grab = 0.3, mag = V(0, -3.2, 0.1), rx = 20, fall = true },
-			{ t = 0.31, hand = m(-0.45, -0.5, 0.2), mag = V(-0.5, -3.0, 0.2), rx = 0, fall = true },
-			{ t = 0.40, hand = m(-0.5, -0.6, 0.25), grab = 1, mag = V(-0.5, -0.55, 0.25), fall = false },
+			base(FO),
+			{ t = 0.06, tr = -5 },
+			{ t = 0.14, hand = m(0, -0.05, 0.05), grab = 0.8 },
+			{ t = 0.20, hand = m(0, -0.12, 0.05), tr = -9, tp = 4 },
+			{ t = 0.25, hand = m(-0.25, -0.3, 0.1), grab = 0.3, mag = V(0, -1.0, 0.1), rx = 10, tr = -14, tp = 7, gp = V(0.02, -0.05, 0.1) },
+			{ t = 0.30, hand = m(-0.35, -0.45, 0.15), mag = V(-0.2, -3.0, 0.2), rx = 40, fall = true, tp = 0, gp = ZERO },
+			{ t = 0.42, hand = m(-0.5, -0.65, 0.25), grab = 1, mag = V(-0.5, -0.55, 0.25), rx = 0, tr = -10 },
 			{ t = 0.52, hand = m(-0.25, -0.45, 0.08), mag = V(-0.25, -0.4, 0.08) },
-			{ t = 0.59, hand = m(0, -0.3, 0), mag = V(0, -0.28, 0) },
-			{ t = 0.63, hand = m(0, 0, 0), mag = V(0, 0, 0) },
-			{ t = 0.67 },
+			{ t = 0.58, hand = m(0, -0.3, 0), mag = V(0, -0.28, 0) },
+			{ t = 0.62, hand = m(0, 0, 0), mag = ZERO, tr = -4, gp = V(0, 0.06, -0.1) },
+			{ t = 0.67, hand = m(0, -0.15, 0), grab = 0.5, gp = ZERO },
 			{ t = 0.74, hand = V(0, 0.46, 0.1), grab = 1 },
-			{ t = 0.82, hand = V(0, 0.46, 0.52), cyc = 0.42 },
-			{ t = 0.87, hand = V(0, 0.46, 0.1), cyc = 0 },
-			{ t = 1, hand = FO, grab = 0 },
+			{ t = 0.82, hand = V(0, 0.46, 0.52), cyc = 0.42, tp = 5 },
+			{ t = 0.86, hand = V(0, 0.46, 0.1), cyc = 0, tp = 0 },
+			{ t = 0.93, hand = FO, grab = 0, tr = 0 },
+			{ t = 1 },
 		},
 		events = {
 			{ at = 0.02, snd = "ReloadStart" },
-			{ at = 0.22, snd = "MagOut" },
-			{ at = 0.62, snd = "MagIn", kick = { V(0, 1.2, 0), V(-30, 0, 20) } },
-			{ at = 0.82, snd = "Bolt", pitch = 1.1, kick = { V(0, 0, 2), V(0, 0, 0) } },
+			{ at = 0.24, snd = "MagOut", kick = { V(0.2, 0.6, 0.6), V(30, 0, -20) } },
+			{ at = 0.62, snd = "MagIn", kick = { V(0, 1.4, 0), V(-35, 0, 22) } },
+			{ at = 0.82, snd = "Bolt", pitch = 1.1, kick = { V(0, 0, 2.2), V(0, 0, 0) } },
 		},
 	}
 end
 
--- ================= .44 Magnum: swing the cylinder out, eject the casings, load 6 rounds one by one, flick it shut =================
+-- ================= .44 Magnum: flick the cylinder OUT on its crane (it stays on the gun), punch the ejector, jam a speedloader in, flick it SHUT =================
 function Defs.MAGNUM(a)
 	local MP, FO = a.MP, a.FO
-	local OUT = V(-0.45, -0.1, 0.05)
-	local function cylHand(off, dy, dz) return MP + off + V(-0.22, dy or 0, dz or 0.05) end
-	local pouch = MP + V(-1.0, -0.85, 0.3)
+	-- the cylinder swings about its crane (0.1 left + 0.1 below its centre): offset of the cylinder centre after turning th degrees
+	local function sw(th)
+		local c, s = math.cos(math.rad(th)), math.sin(math.rad(th))
+		return V(0.1 * (c - s) - 0.1, 0.1 * (s + c) - 0.1, 0)
+	end
+	local OPEN = 120 -- multiple of 60: the chambers line up with the closed cylinder
+	local function cylHand(th, dz) return MP + sw(th) + V(-0.15, 0, dz or 0.05) end
+	local function roundsPos() return MP + sw(OPEN) end
 	local keys = {
-		{ t = 0, hand = FO, grab = 0, mag = V(0, 0, 0), rx = 0, ry = 0, rz = 0, cyc = 0, cov = 0 },
-		{ t = 0.06 },
-		{ t = 0.14, hand = cylHand(V(0, 0, 0)), grab = 1 },
-		{ t = 0.24, hand = cylHand(OUT), mag = OUT, rz = 30 },
-		{ t = 0.30 },
-		{ t = 0.34, hand = MP + OUT + V(-0.05, -0.08, -0.4), grab = 1 },
-		{ t = 0.39, hand = MP + OUT + V(-0.05, -0.08, -0.18) },
+		base(FO),
+		{ t = 0.06, tr = -6 },
+		{ t = 0.13, hand = cylHand(0), grab = 1 },
+		{ t = 0.19, hand = cylHand(60), mag = sw(60), rz = 60, tr = -12 },
+		{ t = 0.25, hand = cylHand(OPEN), mag = sw(OPEN), rz = OPEN, tr = -18, gp = V(0.04, -0.04, 0.1) },
+		{ t = 0.30, grab = 0.5, gp = ZERO },
+		{ t = 0.34, hand = V(0, 0.55, -0.95), grab = 1, tp = 6 },
+		{ t = 0.39, hand = V(0, 0.55, -0.7), tp = 30, tr = -10 },
+		{ t = 0.43, tp = 30 },
+		{ t = 0.49, hand = MP + V(-1.0, -0.8, 0.3), grab = 1, tp = -10, tr = -16 },
+		{ t = 0.60, hand = roundsPos() + V(-0.05, -0.05, 0.6), tp = -8 },
+		{ t = 0.66, hand = roundsPos() + V(0, 0, 0.5), tp = -4 },
+		{ t = 0.72, hand = roundsPos() + V(0, 0, 0.0), tp = -2, gp = V(0, 0, -0.08) },
+		{ t = 0.77, hand = roundsPos() + V(0, 0, 0.4), grab = 0.4, tp = 0, gp = ZERO },
+		{ t = 0.82, hand = cylHand(OPEN), grab = 1 },
+		{ t = 0.90, hand = cylHand(0), mag = ZERO, rz = 0, tr = 12, tp = -8 },
+		{ t = 0.95, tr = 0, tp = 0 },
+		{ t = 1, hand = FO, grab = 0 },
 	}
 	local events = {
 		{ at = 0.02, snd = "ReloadStart" },
-		{ at = 0.22, snd = "CylinderOpen" },
-		{ at = 0.38, snd = "CasingOut" },
+		{ at = 0.24, snd = "CylinderOpen", kick = { V(0.2, 0, 0.4), V(0, 0, -22) } },
+		{ at = 0.38, snd = "CasingOut", kick = { V(0, 0.6, 0.4), V(20, 0, 0) } },
+		{ at = 0.71, snd = "RoundIn", kick = { V(0, 0.2, 0.6), V(-10, 0, 6) } },
+		{ at = 0.90, snd = "CylinderClose", kick = { V(0, 1.4, 0), V(-35, 0, 30) } },
 	}
-	for i = 0, 5 do
-		local t0 = 0.45 + i * 0.075
-		local top = MP + OUT + V(0, 0.3, 0)
-		table.insert(keys, { t = t0, hand = pouch, grab = 1, rz = 30 + 60 * i })
-		table.insert(keys, { t = t0 + 0.045, hand = top, grab = 1 })
-		table.insert(keys, { t = t0 + 0.058, hand = top + V(0, -0.1, 0), grab = 0.4 })
-		table.insert(events, { at = t0 + 0.058, snd = "RoundIn" })
-	end
-	table.insert(keys, { t = 0.90, hand = cylHand(OUT), grab = 1, rz = 390 })
-	table.insert(keys, { t = 0.95, hand = cylHand(V(0, 0, 0)), mag = V(0, 0, 0), rz = 420 })
-	table.insert(keys, { t = 0.97 })
-	table.insert(keys, { t = 1, hand = FO, grab = 0 })
-	table.insert(events, { at = 0.95, snd = "CylinderClose", kick = { V(0, 1.2, 0), V(-30, 0, 25) } })
 	return {
 		tilt = { roll = -22, pitch = 22, yaw = 12, lift = V(-0.3, 0.45, 0.2), rise = 0.12, fall = 0.92 },
 		keys = keys,
 		aux = function(u, c)
 			local out = {}
 			local cyl = c.MPcf * c.magRel(u)
-			-- spent casings (1-6): sit in the open cylinder, then pop out and fall
+			-- spent casings (1-6): sit in the open cylinder, then get punched out and fall
 			if u > 0.2 and u < 0.62 then
 				for k = 0, 5 do
-					local f = seg(u, 0.38 + k * 0.004, 0.58)
+					local f = seg(u, 0.39 + k * 0.004, 0.58)
 					local off = V((k % 2 == 0 and 1 or -1) * 0.5 * f, 0.3 * f - 3.2 * f * f, 0.25 * f)
 					out[k + 1] = CF(off) * cyl * ang(0, 0, k * 60) * CF(0.14, 0, 0)
 				end
 			end
-			-- fresh rounds (7-12): carried in the hand, then seated in the chamber at the top
-			if u > 0.44 and u < 0.93 then
+			-- speedloader: all six fresh rounds ride in the hand as one ring, then slide into the cylinder together
+			if u > 0.47 and u < 0.95 then
 				for i = 0, 5 do
-					local t0 = 0.45 + i * 0.075
-					if u >= t0 then
-						if u < t0 + 0.058 then
-							out[7 + i] = CF(c.hand(u) + V(0, -0.02, 0))
-						else
-							out[7 + i] = cyl * ang(0, 0, 60 * i) * CF(0.14, 0, 0)
-						end
+					if u < 0.72 then
+						out[7 + i] = CF(c.hand(u) + V(0.0, 0.0, -0.05)) * ang(0, 0, 60 * i) * CF(0.14, 0, 0)
+					else
+						out[7 + i] = cyl * ang(0, 0, 60 * i) * CF(0.14, 0, 0)
 					end
 				end
 			end
@@ -421,6 +434,7 @@ function Defs.MAGNUM(a)
 end
 
 -- ================= engine =================
+-- v6: keys may also set tp / ty (extra pitch / yaw of the whole gun, degrees) and gp (extra gun shove, Vector3) - used for gun jerks on mag yanks
 local function prepare(keys)
 	table.sort(keys, function(x, y) return x.t < y.t end)
 	local prev
@@ -500,7 +514,9 @@ function ReloadAnims.Make(modelId, P, s)
 		local e = smooth(seg(u, 0, tl.rise)) * (1 - smooth(seg(u, tl.fall, 1)))
 		local pose = {}
 		local tr = num(k0.tr or 0, k1.tr or 0, x)
-		pose.tilt = CF(tl.lift * e) * ang(tl.pitch * e, tl.yaw * e, (tl.roll + tr) * e)
+		local tp, ty = num(k0.tp or 0, k1.tp or 0, x), num(k0.ty or 0, k1.ty or 0, x)
+		local gp = (k0.gp or ZERO):Lerp(k1.gp or ZERO, x) -- extra whole-gun shove (studs): the gun jerks when a mag is yanked / slammed
+		pose.tilt = CF((tl.lift + gp) * e) * ang((tl.pitch + tp) * e, (tl.yaw + ty) * e, (tl.roll + tr) * e)
 		pose.grab = num(k0.grab, k1.grab, x)
 		pose.hand = (sq(k0.hand:Lerp(k1.hand, x), false) + V(-0.13, 0.08, 0.1) * pose.grab) * s
 		local mp = sq(k0.mag:Lerp(k1.mag, x), true)
