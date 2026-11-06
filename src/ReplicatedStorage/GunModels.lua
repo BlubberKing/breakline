@@ -740,7 +740,7 @@ function Models.V9(k)
 	k.box("MagBase", V(0.16, 0.05, 0.28), g * CF(0, -0.3, 0), C.Rubber)
 	k.magwell(g * CF(0, -0.28, 0))
 	k.group = "gun"
-	k.view = { X = 0.45, Y = -0.8, Z = -1.3, SprintRot = V(-40, 20, 10) }
+	k.view = { X = 0.5, Y = -1.12, Z = -1.4, SprintRot = V(-40, 20, 10) }
 end
 
 -- .44 Magnum: fluted cylinder, long barrel with ribbed top, wood grips
@@ -772,6 +772,7 @@ function Models.MAGNUM(k)
 	k.box("RearBase", V(0.1, 0.025, 0.05), CF(0, 0.5375, 0.02), C.Black)
 	for _, sx in { -1, 1 } do k.box("RearEar", V(0.03, 0.055, 0.05), CF(sx * 0.04, 0.5775, 0.02), C.Black) end
 	k.tag = nil
+	k.box("CraneYoke", V(0.05, 0.07, 0.16), CF(-0.095, 0.26, -0.2), C.Steel, METAL)
 	k.box("SupportShelf", V(0.17, 0.035, 0.2), CF(0, -0.3, 0.05), C.Steel, METAL)
 	k.foreAt(-0.1, -0.2, 0.0, -0.13)
 	k.irons(V(0, 0.56, 0.02), 0.62)
@@ -787,11 +788,12 @@ function Models.MAGNUM(k)
 	end
 	k.cylZ("CylRing", 0.02, 0.3, CF(0, 0.36, -0.04), C.Steel, METAL)
 	k.cylZ("CylRing", 0.02, 0.3, CF(0, 0.36, -0.36), C.Steel, METAL)
+	k.box("CraneArm", V(0.17, 0.05, 0.1), CF(-0.05, 0.31, -0.2) * CFrame.Angles(0, 0, math.rad(45)), C.Steel, METAL) -- swings with the cylinder on its crane
 	k.magwell(CF(0, 0.36, -0.2))
 	addAux(k, 1, 6, 0.2, 0.06, BRASS)
 	addAux(k, 7, 6, 0.22, 0.055, BRASS)
 	k.group = "gun"
-	k.view = { X = 0.45, Y = -0.8, Z = -1.3, SprintRot = V(-40, 20, 10) }
+	k.view = { X = 0.5, Y = -1.12, Z = -1.4, SprintRot = V(-40, 20, 10) }
 end
 
 GunModels.Models = Models
@@ -999,11 +1001,6 @@ function GunModels.HandParts(desc, glove, pad)
 	put("right", "HandBack", V(0.11, 0.36, gd + 0.1), G * CF(hx + 0.055, 0.04, 0.03), glove)
 	put("right", "HandBackPad", V(0.03, 0.26, gd * 0.7), G * CF(hx + 0.125, 0.04, 0.0), pad)
 	put("right", "Fingers", V(gw + 0.16, 0.3, 0.1), G * CF(0, -0.01, -gd / 2 - 0.05), glove)
-	put("right", "FingerLine", V(gw + 0.17, 0.025, 0.104), G * CF(0, 0.045, -gd / 2 - 0.05), pad)
-	put("right", "FingerLine", V(gw + 0.17, 0.025, 0.104), G * CF(0, -0.055, -gd / 2 - 0.05), pad)
-	put("right", "FingerTips", V(0.08, 0.3, gd * 0.45), G * CF(-hx - 0.04, -0.01, -gd * 0.3), glove)
-	put("right", "Index", V(0.08, 0.08, 0.39), G * CF(hx + 0.05, 0.2, -0.105), glove)
-	put("right", "Thumb", V(0.09, 0.09, 0.32), G * CF(-hx - 0.045, 0.2, -0.01), glove)
 	put("right", "HandWeb", V(gw + 0.06, 0.07, 0.16), G * CF(0, 0.255, 0.14), glove)
 	put("right", "WristR", V(0.22, 0.22, 0.22), G * CF(hx + 0.03, 0.0, 0.3), glove)
 
@@ -1013,10 +1010,6 @@ function GunModels.HandParts(desc, glove, pad)
 	put("left", "LHandBack", V(0.11, 0.34, 0.28), L * CF(-lw - 0.06, 0.0, 0.06), glove)
 	put("left", "LHandBackPad", V(0.03, 0.26, 0.2), L * CF(-lw - 0.125, 0.0, 0.06), pad)
 	put("left", "LFingers", V(2 * lw + 0.14, 0.28, 0.1), L * CF(0, 0.0, -0.175), glove)
-	put("left", "LFingerLine", V(2 * lw + 0.15, 0.025, 0.104), L * CF(0, 0.05, -0.175), pad)
-	put("left", "LFingerLine", V(2 * lw + 0.15, 0.025, 0.104), L * CF(0, -0.05, -0.175), pad)
-	put("left", "LFingerTips", V(0.08, 0.28, 0.14), L * CF(lw + 0.04, 0.0, -0.11), glove)
-	put("left", "LThumb", V(0.09, 0.09, 0.3), L * CF(-lw - 0.07, 0.19, -0.03), glove)
 	put("left", "LWrist", V(0.22, 0.22, 0.22), L * CF(-lw - 0.03, -0.02, 0.26), glove)
 	return out
 end
