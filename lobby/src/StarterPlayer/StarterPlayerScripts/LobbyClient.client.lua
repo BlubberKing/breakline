@@ -1,4 +1,4 @@
--- LobbyClient v5.5 (v4.7: loadout pickers only list items you own) (v5.4: v4.3: CARD INDEX buttons - home HUD above PLAY + play screen top bar; they open the CardIndex LocalScript)
+-- LobbyClient v5.6 (v5.9: ESSENCE next to the souls (big with names on the home screen, compact in menus), clear BACK / CLOSE buttons, fixed hanger, bolder labels, CARD INDEX lower, fitted gun pictures, less filler text) (v5.5 v4.7: loadout pickers only list items you own) (v5.4: v4.3: CARD INDEX buttons - home HUD above PLAY + play screen top bar; they open the CardIndex LocalScript)
 -- LobbyClient v5.3 (v3.8/v3.9: play-block queue indicator, static skin poses, LobbyMenuOpen flag, ability icons, no souls bullet) "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
 -- v5.2 (GDD v3.7): new slim logo from UIKit (flowing red slash), idle moves only on the squad stage, invite popup no longer
 -- peeks in at the top of the screen on non-16:9 windows (it is hidden, not just parked above the canvas).
@@ -145,14 +145,7 @@ local function button(parent, text, x, y, w, h, kind, size)
 	return b
 end
 
--- keyboard cap + label ("ESC  BACK"). Returns the label.
-local function keyHint(parent, key, text, x, y)
-	local kw = math.max(30, #key * 8 + 16)
-	local k = frame(parent, x, y, kw, 24, C.panel2, 0)
-	border(k, C.line2, 1)
-	lbl(k, key, 12, 0, 0, kw, 24, C.text, "MB", Enum.TextXAlignment.Center)
-	return lbl(parent, text, 16, x + kw + 8, y, 160, 24, C.dim, "HM")
-end
+-- (v5.9: the ESC key-cap hint was replaced by UIKit.CloseButton)
 
 local function thumb(id) return ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(id) end
 local function commas(n)
@@ -174,20 +167,15 @@ local function chevron(parent, x, y, size, color, thick)
 end
 
 -- clothes hanger (hook, shoulders, bar), drawn from thin bars inside a 36x28 box centred in parent
+-- v5.9: the hook is one continuous curl of short bars that runs straight into the neck (the old two clipped ring pieces did not line up,
+-- so the top floated above the rest of the hanger)
 local function hangerIcon(parent, col)
 	local h = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.fromOffset(36, 28),
 		BackgroundTransparency = 1 }, parent)
-	-- hook: a small ring, only its top half and bottom-right quarter shown (reads as a "?" hook)
-	local function ringIn(clip, rx, ry)
-		local r = new("Frame", { Position = UDim2.fromOffset(rx, ry), Size = UDim2.fromOffset(7, 7), BackgroundTransparency = 1 }, clip)
-		new("UICorner", { CornerRadius = UDim.new(1, 0) }, r)
-		new("UIStroke", { Color = col, Thickness = 2 }, r)
+	local hook = { { 13.6, 4.6 }, { 14.5, 2.2 }, { 16.4, 0.7 }, { 18.6, 0.6 }, { 20.6, 1.8 }, { 21.6, 3.9 }, { 21.2, 6.1 }, { 19.6, 7.7 }, { 18, 9 }, { 18, 13 } }
+	for i = 1, #hook - 1 do
+		bar(h, hook[i][1], hook[i][2], hook[i + 1][1], hook[i + 1][2], 2, col)
 	end
-	local top = new("Frame", { Position = UDim2.fromOffset(11, -2), Size = UDim2.fromOffset(14, 7), BackgroundTransparency = 1, ClipsDescendants = true }, h)
-	ringIn(top, 3.5, 2)
-	local q = new("Frame", { Position = UDim2.fromOffset(18, 5), Size = UDim2.fromOffset(7, 7), BackgroundTransparency = 1, ClipsDescendants = true }, h)
-	ringIn(q, -3.5, -3)
-	bar(h, 18, 10.5, 18, 13, 2, col)
 	bar(h, 18, 13, 2, 24, 2, col)
 	bar(h, 18, 13, 34, 24, 2, col)
 	bar(h, 2, 24, 34, 24, 2, col)
@@ -290,18 +278,38 @@ local function soulIcon(parent, size)
 	return h
 end
 
--- souls counter, right-aligned at (right, y): [crystal] 12,400
-local function soulsWidget(parent, right, y)
-	local w = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, y), Size = UDim2.fromOffset(300, 40),
+-- v5.9 CURRENCIES, right-aligned at (right, y): SOULS then ESSENCE (premium, purple) to its right.
+--   big = true  (home screen, no menu open): icon + the currency NAME above its balance, larger
+--   big = false (play screen / menus open)  : icon + balance only, compact
+local function currencyWidget(parent, right, y, big)
+	local H = big and 56 or 40
+	local w = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, y), Size = UDim2.fromOffset(640, H),
 		BackgroundTransparency = 1 }, parent)
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right,
-		VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 10) }, w)
-	soulIcon(w, 28).LayoutOrder = 1
-	local n = new("TextLabel", { BackgroundTransparency = 1, Text = "0", TextSize = 30, FontFace = FONTS.H, TextColor3 = C.text,
-		AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 40), LayoutOrder = 2 }, w)
-	local function upd() n.Text = commas(player:GetAttribute("Souls") or 0) end
-	player:GetAttributeChangedSignal("Souls"):Connect(upd)
-	upd()
+		VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, big and 40 or 26) }, w)
+	local function block(order, name, attr, color, makeIcon)
+		local b = new("Frame", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, H), BackgroundTransparency = 1, LayoutOrder = order }, w)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, big and 12 or 9) }, b)
+		makeIcon(b, big and 42 or 28).LayoutOrder = 1
+		local num
+		if big then
+			local col = new("Frame", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, H), BackgroundTransparency = 1, LayoutOrder = 2 }, b)
+			new("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, -2) }, col)
+			new("TextLabel", { BackgroundTransparency = 1, Text = name, TextSize = 13, FontFace = FONTS.MB, TextColor3 = color, AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.fromOffset(0, 16), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1 }, col)
+			num = new("TextLabel", { BackgroundTransparency = 1, Text = "0", TextSize = 36, FontFace = FONTS.H, TextColor3 = C.text, AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.fromOffset(0, 40), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2 }, col)
+		else
+			num = new("TextLabel", { BackgroundTransparency = 1, Text = "0", TextSize = 28, FontFace = FONTS.H, TextColor3 = C.text,
+				AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, H), LayoutOrder = 2 }, b)
+		end
+		local function upd() num.Text = commas(player:GetAttribute(attr) or 0) end
+		player:GetAttributeChangedSignal(attr):Connect(upd)
+		upd()
+	end
+	block(1, "SOULS", "Souls", C.soul, soulIcon)
+	block(2, "ESSENCE", "Essence", UI.C.essence, function(p, sz) return UI.EssenceIcon(p, sz) end)
 	return w
 end
 
@@ -323,12 +331,8 @@ local function gunPicture(parent, weaponId)
 			minV, maxV = minV:Min(d.CF.Position - half), maxV:Max(d.CF.Position + half)
 		end
 	end
-	local center = (minV + maxV) / 2
-	local len = math.max(maxV.Z - minV.Z, (maxV.Y - minV.Y) * 2.2)
 	local cam = new("Camera", { FieldOfView = 16 }, vp)
-	local dist = (len / 2) / math.tan(math.rad(8)) / 2.2 + 1
-	cam.CFrame = CFrame.lookAt(center + Vector3.new(dist, dist * 0.08, 0), center)
-	vp.CurrentCamera = cam
+	UI.FitViewport(vp, cam, model, Vector3.new(1, 0.08, 0), { pad = 0.1, fov = 16 }) -- v5.9: fitted to the real silhouette (was cropped / off centre)
 	return vp
 end
 
@@ -491,7 +495,7 @@ do
 end
 local hudC = canvas(hud, 2)
 makeLogo(hudC, 56, 36, 56)
-soulsWidget(hudC, RIGHT, 46)
+currencyWidget(hudC, RIGHT, 40, true) -- v5.9: big, with names (nothing open)
 -- bottom-right cluster (same geometry as the PLAY screen): (hanger) | PLAY | (+)
 local CL_W, CIRCLE, CL_GAP = 480, 72, 16                    -- cluster width, circle diameter, gaps
 local CL_X = RIGHT - CL_W                                   -- 1384
@@ -513,8 +517,9 @@ hangerIcon(homeSkins, C.text)
 local homePlus = circleButton(hudC, RIGHT - CIRCLE / 2, BY + BH / 2, CIRCLE)
 plusIcon(homePlus, 24, C.text)
 -- v3.9: the searching text sits right ABOVE the PLAY block, centred on it (it used to float too far right of the button)
-local hudStatus = lbl(hudC, "", 16, PLAY_X - 60, BY - 40, PLAY_W + 120, 24, C.text, "HM", Enum.TextXAlignment.Center)
-cardIndexButton(hudC, CL_X, BY - 112, CL_W, 58) -- v4.3: CARD INDEX (above the searching text + PLAY)
+-- v5.9: CARD INDEX moved down, closer to PLAY + the two round buttons; the searching text now sits above the CARD INDEX button
+local hudStatus = lbl(hudC, "", 16, PLAY_X - 60, BY - 116, PLAY_W + 120, 24, C.text, "HM", Enum.TextXAlignment.Center)
+cardIndexButton(hudC, CL_X, BY - 78, CL_W, 58) -- v4.3: CARD INDEX (above PLAY)
 
 -- ================= play screen =================
 local screen = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.void, BorderSizePixel = 0, Visible = false,
@@ -731,14 +736,9 @@ end
 
 -- ----- top bar -----
 makeLogo(stage, 56, 34, 44).ZIndex = 5
-soulsWidget(stage, 1712, 38).ZIndex = 5
-cardIndexButton(stage, 1236, 32, 250, 52).ZIndex = 5 -- v4.3: CARD INDEX in the top bar (left of the souls)
-local closeBtn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(1752, 40),
-	Size = UDim2.fromOffset(112, 36), ZIndex = 5 }, stage)
-local closeLbl = keyHint(closeBtn, "ESC", "BACK", 0, 6)
-closeBtn.MouseEnter:Connect(function() tween(closeLbl, FAST, { TextColor3 = C.text }) end)
-closeBtn.MouseLeave:Connect(function() tween(closeLbl, FAST, { TextColor3 = C.dim }) end)
-grow(closeBtn, 1.05)
+currencyWidget(stage, RIGHT - 152 - 24, 38, false).ZIndex = 5 -- v5.9: compact (icons + balances) while the menu is open
+cardIndexButton(stage, 1100, 32, 250, 52).ZIndex = 5 -- v4.3: CARD INDEX in the top bar (left of the currencies)
+local closeBtn = UI.CloseButton(stage, "BACK", { Position = UDim2.fromOffset(RIGHT - 152, 34), ZIndex = 5 }) -- v5.9: clear BACK button
 do
 	local rule = frame(stage, 56, 98, RIGHT - 56, 1, C.line, 0)
 	rule.ZIndex = 5
@@ -886,7 +886,7 @@ end
 do -- dock geometry: group labels sit above the tiles, a slim line splits active gadgets from the reserve
 	local x, y = 0, 24
 	local function groupLabel(text, gx, gw)
-		local l = lbl(loadCol, text, 11, gx, 0, gw, 16, C.dim, "M")
+		local l = lbl(loadCol, text, 16, gx, -2, gw, 22, C.text, "H") -- v5.9: bold + bright (was 11 px grey mono)
 		l.TextTruncate = Enum.TextTruncate.AtEnd
 	end
 	groupLabel("MOVE", x, SQ)
@@ -921,12 +921,7 @@ local skinsActive, inviteActive -- forward (round buttons light up while their v
 local function viewHeader(v, title, sub)
 	local t = lbl(v, title, 40, 32, 18, 900, 50, C.text, "H")
 	local s = lbl(v, sub, 12, 34, 70, 900, 16, C.dim, "M")
-	local close = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(OW - 160, 28),
-		Size = UDim2.fromOffset(130, 30) }, v)
-	local cl = keyHint(close, "ESC", "CLOSE", 0, 3)
-	close.MouseEnter:Connect(function() tween(cl, FAST, { TextColor3 = C.text }) end)
-	close.MouseLeave:Connect(function() tween(cl, FAST, { TextColor3 = C.dim }) end)
-	grow(close, 1.05)
+	local close = UI.CloseButton(v, "CLOSE", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(OW - 28, 26) }) -- v5.9: clear close button
 	close.MouseButton1Click:Connect(function() setView("home") end)
 	frame(v, 32, 100, OW - 64, 1, C.line, 0)
 	return t, s
@@ -941,12 +936,8 @@ local pickGrid = new("UIGridLayout", { CellSize = UDim2.fromOffset(312, 208), Ce
 new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingBottom = UDim.new(0, 16) }, pickScroll)
 
 local PICK_TITLES = { move = "MOVEMENT", weapon = "PRIMARY", gadget = "GADGET", reserve = "RESERVE", skin = "SKIN CATALOG" }
-local PICK_SUBS = {
-	move = "SPECIAL MOVEMENT ABILITY  //  EVERYONE KEEPS SPRINT, SLIDE AND MANTLE",
-	weapon = "THE GUN YOU DEPLOY WITH",
-	gadget = "GADGETS SIT ON KEYS 2 - 4 IN THE MATCH",
+local PICK_SUBS = { -- v5.9: filler lines removed; only the reserve keeps one (it says how the reserve works)
 	reserve = "SWAP WITH YOUR ACTIVE LOADOUT WHILE DEAD",
-	skin = "PICK AN OUTFIT  //  WORN IN THE LOBBY, ON THE STAGE AND IN THE MATCH",
 }
 -- v5.5 (v4.7 SHOP): only items you own show up here (buy more in the shop)
 local function ownedOnly(list)
@@ -1091,7 +1082,7 @@ end
 
 -- ----- invite view -----
 local inviteV = views.invite
-viewHeader(inviteV, "INVITE", "SQUADS ARE UP TO 3 PLAYERS  //  ONLY THE LEADER CAN INVITE")
+viewHeader(inviteV, "INVITE", "")
 local inviteTab = "lobby"
 local tabs = {}
 for i, name in { "lobby", "friends" } do
@@ -1264,7 +1255,7 @@ end
 
 -- ----- mode info view -----
 local modeV = views.mode
-viewHeader(modeV, "GAME MODE", "CHOOSE WHAT YOU QUEUE FOR")
+viewHeader(modeV, "GAME MODE", "")
 local modeArt = frame(modeV, 32, 124, 600, 450, C.panel, 0)
 border(modeArt, C.line, 1)
 local modeArtG = modeGraphic(modeArt)
@@ -1497,8 +1488,12 @@ local inviteBtn
 inviteBtn, _, inviteActive = circleButton(stage, RIGHT - CIRCLE / 2, BY + BH / 2, CIRCLE)
 inviteBtn.ZIndex = 5
 plusIcon(inviteBtn, 24, C.text)
-lbl(stage, "SKINS", 10, CL_X, BY + BH + 6, CIRCLE, 14, C.mute, "MB", Enum.TextXAlignment.Center).ZIndex = 5
-lbl(stage, "INVITE", 10, RIGHT - CIRCLE, BY + BH + 6, CIRCLE, 14, C.mute, "MB", Enum.TextXAlignment.Center).ZIndex = 5
+-- v5.9: bolder + brighter labels (were 10 px dark grey)
+for _, spec in { { "SKINS", CL_X - 14 }, { "INVITE", RIGHT - CIRCLE - 14 } } do
+	local l = lbl(stage, spec[1], 15, spec[2], BY + BH + 4, CIRCLE + 28, 20, C.text, "H", Enum.TextXAlignment.Center)
+	l.ZIndex = 5
+	new("UIStroke", { Color = BLACK, Thickness = 1.5, Transparency = 0.5 }, l)
+end
 
 local function fmtTime(s) return ("%d:%02d"):format(math.floor(s / 60), s % 60) end
 refreshQueue = function()
