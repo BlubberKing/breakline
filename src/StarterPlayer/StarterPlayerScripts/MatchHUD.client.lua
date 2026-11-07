@@ -1,4 +1,4 @@
--- MatchHUD v3.4 (v4.7: shield bar removed, 250 white health) (v3.3: v4.4: blue SHIELD bar above your health bar, hit flash + shake on both bars when they lose points, bars follow MaxHealth 200)
+-- MatchHUD v3.5 (v5.9: no corner shades, weapon name under the ammo, reload ring at the crosshair, fitted gun picture) (v3.4 v4.7: shield bar removed, 250 white health) (v3.3: v4.4: blue SHIELD bar above your health bar, hit flash + shake on both bars when they lose points, bars follow MaxHealth 200)
 -- (v3.2) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
 -- v3.2 polish: rounded health segments with a white 'damage trail' that drains behind the real value, low-health pulse, team-colored
 -- name tick, soft corner shading so white text reads on any map, rounded selected gun slot, ammo that pops on change, reload bar that
@@ -9,7 +9,7 @@
 --     teammates are stacked above you, smaller (name + small health pips). Dead teammates go grey with a skull mark.
 --   * bottom-right: item selection. Weapon name + ammo above a row of slots: [1] your lobby gun (picture of the real model,
 --     selected = white square with a dark gun), [2][3][4] your lobby gadgets (dim until gadgets exist in Breakline).
---     Reload shows as a thin bar under the ammo.
+--     Reload shows as a small ring around the crosshair (v5.9).
 -- Reads: GunClient's local attributes (HUDWeapon, HUDAmmo, HUDMag, HUDReload, HUDReloadU, HUDMode), the Player attributes
 -- Weapon + LoadoutJson (GunServer), and teammates' Humanoids. Needs ReplicatedStorage: GunModels, LobbyCatalog (copy of the lobby's).
 local Players = game:GetService("Players")
@@ -22,6 +22,7 @@ local player = Players.LocalPlayer
 local GunModels = require(RS:WaitForChild("GunModels"))
 local GM = require(RS:WaitForChild("GadgetModels")) -- v4.1: real gadget pictures
 local Catalog = RS:FindFirstChild("LobbyCatalog") and require(RS.LobbyCatalog) or nil
+local UI = require(RS:WaitForChild("UIKit")) -- v5.9: FitViewport (gun picture framing)
 
 pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false) end)
 
@@ -62,16 +63,7 @@ end
 rescale()
 if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale) end
 
--- soft dark corners so the white text is readable on bright maps (very light, never a box)
-do
-	local function shade(x, y, w, h, rot)
-		local f = rect(root, x, y, w, h, Color3.new(0, 0, 0), 0)
-		f.ZIndex = 0
-		new("UIGradient", { Rotation = rot, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 1) }) }, f)
-	end
-	shade(0, 1080 - 420, 760, 420, -45)       -- bottom-left
-	shade(1920 - 760, 1080 - 330, 760, 330, 225) -- bottom-right
-end
+-- v5.9: the dark corner shades behind the squad + item row are gone (owner: no boxes behind the HUD)
 local TWEEN = game:GetService("TweenService")
 local function teamColor3()
 	return (player.Team and not player.Neutral) and player.TeamColor.Color or WHITE
@@ -188,15 +180,40 @@ end
 
 -- ================= bottom-right: item selection =================
 local items = new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromOffset(1920 - 48, 1080 - 40), Size = UDim2.fromOffset(560, 190), BackgroundTransparency = 1 }, root)
-local wName = text(items, "", 30, 0, 0, 380, 34, F_BOLD, Enum.TextXAlignment.Right)
+-- v5.9: ammo on top, the WEAPON NAME right under it (the fire mode / sight line is gone; the big name on the left moved here)
 local ammoBig = text(items, "30", 34, 392, -2, 100, 38, F_BOLD, Enum.TextXAlignment.Right)
 local ammoMag = text(items, "/30", 22, 494, 6, 66, 28, F_MED, Enum.TextXAlignment.Left, DIM)
-local modeTxt = text(items, "", 14, 0, 34, 560, 18, F_MED, Enum.TextXAlignment.Right, DIM)
-local reloadBack = rect(items, 392, 40, 168, 5, Color3.new(0, 0, 0), 0.45)
-new("UICorner", { CornerRadius = UDim.new(0, 3) }, reloadBack)
-local reloadFill = rect(reloadBack, 0, 0, 0, 5, WHITE, 0)
-new("UICorner", { CornerRadius = UDim.new(0, 3) }, reloadFill)
-reloadBack.Visible = false
+local wName = text(items, "", 20, 0, 36, 560, 24, F_BOLD, Enum.TextXAlignment.Right)
+
+-- v5.9: RELOAD = a small ring around the crosshair that fills clockwise from the top (was a thin bar above the gun picture)
+local RING_D, RING_T = 54, 3.5
+local ring = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 540), Size = UDim2.fromOffset(RING_D, RING_D), BackgroundTransparency = 1, Visible = false }, root)
+local function ringCircle(parent, transp)
+	local c = new("Frame", { Position = UDim2.fromOffset(RING_T, RING_T), Size = UDim2.new(1, -RING_T * 2, 1, -RING_T * 2), BackgroundTransparency = 1 }, parent)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, c)
+	local st = new("UIStroke", { Color = WHITE, Thickness = RING_T, Transparency = transp, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, c)
+	return c, st
+end
+do -- faint full track + soft dark outline so it reads on bright maps
+	local _, trackSt = ringCircle(ring, 0.72)
+	trackSt.Color = Color3.new(0, 0, 0)
+end
+-- the fill: two half-clips, each holding a full ring whose gradient shows one half-plane. Rotating the gradients sweeps the arc.
+local function halfClip(xScale)
+	local clip = new("Frame", { Position = UDim2.fromScale(xScale, 0), Size = UDim2.fromScale(0.5, 1), BackgroundTransparency = 1, ClipsDescendants = true }, ring)
+	local holder = new("Frame", { Position = UDim2.fromScale(-xScale * 2, 0), Size = UDim2.fromScale(2, 1), BackgroundTransparency = 1 }, clip)
+	local _, st = ringCircle(holder, 0)
+	local g = new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.499, 1),
+		NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 0) }) }, st)
+	return g
+end
+local ringRight, ringLeft = halfClip(0.5), halfClip(0)
+local function setRing(u)
+	local deg = math.clamp(u, 0, 1) * 360
+	ringRight.Rotation = math.min(deg, 180) - 180 -- 0..180 deg of the sweep (right half)
+	ringLeft.Rotation = math.max(deg, 180) - 180  -- 180..360 deg (left half)
+end
+setRing(0)
 
 local SLOT = 76
 local slotRow = new("Frame", { Position = UDim2.fromOffset(0, 70), Size = UDim2.fromOffset(560, 120), BackgroundTransparency = 1 }, items)
@@ -221,13 +238,10 @@ local function gunViewport(parent, weaponId, dark)
 			minV, maxV = minV:Min(d.CF.Position - d.Size / 2), maxV:Max(d.CF.Position + d.Size / 2)
 		end
 	end
-	local center = (minV + maxV) / 2
-	local len = math.max(maxV.Z - minV.Z, (maxV.Y - minV.Y) * 1.4)
 	local cam = new("Camera", { FieldOfView = 16 }, vp)
-	local dist = (len / 2) / math.tan(math.rad(8)) + 0.5
-	-- side view, muzzle pointing left (the Finals draws its icons that way)
-	cam.CFrame = CFrame.lookAt(center + Vector3.new(-dist, 0, 0), center)
-	vp.CurrentCamera = cam
+	-- v5.9: framed by its real silhouette (it was sized from the length only: long guns cropped, short ones tiny / off centre).
+	-- Side view, muzzle pointing left (the Finals draws its icons that way).
+	UI.FitViewport(vp, cam, model, Vector3.new(-1, 0, 0), { pad = 0.1, fov = 16 })
 	return vp
 end
 
@@ -262,7 +276,7 @@ local function buildSlots()
 		local item = Catalog and Catalog.ById[id]
 		if item then
 			s.glyph = text(s.frame, "", 24, 0, 8, SLOT, SLOT - 16, F_BOLD, Enum.TextXAlignment.Center, WHITE) -- (kept as the colour handle; the picture is below)
-			local picHolder = new("Frame", { Position = UDim2.fromOffset(6, 4), Size = UDim2.fromOffset(SLOT - 12, SLOT - 22), BackgroundTransparency = 1 }, s.frame)
+			local picHolder = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(SLOT / 2, 6), Size = UDim2.fromOffset(SLOT - 24, SLOT - 24), BackgroundTransparency = 1 }, s.frame) -- v5.9: square + centred
 			s.pic = GM.Picture(picHolder, item.id)
 			s.itemId = item.id
 			s.name = text(s.frame, string.upper(item.name), 9, 0, SLOT - 17, SLOT, 12, F_MED, Enum.TextXAlignment.Center, DIM)
@@ -304,15 +318,16 @@ local function refreshAmmo()
 	ammoBig.Text = tostring(a)
 	ammoMag.Text = "/" .. tostring(m)
 	ammoBig.TextColor3 = (m > 0 and a <= m * 0.25) and RED or WHITE
-	modeTxt.Text = player:GetAttribute("HUDMode") or ""
-	reloadBack.Visible = player:GetAttribute("HUDReload") == true
+	local reloading = player:GetAttribute("HUDReload") == true
+	if reloading and not ring.Visible then setRing(player:GetAttribute("HUDReloadU") or 0) end
+	ring.Visible = reloading
 end
 
-for _, k in { "HUDWeapon", "HUDAmmo", "HUDMag", "HUDReload", "HUDMode" } do player:GetAttributeChangedSignal(k):Connect(refreshAmmo) end
+for _, k in { "HUDWeapon", "HUDAmmo", "HUDMag", "HUDReload" } do player:GetAttributeChangedSignal(k):Connect(refreshAmmo) end
 player:GetAttributeChangedSignal("Weapon"):Connect(refreshGun)
 player:GetAttributeChangedSignal("LoadoutJson"):Connect(function() buildSlots() refreshGun() end)
 player:GetAttributeChangedSignal("HUDReloadU"):Connect(function()
-	reloadFill.Size = UDim2.fromOffset(math.floor(168 * (player:GetAttribute("HUDReloadU") or 0)), 5)
+	setRing(player:GetAttribute("HUDReloadU") or 0)
 end)
 buildSlots()
 refreshGun()
