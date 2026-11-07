@@ -1,4 +1,5 @@
--- LobbyNameplates v2 (v5.10: WIN-STREAK CROWN - a gold crown floats (bobbing + turning) well above the nameplate of everyone who is on a winning streak, with the streak
+-- LobbyNameplates v2.1 (v5.12: the crown sits close above the head (CROWN_Y 4.5 -> 1.45) and the nameplate moves up over it while a crown shows;
+--   the xN streak text is sized in STUDS now, so it always stays outside the crown at its upper right (in pixels it slid into the crown from far away)) (v2 v5.10: WIN-STREAK CROWN - a gold crown floats (bobbing + turning) well above the nameplate of everyone who is on a winning streak, with the streak
 --   (x2, x5 ...) in small text at its upper right, angled. The streak = Player attribute "Streak" (ProfileStore: +1 per win in any mode, back to 0 on a loss), so the crown
 --   disappears the moment the streak is lost. Tier 1 / 2 / 3 (1-2 / 3-4 / 5+ wins) changes the gem colour; tier 3 sparkles.) (v1 LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in GDD v3.8.
 -- A small nameplate above every player's head in the lobby (yours too): [LV 12] NAME. The level comes from the Player attribute
@@ -11,7 +12,8 @@ local K, F = UI.C, UI.F
 local Crown = require(RS:WaitForChild("Crown"))
 
 -- ===== v5.10: win-streak crown =====
-local CROWN_Y = 4.5 -- studs above the head's centre: clear of the nameplate (which sits 2.5 up)
+local CROWN_Y = 1.45 -- v5.12: studs above the head's centre = just over the head / helmet (was 4.5, floating far above the nameplate)
+local PLATE_Y, PLATE_Y_CROWN = 2.5, 2.95 -- nameplate height without / with a crown (it moves up so it never covers the crown)
 local active = {} -- { weld, t0 }
 RunService.RenderStepped:Connect(function()
 	local t = os.clock()
@@ -30,6 +32,8 @@ local function updateCrown(plr, char, head)
 	if not char.Parent or not head.Parent then return end
 	local streak = math.floor(tonumber(plr:GetAttribute("Streak")) or 0)
 	local old = char:FindFirstChild("StreakCrown")
+	local plate = char:FindFirstChild("Nameplate")
+	if plate then plate.StudsOffsetWorldSpace = Vector3.new(0, streak >= 1 and PLATE_Y_CROWN or PLATE_Y, 0) end
 	if streak < 1 then
 		if old then old:Destroy() end
 		return
@@ -53,14 +57,16 @@ local function updateCrown(plr, char, head)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "StreakBillboard"
 	bb.Adornee = m.PrimaryPart
-	bb.Size = UDim2.fromOffset(70, 34)
-	bb.StudsOffset = Vector3.new(1.05, 0.62, 0)
+	-- v5.12: sized in studs (scale), so it keeps its place next to the crown at every distance. Left edge = 0.85 studs right of the centre
+	-- (the crown is ~0.7 wide each side), a little above the band = upper right of the crown, outside it
+	bb.Size = UDim2.fromScale(1.6, 0.75)
+	bb.StudsOffset = Vector3.new(1.65, 0.62, 0)
 	bb.AlwaysOnTop = false
 	bb.MaxDistance = 90
 	bb.LightInfluence = 0
 	bb.Parent = m.PrimaryPart
 	local l = UI.new("TextLabel", { Name = "StreakLabel", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Rotation = -14, Text = streak >= 2 and ("x" .. streak) or "",
-		TextSize = 26, FontFace = F.H, TextColor3 = Color3.fromRGB(255, 214, 96), TextXAlignment = Enum.TextXAlignment.Left }, bb)
+		TextScaled = true, FontFace = F.H, TextColor3 = Color3.fromRGB(255, 214, 96), TextXAlignment = Enum.TextXAlignment.Left }, bb)
 	UI.new("UIStroke", { Color = Color3.fromRGB(70, 40, 6), Thickness = 2, Transparency = 0.15 }, l)
 end
 
