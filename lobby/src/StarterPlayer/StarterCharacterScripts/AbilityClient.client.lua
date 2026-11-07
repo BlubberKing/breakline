@@ -1,4 +1,14 @@
 -- AbilityClient v2.1 (v5.12: the 3 dash charge pips sit a little lower so they no longer cover the word DASH) (v4.7: NEW movement ability DASH - press F to dash forward fast in the direction you move (or look when standing still). 3 charges, each used charge takes 10 s to come back, one after the other.) (v2: LocalScript in StarterPlayer > StarterCharacterScripts) - BOTH games. Keep the two copies identical.
+-- v5.13 WALL CLIMB STAYS ON ITS STOMACH (owner: "switching from one wall to another at a different angle, or from a wall to a ceiling, I am no longer
+--   crawling directly on it, I hang off it sideways"). Two causes, both fixed:
+--   (1) an inside corner (a ceiling over the wall, the next wall at an angle) took over as your surface the moment it was 4.2 studs ahead: the body
+--       turned to face it while you were still on the old wall, then flew across. Now the corner is BLENDED in: as you get closer, your surface
+--       normal turns from the old surface to the new one in step with the distance, the path curves round the corner and the body arrives flat on
+--       the new surface exactly when it touches it (WC_CORNER_BLEND). Outside corners (round an edge) now wrap you round the edge onto the side face.
+--   (2) the head direction was "world up" on walls and "your heading" on ceilings, so going ceiling -> wall flipped the body 180 degrees mid-corner
+--       (the flip passed through a sideways pose). Now the head direction is CARRIED from surface to surface (laid flat on each new surface) and only
+--       ever turns AROUND your stomach: on a wall it turns you upright, on a ceiling it follows the way you crawl. The chest always faces the surface.
+--   The body also holds closer (WC_HOLD 1.3 studs from the surface to the body centre, was 1.75), so the stomach is on the surface, not floating.
 -- v5.9: wall climb onto a ceiling: the body turns to face the ceiling and lies under it (head = climbing direction).
 -- v4.0: wall run + wall climb rebuilt. They now START BY THEMSELVES (no SPACE needed), look like a person running / climbing
 -- (upright body, lean, camera roll, ledge vault, dust; the limb animation lives in AbilityPose) and feel better.
@@ -80,6 +90,10 @@ local CFG = {
 	WC_AUTO_REACH = 1.9,    -- walk-into-wall grab reach
 	WC_AUTO_HOLD = 0.14,    -- seconds you must push into the wall before you grab it
 	WC_COOLDOWN = 3.5,
+	WC_HOLD = 1.3,          -- v5.13: body centre -> surface while climbing (stomach on the surface; HOLD_FACE 1.75 is still used by the up-run)
+	WC_CORNER_BLEND = 2.6,  -- v5.13: over this distance (studs) before an inside corner the body turns from the old surface onto the new one
+	WC_TURN_WALL = 3.2,     -- v5.13: how fast (rad/s) the head turns upright on a wall (always round the stomach)
+	WC_TURN_CEIL = 5.0,     -- v5.13: how fast the head follows your crawling direction on a ceiling / overhang
 	-- dash
 	DASH_SPEED = 92,        -- studs/s at the start of the dash
 	DASH_TIME = 0.24,       -- seconds the dash lasts (speed eases out)
@@ -106,7 +120,10 @@ local mode = nil              -- nil | "wallrun" | "climb"
 local normal = Vector3.yAxis  -- surface normal while attached
 local lastLook = Vector3.zAxis
 local lookNow, upNow = Vector3.zAxis, Vector3.yAxis
-local ceilHead = Vector3.zAxis -- v5.9: heading along an overhang / ceiling while climbing (see bodyBasis)
+local headDir = Vector3.yAxis -- v5.13: where the head points while climbing, carried from surface to surface (see bodyBasis)
+local bellyN = Vector3.yAxis   -- v5.13: normal of the surface under your stomach
+local cornerN = nil            -- v5.13: normal of the inside corner you are climbing into (blended in), or nil
+local wrap = nil               -- v5.13: { target, t } while being carried round an outside edge
 local runDir, climbV, speedNow = Vector3.zero, Vector3.zero, 0
 local surfDist, missT = CFG.HOLD_FACE, 0
 local modeT, upT, idleT, sendT = 0, 0, 0, 0
@@ -349,7 +366,11 @@ local function enterMode(m, hit, initDir, initSpeed)
 	local l = flat(root.CFrame.LookVector)
 	lookNow = l.Magnitude > 0.05 and l.Unit or lastLook
 	upNow = Vector3.yAxis
-	ceilHead = lookNow -- v5.9: grabbing a ceiling straight away = head the way you were facing
+	-- v5.13: climbing state. Head = up the wall, or (grabbing a ceiling straight away) the way you were facing
+	bellyN, cornerN, wrap = hit.Normal, nil, nil
+	local hd = hit.Normal.Y < -0.5 and onPlane(lookNow, hit.Normal) or onPlane(Vector3.yAxis, hit.Normal)
+	if hd.Magnitude < 0.05 then hd = onPlane(lookNow, hit.Normal) end
+	headDir = hd.Magnitude > 0.05 and hd.Unit or Vector3.yAxis
 	alignCF = root.CFrame.Rotation
 	hum.PlatformStand = true
 	hum.AutoRotate = false
@@ -679,7 +700,7 @@ end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Space, Enum.KeyC
 -- ================= body orientation while attached =================
 -- The body stays UPRIGHT and leans into the wall (a person running / climbing, not a spider lying on it).
 -- Only on overhangs and ceilings does it turn over to stand on the surface.
-local function bodyBasis()
+local function bodyBasis(dt)
 	local fn = flat(normal)
 	local toward = fn.Magnitude > 0.05 and -fn.Unit or lastLook
 	if mode == "wallrun" then
@@ -692,35 +713,42 @@ local function bodyBasis()
 		local a = rad(CFG.WR_LEAN_SIDE) -- feet toward the wall, head tilts AWAY from it (like running on a wall)
 		return look, Vector3.yAxis * cos(a) - toward * sin(a)
 	end
-	-- climb (v5.9): the body always FACES the surface (chest + face toward it, like on a wall) and the head points the way you are
-	-- climbing along it. On a wall that is straight up. On an overhang / ceiling it is your heading along the ceiling (ceilHead), so the
-	-- body pitches back over the corner and lies under the ceiling looking up at it, instead of standing upside down on it hanging from
-	-- the head. Moving backwards keeps the heading (you crawl feet first, no spin); moving sideways turns you smoothly.
-	local t = clamp(-normal.Y * 1.5, 0, 1)
-	local mv = flat(runDir)
-	if t < 0.3 then
-		if fn.Magnitude > 0.3 then ceilHead = fn.Unit end -- ready for a ceiling: over the top of this wall = away from it
-	elseif mv.Magnitude > 0.35 and mv.Unit:Dot(ceilHead) > -0.3 then
-		ceilHead = ceilHead:Lerp(mv.Unit, 0.08)
-		if ceilHead.Magnitude < 0.05 then ceilHead = mv.Unit end
-		ceilHead = ceilHead.Unit
+	-- climb (v5.13): the chest always FACES the surface (look = -normal) and the head direction is CARRIED along: each frame it is laid flat on the
+	-- current surface (so it never flips when the surface changes) and then only turns ROUND the stomach toward where it should point: upright on a
+	-- wall, the way you crawl on a ceiling / overhang (crawling backwards keeps it: feet first, no spin). The flip that showed you sideways is gone.
+	local n = normal
+	local hd = onPlane(headDir, n)
+	if hd.Magnitude < 0.05 then hd = onPlane(Vector3.yAxis, n) end
+	if hd.Magnitude < 0.05 then hd = onPlane(lastLook, n) end
+	if hd.Magnitude < 0.05 then hd = n:Cross(Vector3.xAxis) end
+	hd = hd.Unit
+	local t = clamp(-n.Y * 1.5, 0, 1)
+	local pref, rate
+	if t < 0.15 then
+		pref, rate = onPlane(Vector3.yAxis, n), CFG.WC_TURN_WALL
+	elseif t >= 0.5 and climbV.Magnitude > 4 then
+		local mv = onPlane(runDir, n)
+		if mv.Magnitude > 0.2 and mv.Unit:Dot(hd) > -0.3 then pref, rate = mv, CFG.WC_TURN_CEIL end
 	end
-	local headRef = Vector3.yAxis:Lerp(ceilHead, t)
-	local up = headRef - normal * headRef:Dot(normal) -- head direction, laid flat on the surface
-	if up.Magnitude < 0.1 then up = ceilHead - normal * ceilHead:Dot(normal) end
-	if up.Magnitude < 0.1 then up = Vector3.yAxis end
-	return -normal, up.Unit
+	if pref and pref.Magnitude > 0.05 and dt then
+		pref = pref.Unit
+		local ang = math.atan2(hd:Cross(pref):Dot(n), hd:Dot(pref))
+		local step = clamp(ang, -rate * dt, rate * dt)
+		hd = (hd * cos(step) + n:Cross(hd) * sin(step)).Unit -- a turn about the surface normal: the stomach stays on the surface
+	end
+	headDir = hd
+	return -n, hd
 end
 
 local function alignTo(dt)
-	local look, up = bodyBasis()
+	local look, up = bodyBasis(dt)
 	if look.Magnitude < 0.05 then look = lastLook end
 	if up.Magnitude < 0.05 then up = Vector3.yAxis end
 	-- v4.1: the wobble / 360 spins came from lerping the look VECTOR (opposite vectors lerp through zero and the direction flips) and from
 	-- a springy constraint. Now the target rotation is built once and the body slerps toward it (CFrame:Lerp = a real rotation blend),
 	-- the constraint is rigid, and any leftover angular velocity is killed every frame.
 	local target = makeCF(root.Position, up.Unit, look).Rotation
-	alignCF = (alignCF or root.CFrame.Rotation):Lerp(target, math.min(1, dt * 9))
+	alignCF = (alignCF or root.CFrame.Rotation):Lerp(target, math.min(1, dt * (mode == "climb" and 16 or 9))) -- v5.13: climbing follows the surface faster
 	lookNow, upNow = alignCF.LookVector, alignCF.UpVector
 	local lf = flat(lookNow)
 	if lf.Magnitude > 0.05 then lastLook = lf.Unit end
@@ -785,26 +813,8 @@ local function updateWallRun(dt)
 	alignTo(dt)
 end
 
-local function climbHit(dir)
-	local pos = root.Position
-	-- v5.7: look for the NEXT surface first. Before, the wall under your hands always won, so a ceiling in front of you was only noticed once
-	-- the wall was already gone (which never happened) - you could not get from a wall onto a ceiling. Now a ceiling / wall that is ahead of
-	-- you in the direction you climb (inside corner) takes over as soon as it is within WC_CORNER_REACH.
-	if dir.Magnitude > 0.1 then
-		local d = dir.Unit
-		local ahead = cast(pos, d * CFG.WC_CORNER_REACH)
-		if ahead and ahead.Normal.Y < 0.5 and ahead.Normal:Dot(normal) < 0.8 and -ahead.Normal:Dot(d) > 0.25 then return ahead end
-	end
-	local r = cast(pos, -normal * (CFG.WC_REACH + 0.8))
-	if r and r.Normal.Y < 0.5 then return r end
-	if dir.Magnitude > 0.1 then
-		local d = dir.Unit
-		-- outside corner (over an edge): the new surface is the side face just past the edge
-		r = cast(pos + d * 2.4 - normal * (surfDist + 0.8), -d * 3.2)
-		if r and r.Normal.Y < 0.5 and r.Normal:Dot(d) > 0.5 then return r end
-	end
-	return nil
-end
+-- v5.13: distance from a point to the plane of a ray hit (along that surface's normal)
+local function planeDist(pos, hit) return (pos - hit.Position):Dot(hit.Normal) end
 
 local function updateClimb(dt)
 	modeT += dt
@@ -812,12 +822,70 @@ local function updateClimb(dt)
 		exitMode(normal * 6)
 		return
 	end
+	local pos = root.Position
+	local H = CFG.WC_HOLD
+	-- being carried round an outside edge: head for the spot in front of the side face, then climb on as normal
+	if wrap then
+		local to = wrap.target - pos
+		wrap.t += dt
+		if to.Magnitude < 0.35 or wrap.t > 0.45 then
+			wrap = nil
+		else
+			normal = normal:Lerp(bellyN, math.min(1, dt * 16)).Unit
+			climbV = to.Unit * math.min(CFG.WC_SPEED, to.Magnitude * 14)
+			driver.VectorVelocity = climbV
+			missT = 0
+			alignTo(dt)
+			return
+		end
+	end
 	local dir = surfaceDir(normal, moveInput())
-	local hit = climbHit(dir)
-	if hit then
-		normal = normal:Lerp(hit.Normal, 0.6).Unit
-		surfDist, missT = hit.Distance, 0
-		wallPart = hit.Instance
+	-- 1) the surface under your stomach (straight into it)
+	local belly = cast(pos, -bellyN * (CFG.WC_REACH + 0.8))
+	if belly and belly.Normal.Y >= 0.5 then belly = nil end
+	-- 2) an inside corner AHEAD in the way you climb (a ceiling over the wall, the next wall at an angle): found once, then followed until you are round it
+	if not cornerN and dir.Magnitude > 0.1 then
+		local d = dir.Unit
+		local ahead = cast(pos, d * CFG.WC_CORNER_REACH)
+		if ahead and ahead.Normal.Y < 0.5 and ahead.Normal:Dot(bellyN) < 0.8 and -ahead.Normal:Dot(d) > 0.25 then cornerN = ahead.Normal end
+	end
+	local corner, w = nil, 0
+	if cornerN then
+		corner = cast(pos, -cornerN * (CFG.WC_CORNER_REACH + 1))
+		if corner and corner.Normal.Y < 0.5 and corner.Normal:Dot(cornerN) > 0.9 then
+			cornerN = corner.Normal
+			local dc = planeDist(pos, corner)
+			if dc > CFG.WC_CORNER_REACH + 0.6 then
+				corner, cornerN = nil, nil -- climbed away from it again
+			else
+				w = clamp(1 - (dc - H) / CFG.WC_CORNER_BLEND, 0, 1) -- 0 = still on the old surface, 1 = flat on the new one
+			end
+		else
+			corner, cornerN = nil, nil
+		end
+	end
+	if corner and w >= 0.97 then -- round the corner: the new surface is under your stomach now
+		belly, bellyN = corner, corner.Normal
+		corner, cornerN, w = nil, nil, 0
+	end
+	-- 3) outside corner (over an edge, the surface ended): the side face just past the edge -> get carried round onto it
+	if not belly and not corner and dir.Magnitude > 0.1 then
+		local d = dir.Unit
+		local r = cast(pos + d * 2.4 - bellyN * (math.max(surfDist, 0) + 0.8), -d * 3.2)
+		if r and r.Normal.Y < 0.5 and r.Normal:Dot(d) > 0.5 then
+			bellyN, wallPart, missT = r.Normal, r.Instance, 0
+			surfDist = H
+			wrap = { target = r.Position + r.Normal * H, t = 0 }
+			alignTo(dt)
+			return
+		end
+	end
+	if belly then
+		bellyN = belly.Normal
+		surfDist, missT = planeDist(pos, belly), 0
+		wallPart = belly.Instance
+	elseif corner then
+		missT = 0
 	else
 		missT += dt
 		if missT > 0.12 then
@@ -826,18 +894,29 @@ local function updateClimb(dt)
 			return
 		end
 	end
+	-- the body's surface normal: blended from the old surface to the corner, so the body turns round the corner in step with the path
+	local tn = bellyN
+	if corner then
+		tn = bellyN * (1 - w) + corner.Normal * w
+		tn = tn.Magnitude > 0.2 and tn.Unit or corner.Normal
+	end
+	normal = normal:Lerp(tn, math.min(1, dt * 16)).Unit
 	if dir.Y < -0.15 then -- climbed down to the floor: you are back on the ground
-		local fl = cast(root.Position, Vector3.new(0, -3.4, 0))
+		local fl = cast(pos, Vector3.new(0, -3.4, 0))
 		if fl and fl.Normal.Y > 0.5 then exitMode(nil) return end
 	end
+	dir = surfaceDir(normal, moveInput()) -- along the (blended) surface: the path curves round an inside corner
 	climbV = climbV:Lerp(dir * CFG.WC_SPEED, math.min(1, dt * 10))
 	if dir.Magnitude > 0.1 then
 		runDir = runDir.Magnitude > 0.05 and runDir:Lerp(dir, math.min(1, dt * 10)) or dir
 		if runDir.Magnitude < 0.05 then runDir = dir end
 		runDir = runDir.Unit
 	end
-	local pull = clamp((surfDist - CFG.HOLD_FACE) * 12, -10, 10)
-	driver.VectorVelocity = climbV - normal * pull
+	-- stay WC_HOLD from the surface under you, and (blended in) from the corner you are going into
+	local pull = Vector3.zero
+	if belly then pull -= bellyN * clamp((surfDist - H) * 12, -10, 10) * (1 - w) end
+	if corner then pull -= corner.Normal * clamp((planeDist(pos, corner) - H) * 12, -10, 10) * w end
+	driver.VectorVelocity = climbV + pull
 	alignTo(dt)
 end
 
