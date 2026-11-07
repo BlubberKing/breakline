@@ -1,4 +1,5 @@
--- LobbyClient v5.6 (v5.9: ESSENCE next to the souls (big with names on the home screen, compact in menus), clear BACK / CLOSE buttons, fixed hanger, bolder labels, CARD INDEX lower, fitted gun pictures, less filler text) (v5.5 v4.7: loadout pickers only list items you own) (v5.4: v4.3: CARD INDEX buttons - home HUD above PLAY + play screen top bar; they open the CardIndex LocalScript)
+-- LobbyClient v5.7 (v5.10: the hanger button next to PLAY (and TAB) now opens the COSMETICS LOCKER (CosmeticsClient, its own menu) instead of the skin picker inside the play screen;
+--   the play-screen label under it says COSMETICS; the squad stage figures hold their equipped gun skin) (v5.6 v5.9: ESSENCE next to the souls (big with names on the home screen, compact in menus), clear BACK / CLOSE buttons, fixed hanger, bolder labels, CARD INDEX lower, fitted gun pictures, less filler text) (v5.5 v4.7: loadout pickers only list items you own) (v5.4: v4.3: CARD INDEX buttons - home HUD above PLAY + play screen top bar; they open the CardIndex LocalScript)
 -- LobbyClient v5.3 (v3.8/v3.9: play-block queue indicator, static skin poses, LobbyMenuOpen flag, ability icons, no souls bullet) "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
 -- v5.2 (GDD v3.7): new slim logo from UIKit (flowing red slash), idle moves only on the squad stage, invite popup no longer
 -- peeks in at the top of the screen on non-16:9 windows (it is hidden, not just parked above the canvas).
@@ -29,6 +30,7 @@ local QueueR, InviteR, RespondR, LeaveR, KickR, NoticeR =
 local PromoteR, SetLoadoutR, SetSkinR = remotes:WaitForChild("Promote"), remotes:WaitForChild("SetLoadout"), remotes:WaitForChild("SetSkin")
 local Catalog = require(RS:WaitForChild("LobbyCatalog"))
 local Skins = require(RS:WaitForChild("Skins"))
+local GunSkins = RS:FindFirstChild("GunSkins") and require(RS.GunSkins) or nil -- v5.10: gun skins on the squad stage
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
 local GM = RS:FindFirstChild("GadgetModels") and require(RS.GadgetModels) or nil -- v4.1: real gadget pictures (new ModuleScript, copy of Breakline's)
 local UI = require(RS:WaitForChild("UIKit")) -- v5.2: shared logo (copy of Breakline's UIKit)
@@ -716,8 +718,13 @@ local function rebuildSquad()
 		local m = members[i]
 		local skin, weapon, name
 		if m.me then skin, weapon, name = mySkin, loadout.Weapon, player.DisplayName else skin, weapon, name = memberLook(m) end
-		looks[i] = { skin = skin, weapon = weapon, name = name, leader = (m.id == leader) and #members > 1, me = m.me }
-		table.insert(key, ("%d:%s:%s:%s"):format(m.id, skin, weapon, tostring(looks[i].leader)))
+		local gunSkin
+		if GunSkins then
+			local who = m.me and player or Players:GetPlayerByUserId(m.id)
+			gunSkin = who and GunSkins.Equipped(who, weapon) or nil
+		end
+		looks[i] = { skin = skin, weapon = weapon, name = name, leader = (m.id == leader) and #members > 1, me = m.me, gunSkin = gunSkin }
+		table.insert(key, ("%d:%s:%s:%s:%s"):format(m.id, skin, weapon, tostring(looks[i].leader), tostring(gunSkin)))
 	end
 	local k = table.concat(key, "|")
 	if k == squadKey then return end
@@ -726,7 +733,7 @@ local function rebuildSquad()
 	table.clear(squad)
 	for i, look in looks do
 		local slot = SLOTS[i]
-		local fig = Skins.NewFigure(vp, look.skin, { weapon = look.weapon, camPos = CAM_POS, idle = true }) -- idle moves: this stage only
+		local fig = Skins.NewFigure(vp, look.skin, { weapon = look.weapon, gunSkin = look.gunSkin, camPos = CAM_POS, idle = true }) -- idle moves: this stage only
 		local root = CFrame.new(slot.pos) * CFrame.Angles(0, math.rad(slot.yaw), 0)
 		fig:SetRoot(root)
 		local tag = nameTag(string.upper(look.name), look.leader)
@@ -1489,7 +1496,7 @@ inviteBtn, _, inviteActive = circleButton(stage, RIGHT - CIRCLE / 2, BY + BH / 2
 inviteBtn.ZIndex = 5
 plusIcon(inviteBtn, 24, C.text)
 -- v5.9: bolder + brighter labels (were 10 px dark grey)
-for _, spec in { { "SKINS", CL_X - 14 }, { "INVITE", RIGHT - CIRCLE - 14 } } do
+for _, spec in { { "COSMETICS", CL_X - 14 }, { "INVITE", RIGHT - CIRCLE - 14 } } do
 	local l = lbl(stage, spec[1], 15, spec[2], BY + BH + 4, CIRCLE + 28, 20, C.text, "H", Enum.TextXAlignment.Center)
 	l.ZIndex = 5
 	new("UIStroke", { Color = BLACK, Thickness = 1.5, Transparency = 0.5 }, l)
@@ -1617,12 +1624,13 @@ local function openSkins()
 	if not screenOpen then openScreen("home") end
 	openPick("skin", 1)
 end
-local function toggleSkins()
-	if screenOpen and view == "pick" and pickKind == "skin" then setView("home") else openSkins() end
+local function toggleSkins() -- v5.10: opens the COSMETICS LOCKER (CosmeticsClient) - its own menu, not a page inside the play screen
+	if screenOpen then closeScreen() end
+	player:SetAttribute("CosmeticsOpen", true)
 end
 homePlay.MouseButton1Click:Connect(function() openScreen("home") end)
 homePlus.MouseButton1Click:Connect(function() openScreen("invite") end)
-homeSkins.MouseButton1Click:Connect(openSkins)
+homeSkins.MouseButton1Click:Connect(toggleSkins)
 closeBtn.MouseButton1Click:Connect(closeScreen)
 skinsBtn.MouseButton1Click:Connect(toggleSkins)
 inviteBtn.MouseButton1Click:Connect(function()
