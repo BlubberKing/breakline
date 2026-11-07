@@ -96,7 +96,10 @@ do
 		if type(img) == "string" and img ~= "" then
 			if tonumber(img) then img = "rbxassetid://" .. img end -- a bare number works too
 			if img ~= "rbxassetid://0" then MAP_IMAGE = img end
+		else
+			warn(("[MatchServer] map '%s' has NO loading picture: MatchConfig.MAPS.Info has no entry for the key '%s' (the folder name without '_map', lower case) and the folder has no LoadingImage attribute. The loading screen will be dark."):format(pick.Name, key))
 		end
+		if MAP_IMAGE ~= "" then print(("[MatchServer] loading picture for '%s': %s"):format(pick.Name, MAP_IMAGE)) end
 		print(("[MatchServer] mode %s: loaded map '%s' (1 of %d)"):format(MODE, pick.Name, #maps))
 	else
 		warn(("[MatchServer] no maps for mode %s - put folders named like 'test_map' inside ServerStorage > %s. Falling back to a MapBounds part in Workspace."):format(
@@ -190,6 +193,7 @@ stateFolder:SetAttribute("Expected", 0) -- loading screen: players we wait for /
 stateFolder:SetAttribute("Present", 0)
 stateFolder:SetAttribute("Ready", 0)
 stateFolder:SetAttribute("AllReady", false)
+stateFolder:SetAttribute("LoadHoldEnds", 0) -- v5.10: server time when the loading-screen hold ends (0 = not holding yet)
 stateFolder.Parent = RS
 
 -- gun damage on plugged boxes comes in through this event (fired by GunServer)
@@ -855,7 +859,14 @@ local function endRound(winner)
 			r.xpBefore = Profiles.Get(p, "XP") or 0 -- the summary screen needs the XP you had BEFORE this match
 			Profiles.Increment(p, "Souls", r.souls)
 			Profiles.Increment(p, "XP", r.xp)
-			if outcome == "win" then Profiles.Increment(p, "Wins", 1) elseif outcome == "loss" then Profiles.Increment(p, "Losses", 1) end
+			if outcome == "win" then
+				Profiles.Increment(p, "Wins", 1)
+				Profiles.Increment(p, "Streak", 1) -- v5.10: wins in a row (any mode) -> the crown + xN above the player in the lobby
+			elseif outcome == "loss" then
+				Profiles.Increment(p, "Losses", 1)
+				Profiles.Set(p, "Streak", 0) -- one loss and the crown + the streak are gone (a draw leaves it as it is)
+			end
+			r.streak = Profiles.Get(p, "Streak") or 0
 			ResultRemote:FireClient(p, r)
 		else
 			ResultRemote:FireClient(p, { outcome = "none", base = 0, rows = {}, mult = 1, souls = 0 })
@@ -1575,16 +1586,29 @@ task.spawn(function()
 		stateFolder:SetAttribute("AllReady", false)
 		setPhase("Waiting", 0)
 		local waitStart = os.clock()
+		local allAt = nil -- v5.10: when the last player finished loading. The map picture stays up C.LOAD_HOLD seconds after that, so nobody misses it.
+		stateFolder:SetAttribute("LoadHoldEnds", 0)
 		while true do
 			publishLoad()
 			if enough() then
 				local all = readyCount() >= #Players:GetPlayers()
-				if all or os.clock() - waitStart > C.READY_TIMEOUT + (Roster.Reserved and PC.ROSTER_WAIT or 0) then break end
+				local timedOut = os.clock() - waitStart > C.READY_TIMEOUT + (Roster.Reserved and PC.ROSTER_WAIT or 0)
+				if all then
+					if not allAt then
+						allAt = os.clock()
+						stateFolder:SetAttribute("LoadHoldEnds", workspace:GetServerTimeNow() + C.LOAD_HOLD)
+					end
+				elseif allAt then -- somebody new joined while we were holding: wait for them too
+					allAt = nil
+					stateFolder:SetAttribute("LoadHoldEnds", 0)
+				end
+				if timedOut or (allAt and os.clock() - allAt >= C.LOAD_HOLD) then break end
 			end
 			task.wait(0.25)
 		end
 		publishLoad()
 		stateFolder:SetAttribute("AllReady", true)
+		stateFolder:SetAttribute("LoadHoldEnds", 0)
 		task.wait(1.2) -- the loading screen says "ALL PLAYERS LOADED" for a moment
 
 		-- ===== Pregame: teams are set, everybody can change their loadout =====
