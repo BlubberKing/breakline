@@ -66,6 +66,14 @@ C.MAPS = {
 	Folders = { Breakline = "breaklineMaps", ["1v1"] = "1v1Maps" }, -- mode -> folder name (matched ignoring upper / lower case)
 	Suffix = "_map",                                                -- a map folder's name ends with this
 	StudioMode = "Breakline",                                       -- the mode used when you press Play in Studio (live servers get it from the lobby queue)
+	-- v5.8: per-map LOADING ART + display name. Key = the map folder's name without "_map", lower case (test_map -> test).
+	--   Name  = the name shown big on the loading screen + under the loadout clock (empty = made from the folder name: test_map -> TEST).
+	--   Image = the uploaded loading picture (rbxassetid://<number>). "" or rbxassetid://0 = no picture yet (dark screen with the name).
+	-- A map folder can also carry its own attributes instead: DisplayName (string) and LoadingImage (string). Those win over this table.
+	-- The same map name works in both mode folders (a test_map in breaklineMaps AND in 1v1Maps both use Info.test).
+	Info = {
+		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://0" }, -- PASTE the uploaded LoadingArt_TestingGrounds image id here
+	},
 }
 
 -- ===== v4.1 modes =====
@@ -150,6 +158,7 @@ C.BOTS = {
 	PauseTime = { 0.35, 0.9 },          -- ...seconds of not firing
 	MaxFireRange = 110,                 -- they will not shoot farther than this (or the gun's own range, if shorter)
 	RespawnTime = 14,                   -- seconds a dead bot stays down in a Breakline match (1v1 uses V1.RespawnTime)
+	SpawnShield = 1,                    -- v5.8: seconds a bot is unhittable after a mid-round respawn (a 1v1 round reset: only while frozen, like you)
 	BuilderPerTeam = 1,                 -- Breakline only: this many bots per team carry boxes to the holes instead of roaming
 }
 
