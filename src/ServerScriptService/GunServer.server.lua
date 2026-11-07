@@ -222,13 +222,14 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 	-- one damage number per target per shot (shotgun pellets are added together)
 	for model, h in hits do
 		if h.hum.Health > 0 then
-			local dealt = Vitals.Damage(h.hum, h.dmg) -- shield first, then health
+			local dealt = Vitals.Damage(h.hum, h.dmg) -- v5.8: the damage that really came off (0 while the target is spawn-protected)
 			local killed = h.hum.Health <= 0
+			if dealt <= 0 and not killed then continue end -- protected target: no number, no stats (the client hitmarker still shows)
 			if h.player or model:GetAttribute("IsBot") then -- match stats for the souls screen (MatchServer resets them every round); v5.7: bots count too
 				player:SetAttribute("StatDamage", (player:GetAttribute("StatDamage") or 0) + dealt)
 				if killed then player:SetAttribute("StatKills", (player:GetAttribute("StatKills") or 0) + 1) end
 			end
-			HitConfirm:FireClient(player, model, h.head, killed, math.floor(h.dmg + 0.5), h.pos)
+			HitConfirm:FireClient(player, model, h.head, killed, math.floor(h.dmg + 0.5), h.pos) -- (full hit value, as before: overkill shows the real shot)
 			if h.player then Damaged:FireClient(h.player, h.dmg, origin) end
 		end
 	end
