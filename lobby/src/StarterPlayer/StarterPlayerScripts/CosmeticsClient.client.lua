@@ -1,4 +1,12 @@
--- CosmeticsClient v2 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- CosmeticsClient v3 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- v5.12 (owner Nov 7):
+--   * PLAYER CARD tab = a card EDITOR: click a showcase item on your card, drag it to move it, drag a corner to resize, drag the round handle to turn it
+--     (mouse wheel resizes too); RESET SPOT / RESET ALL. Saved with Equip("place", slot, { x, y, s, r }). The info on the card always sits on top.
+--   * clicking a showcase slot shows three TABS under it (PLAYER SKINS / GUN SKINS / CARDS) instead of one long cramped list.
+--   * SHOP: the open shop fills the screen; the other shop is a slim tab on the side (souls on the right while the essence shop is open, essence on the
+--     left while the souls shop is open), click it to swap. The shop always opens on the ESSENCE SHOP.
+--   * BUG FIX: turning a model in the preview and letting go no longer closes the preview.
+--   * no more blinking: pictures are built once and cloned after that, and the locker viewer is kept between refreshes.
 -- v5.11 (owner Nov 7):
 --   * drag-to-turn really works now: the viewer used holder.InputBegan, but the info panel sat ON TOP of the viewer (so the click never reached it) and the
 --     lobby's first-person camera could keep the mouse locked. Now a global click is hit-tested against the viewer and a Modal button frees the cursor.
@@ -129,41 +137,81 @@ local function addFigure(model, skinId)
 end
 
 -- a small still picture (cards): figure or gun fitted into the frame, never cropped
-local function thumb(parent, item)
-	if item.kind == "banner" then -- v5.11: player card background (animated ones move here too)
-		return PlayerCards.DrawBanner(parent, item.id, true)
-	elseif item.kind == "flex" then -- v5.11: a showcase item (skin / gun skin / card)
-		return PlayerCards.ShowcaseItem(parent, item.value, item.w, item.h)
-	end
+-- v5.12: every figure / gun picture is built ONCE (a template) and CLONED after that. The pages are re-drawn after every click (equip, buy, a new
+-- background ...), and before this every model was rebuilt one per frame, so all the models on screen blinked out and back in. Now a picture that
+-- was built before is cloned straight into the new card in the same frame: nothing blinks.
+local thumbTpl, thumbOrder = {}, {}
+local THUMB_MAX = 140
+local function thumbKey(item)
+	if item.kind == "banner" then return "banner|" .. item.id end
+	if item.kind == "flex" then return ("flex|%s|%dx%d"):format(item.value, item.w or 0, item.h or 0) end
+	return item.kind .. "|" .. tostring(item.id) .. "|" .. tostring(item.gun)
+end
+local function thumbTemplate(item)
+	local key = thumbKey(item)
+	local t = thumbTpl[key]
+	if t then return t end
 	local vp = new("ViewportFrame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Ambient = rgb(150, 152, 160), LightColor = rgb(255, 250, 244),
-		LightDirection = Vector3.new(-0.5, -0.9, -0.4) }, parent)
-	local cam = new("Camera", { FieldOfView = 20 }, vp)
+		LightDirection = Vector3.new(-0.5, -0.9, -0.4) })
+	new("Camera", { FieldOfView = 20 }, vp)
 	local model = new("Model", {}, vp)
 	if item.kind == "skin" then
 		local ok, fig = pcall(Skins.NewFigure, model, item.id, { static = true })
 		if ok and fig then pcall(fig.Update, fig, 0, 0) end
-		UI.FitViewport(vp, cam, model, Vector3.new(0.28, 0.1, 1), { pad = 0.04, fov = 22 })
+		t = { vp = vp, dir = Vector3.new(0.28, 0.1, 1), opts = { pad = 0.04, fov = 22 } }
 	else
 		addGunParts(model, item.gun, item.id ~= "STOCK" and item.id or nil)
-		UI.FitViewport(vp, cam, model, Vector3.new(1, 0.1, 0), { pad = 0.1, fov = 16 })
+		t = { vp = vp, dir = Vector3.new(1, 0.1, 0), opts = { pad = 0.1, fov = 16 } }
 	end
+	thumbTpl[key] = t
+	table.insert(thumbOrder, key)
+	while #thumbOrder > THUMB_MAX do
+		local k = table.remove(thumbOrder, 1)
+		local old = thumbTpl[k]
+		thumbTpl[k] = nil
+		if old then old.vp:Destroy() end
+	end
+	return t
+end
+local function thumb(parent, item)
+	if item.kind == "banner" then -- v5.11: player card background (animated ones move here too)
+		return PlayerCards.DrawBanner(parent, item.id, true)
+	elseif item.kind == "flex" then -- v5.11: a showcase item (skin / gun skin / card); PlayerCards keeps its own template cache
+		return PlayerCards.ShowcaseItem(parent, item.value, item.w, item.h)
+	end
+	local t = thumbTemplate(item)
+	local vp = t.vp:Clone()
+	local cam = vp:FindFirstChildOfClass("Camera")
+	local model = vp:FindFirstChildOfClass("Model")
+	vp.Parent = parent
+	UI.FitViewport(vp, cam, model, t.dir, t.opts)
 	return vp
 end
 
--- cards fill their pictures one per frame so opening a page never hitches
-local thumbJobs = {}
+-- the FIRST time a picture is needed it is built in the background (one per frame, so opening a page never hitches);
+-- every time after that it is cloned at once (v5.12)
+local thumbJobs, thumbReady = {}, {}
 task.spawn(function()
 	while true do
 		local job = table.remove(thumbJobs, 1)
 		if job then
-			if job.well.Parent then pcall(thumb, job.well, job.item) end
+			if job.well.Parent then
+				local ok = pcall(thumb, job.well, job.item)
+				if ok then thumbReady[thumbKey(job.item)] = true end
+			end
 			task.wait()
 		else
 			task.wait(0.1)
 		end
 	end
 end)
-local function queueThumb(well, item) table.insert(thumbJobs, { well = well, item = item }) end
+local function queueThumb(well, item)
+	if item.kind == "banner" or thumbReady[thumbKey(item)] then
+		pcall(thumb, well, item)
+		return
+	end
+	table.insert(thumbJobs, { well = well, item = item })
+end
 
 -- ================= the 3D viewer: drag to turn, scroll to zoom =================
 local viewers = {}
@@ -181,15 +229,19 @@ local function newViewer(parent, x, y, w, h)
 	local V = { yaw = 0.4, pitch = 0.12, dist = 14, baseDist = 14, center = Vector3.zero, dragging = false, touched = 0, kind = "skin" }
 	local conns = {}
 	function V.set(item)
-		model:ClearAllChildren()
+		-- v5.12: the new model is built first and swapped in, so the viewer never shows an empty frame
+		local fresh = new("Model", {})
 		V.kind = item.kind
 		if item.kind == "skin" then
-			addFigure(model, item.id)
+			addFigure(fresh, item.id)
 			V.yaw, V.pitch = 0.45, 0.1
 		else
-			addGunParts(model, item.gun, item.id ~= "STOCK" and item.id or nil)
+			addGunParts(fresh, item.gun, item.id ~= "STOCK" and item.id or nil)
 			V.yaw, V.pitch = math.pi / 2 + 0.25, 0.14
 		end
+		fresh.Parent = vp
+		model:Destroy()
+		model = fresh
 		local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
 		if ok and cf then
 			V.center = cf.Position
@@ -398,9 +450,40 @@ do
 	end
 end
 
--- the two halves
-local PX_ESS, PW_ESS, PX_SOUL, PW_SOUL = 56, 1130, 1210, 654
-local panels = {}
+-- v5.12: the two shops. The OPEN one fills the screen; the other one is a slim tab on the side (the souls tab on the RIGHT while the essence shop is open,
+-- the essence tab on the LEFT while the souls shop is open). Click the tab to swap. The shop always opens on the ESSENCE SHOP.
+local SHOP_X, SHOP_W, SLIVER_W, SLIVER_GAP = 56, 1808, 92, 12
+local PW_OPEN = SHOP_W - SLIVER_W - SLIVER_GAP -- 1704
+local shopSide = "essence"
+local panels, slivers = {}, {}
+local function makeSliver(cur)
+	local isEss = cur == "essence"
+	local col = isEss and ESS or SOULC
+	local b = new("TextButton", { Name = "Sliver_" .. cur, Text = "", AutoButtonColor = false, BackgroundColor3 = isEss and rgb(30, 16, 50) or rgb(12, 26, 40),
+		BorderSizePixel = 0, Position = UDim2.fromOffset(0, 216), Size = UDim2.fromOffset(SLIVER_W, 820), Visible = false }, shopRoot)
+	local st = stroke(b, col, 1.5, 0.25)
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(isEss and rgb(66, 34, 104) or rgb(24, 52, 78), isEss and rgb(18, 10, 30) or rgb(8, 16, 24)) }, b)
+	local ic = isEss and UI.EssenceIcon(b, 46) or UI.SoulIcon(b, 46)
+	ic.AnchorPoint = Vector2.new(0.5, 0)
+	ic.Position = UDim2.new(0.5, 0, 0, 22)
+	-- the name runs down the tab
+	local name = new("TextLabel", { Name = "Name", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(520, 60), Rotation = 90, Text = isEss and "ESSENCE SHOP" or "SOULS SHOP", TextSize = 40, FontFace = F.H,
+		TextColor3 = isEss and ESS_PALE or K.soulPale }, b)
+	local chev = lbl(b, isEss and "<" or ">", 30, 0, 0, SLIVER_W, 40, col, F.H, Enum.TextXAlignment.Center)
+	chev.AnchorPoint = Vector2.new(0, 1)
+	chev.Position = UDim2.new(0, 0, 1, -18)
+	b.MouseEnter:Connect(function()
+		tween(st, FAST, { Transparency = 0, Thickness = 2.5 })
+		tween(name, FAST, { TextColor3 = K.text })
+	end)
+	b.MouseLeave:Connect(function()
+		tween(st, FAST, { Transparency = 0.25, Thickness = 1.5 })
+		tween(name, FAST, { TextColor3 = isEss and ESS_PALE or K.soulPale })
+	end)
+	slivers[cur] = b
+	return b
+end
 local function makePanel(cur, x, w)
 	local isEss = cur == "essence"
 	local panel = box(shopRoot, x, 216, w, 820, K.panel, 0.04)
@@ -414,13 +497,15 @@ local function makePanel(cur, x, w)
 	chip(head, w - tagW - 18, 20, tagW, 26, isEss and "PREMIUM" or "EARN BY PLAYING", isEss and ESS or K.soul, isEss and rgb(20, 8, 40) or rgb(6, 24, 40), nil, 13)
 	local scroll = new("ScrollingFrame", { Position = UDim2.fromOffset(0, 74), Size = UDim2.fromOffset(w, 820 - 74), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
 		ScrollBarImageColor3 = K.line2, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y }, panel)
-	new("UIGridLayout", { CellSize = isEss and UDim2.fromOffset(348, 348) or UDim2.fromOffset(300, 348), CellPadding = UDim2.fromOffset(14, 14), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
-	new("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 14), PaddingBottom = UDim.new(0, 20) }, scroll)
+	new("UIGridLayout", { CellSize = UDim2.fromOffset(316, 348), CellPadding = UDim2.fromOffset(14, 14), SortOrder = Enum.SortOrder.LayoutOrder }, scroll) -- 5 per row
+	new("UIPadding", { PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 18), PaddingBottom = UDim.new(0, 20) }, scroll)
 	panels[cur] = { panel = panel, scroll = scroll }
 	return scroll
 end
-makePanel("essence", PX_ESS, PW_ESS)
-makePanel("souls", PX_SOUL, PW_SOUL)
+makePanel("essence", SHOP_X, PW_OPEN)
+makePanel("souls", SHOP_X + SLIVER_W + SLIVER_GAP, PW_OPEN)
+makeSliver("essence")
+makeSliver("souls")
 
 local function shopCard(scroll, item, order)
 	local isOwned = owned(item)
@@ -467,10 +552,20 @@ function refreshShop()
 	local gunTab = shopTab == "gun"
 	chipRow.Visible = gunTab
 	local top = gunTab and 262 or 216
-	for _, p in panels do
-		p.panel.Position = UDim2.new(p.panel.Position.X.Scale, p.panel.Position.X.Offset, 0, top)
-		p.panel.Size = UDim2.fromOffset(p.panel.Size.X.Offset, 1036 - top)
-		p.scroll.Size = UDim2.fromOffset(p.panel.Size.X.Offset, 1036 - top - 74)
+	-- v5.12: the open shop fills the screen, the other one is a tab on its side
+	local other = shopSide == "essence" and "souls" or "essence"
+	for cur, p in panels do
+		local open = cur == shopSide
+		local x = (shopSide == "essence") and SHOP_X or (SHOP_X + SLIVER_W + SLIVER_GAP)
+		p.panel.Visible = open
+		p.panel.Position = UDim2.fromOffset(x, top)
+		p.panel.Size = UDim2.fromOffset(PW_OPEN, 1036 - top)
+		p.scroll.Size = UDim2.fromOffset(PW_OPEN, 1036 - top - 74)
+	end
+	for cur, s in slivers do
+		s.Visible = cur == other
+		s.Position = UDim2.fromOffset((other == "souls") and (SHOP_X + PW_OPEN + SLIVER_GAP) or SHOP_X, top)
+		s.Size = UDim2.fromOffset(SLIVER_W, 1036 - top)
 	end
 	for g, c in chipBtns do
 		local on = g == gunFilter
@@ -482,6 +577,7 @@ function refreshShop()
 	for cur, p in panels do
 		local keep = p.scroll.CanvasPosition
 		clearScroll(p.scroll)
+		if cur ~= shopSide then continue end -- only the open shop is filled
 		local list = shopItems(cur)
 		for i, it in list do shopCard(p.scroll, it, i) end
 		if #list == 0 then
@@ -501,12 +597,26 @@ for _, t in TABS do
 		refreshShop()
 	end)
 end
+-- v5.12: click the side tab = that shop opens over the screen (a short slide in from the tab's side)
+for cur, s in slivers do
+	s.MouseButton1Click:Connect(function()
+		if shopSide == cur then return end
+		shopSide = cur
+		panels[cur].scroll.CanvasPosition = Vector2.zero
+		refreshShop()
+		local p = panels[cur].panel
+		local goal = p.Position
+		p.Position = goal + UDim2.fromOffset(cur == "souls" and 60 or -60, 0)
+		tween(p, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = goal })
+	end)
+end
 
 -- ----- PREVIEW (big, drag to turn) -----
 local pv = new("Frame", { Name = "Preview", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, ZIndex = 20, Active = true }, stage)
 local pvDim = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BackgroundTransparency = 0.35, BorderSizePixel = 0, ZIndex = 20 }, pv)
 local pvPanel = box(pv, 150, 100, 1620, 880, K.panel, 0)
 pvPanel.ZIndex = 21
+pvPanel.Active = true -- v5.12: clicks on the panel (the viewer, the info) never reach the dim backdrop behind it
 stroke(pvPanel, K.line2, 1.5)
 local pvViewer, pvBody, pvFlat
 local function pvClear()
@@ -517,7 +627,7 @@ end
 -- your own card data (used to preview a background on YOUR card)
 local function myCardData(bg)
 	local cd = PlayerCards.Read(player)
-	if bg then cd = { bg = bg, show = cd.show } end
+	if bg then cd = { bg = bg, show = cd.show, pos = cd.pos } end
 	return { userId = player.UserId, name = player.DisplayName, username = player.Name, level = player:GetAttribute("Level"), card = cd }
 end
 
@@ -627,7 +737,23 @@ function closePreview()
 	previewItem = nil
 	pvClear()
 end
-pvDim.MouseButton1Click:Connect(closePreview)
+-- v5.12 BUG FIX: turning a model in the preview and letting go closed the preview. The press started on the viewer, the release landed on the
+-- dim backdrop (a button) and counted as "click outside". Now the preview only closes when the press AND the release are both outside the panel
+-- and nothing was being dragged.
+local function overPanel()
+	local m = UIS:GetMouseLocation()
+	local ap, as = pvPanel.AbsolutePosition, pvPanel.AbsoluteSize
+	return m.X >= ap.X and m.X <= ap.X + as.X and m.Y >= ap.Y and m.Y <= ap.Y + as.Y
+end
+local pvPressOutside = false
+pvDim.MouseButton1Down:Connect(function()
+	pvPressOutside = not overPanel() and not (pvViewer and pvViewer.dragging)
+end)
+pvDim.MouseButton1Click:Connect(function()
+	local ok = pvPressOutside and not overPanel()
+	pvPressOutside = false
+	if ok then closePreview() end
+end)
 
 -- ======================================================================================
 -- LOCKER
@@ -803,7 +929,7 @@ local function gunSide(item)
 	end)
 end
 
--- ----- PLAYER CARD: background + showcase -----
+-- ----- PLAYER CARD: background + showcase + v5.12 free placement -----
 local function ownedCardIds()
 	local raw = player:GetAttribute("CardsJson")
 	local out = {}
@@ -840,6 +966,7 @@ local function bannerCard(parent, id, order, w)
 	return b
 end
 
+local editSel = nil -- v5.12: the showcase item selected ON the card (1..3) for moving / resizing / turning
 local function flexCard(parent, value, order, w)
 	local cur = PlayerCards.Read(player).show[cardSlot or 1]
 	local on = cur == value
@@ -848,49 +975,290 @@ local function flexCard(parent, value, order, w)
 	if not on then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
 	local well = box(b, 1, 1, w - 2, 196, K.void, 0.1)
 	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(20, 24, 32), rgb(8, 9, 12)) }, well)
-	if value == "" then
-		lbl(well, "NONE", 26, 0, 0, w - 2, 196, K.mute, F.H, Enum.TextXAlignment.Center)
-	else
-		queueThumb(well, { kind = "flex", value = value, w = w - 2, h = 196 })
-	end
-	local nm = lbl(b, value == "" and "EMPTY SLOT" or PlayerCards.ItemName(value), 16, 12, 202, w - 24, 22, K.text, F.H)
+	queueThumb(well, { kind = "flex", value = value, w = w - 2, h = 196 })
+	local nm = lbl(b, PlayerCards.ItemName(value), 16, 12, 202, w - 24, 22, K.text, F.H)
 	nm.TextTruncate = Enum.TextTruncate.AtEnd
 	if on then lbl(b, "IN THIS SLOT", 10, 13, 226, w - 24, 14, K.green, F.MB) end
 	b.MouseButton1Click:Connect(function()
 		if on or not cardSlot then return end
-		local ok, res, msg = pcall(function() return EquipR:InvokeServer("show", cardSlot, value) end)
+		local slot = cardSlot
+		local ok, res, msg = pcall(function() return EquipR:InvokeServer("show", slot, value) end)
 		lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+		if ok and res == true then editSel = slot end -- select it on the card so it can be placed right away
 	end)
 	return b
 end
 
+-- ===== v5.12 CARD EDITOR: drag the showcase items around your card, resize them, turn them =====
+-- Click an item ON the card to select it (red box): drag it = move, drag a corner = resize, drag the round handle above it = turn, mouse wheel = resize.
+-- The info (avatar, name, level, @username) is always drawn on top of the items. Every change is sent to the server (Equip "place") when you let go;
+-- until the server's copy comes back the card shows your local copy, so nothing jumps back.
+local ED_W = 690
+local editor = nil       -- { root, holder, card, items, overlay, selBox, key }
+local localPos = {}      -- [slot] = placement the player just made (shown until the server echoes it)
+local pendingPlace = {}  -- [slot] = placement waiting to be sent
+local drag = nil         -- { mode = "move" | "size" | "turn", slot, start, place }
+local refreshAfterDrag = false
+local SNAP = 5           -- turning snaps to 0 / 45 / 90 ... within this many degrees
+
+local function myCard()
+	local d = myCardData()
+	for i = 1, 3 do if localPos[i] then d.card.pos[i] = localPos[i] end end
+	return d
+end
+local function updateHandles()
+	if not editor then return end
+	local it = editSel and editor.items[editSel]
+	editor.selBox.Visible = it ~= nil
+	if not it then return end
+	local p = it.place
+	editor.selBox.Position = UDim2.fromOffset(p.x, p.y)
+	editor.selBox.Size = UDim2.fromOffset(PlayerCards.SW * p.s, PlayerCards.SH * p.s)
+	editor.selBox.Rotation = p.r
+end
+local function destroyEditor()
+	if editor then editor.root:Destroy() editor = nil end
+	drag = nil
+end
+local function buildEditor()
+	local d = myCard()
+	local key = d.card.bg .. "|" .. table.concat(d.card.show, ",") .. "|" .. tostring(d.level) .. "|" .. tostring(d.name)
+	if editor and editor.key == key and editor.root.Parent then
+		-- same background + same items: only move them (no rebuild, so nothing blinks)
+		for i, it in editor.items do it.apply(d.card.pos[i]) end
+		updateHandles()
+		return
+	end
+	local old = editor
+	local root = new("Frame", { Name = "CardEditor", Size = UDim2.fromOffset(694, 220), BackgroundTransparency = 1, ZIndex = 3 }, lockSide)
+	lbl(root, "YOUR CARD", 13, 4, 0, 690, 18, K.redHi, F.MB)
+	local holder, card, items = PlayerCards.Render(root, d, ED_W)
+	holder.Position = UDim2.fromOffset(2, 24)
+	-- handles live outside the card's clipping, in the same native 840 x 236 coordinates
+	local overlay = new("Frame", { Name = "EditOverlay", Size = UDim2.fromOffset(PlayerCards.W, PlayerCards.H), BackgroundTransparency = 1, ZIndex = 20 }, holder)
+	new("UIScale", { Scale = ED_W / PlayerCards.W }, overlay)
+	local selBox = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Visible = false, ZIndex = 21 }, overlay)
+	stroke(selBox, K.red, 2.5)
+	for _, c in { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } } do
+		local h = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(c[1], c[2]), Size = UDim2.fromOffset(16, 16),
+			BackgroundColor3 = K.text, BorderSizePixel = 0, ZIndex = 22 }, selBox)
+		stroke(h, K.red, 2)
+	end
+	new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.fromOffset(2, 22), BackgroundColor3 = K.red, BorderSizePixel = 0, ZIndex = 21 }, selBox)
+	local turn = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, -30), Size = UDim2.fromOffset(20, 20),
+		BackgroundColor3 = K.text, BorderSizePixel = 0, ZIndex = 22 }, selBox)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, turn)
+	stroke(turn, K.red, 2)
+	editor = { root = root, holder = holder, card = card, items = items, overlay = overlay, selBox = selBox, key = key }
+	if old then old.root:Destroy() end
+	updateHandles()
+end
+
+-- screen point -> native card point, and native card point -> the item's own (unturned) frame
+local function toCard(pos)
+	local ap, as = editor.card.AbsolutePosition, editor.card.AbsoluteSize
+	local k = as.X / PlayerCards.W
+	if k <= 0 then return nil end
+	return Vector2.new((pos.X - ap.X) / k, (pos.Y - ap.Y) / k)
+end
+local function toItem(p, place)
+	local d = p - Vector2.new(place.x, place.y)
+	local a = math.rad(place.r)
+	return Vector2.new(d.X * math.cos(a) + d.Y * math.sin(a), -d.X * math.sin(a) + d.Y * math.cos(a))
+end
+local function inside(p, place)
+	local q = toItem(p, place)
+	return math.abs(q.X) <= PlayerCards.SW * place.s / 2 and math.abs(q.Y) <= PlayerCards.SH * place.s / 2
+end
+local function editorLive()
+	return editor ~= nil and lockerOpen and lockTab == "card" and stage.Visible and lockerRoot.Visible and not pv.Visible
+end
+local function setPlace(slot, p)
+	p = PlayerCards.CleanPlace(p, slot)
+	localPos[slot] = p
+	local it = editor and editor.items[slot]
+	if it then it.apply(p) end
+	updateHandles()
+	return p
+end
+local function commit(slot)
+	if localPos[slot] then pendingPlace[slot] = localPos[slot] end
+end
+local function pointerPos(input)
+	if input.UserInputType == Enum.UserInputType.Touch then
+		return Vector2.new(input.Position.X, input.Position.Y) + GuiService:GetGuiInset()
+	end
+	return UIS:GetMouseLocation()
+end
+
+UIS.InputBegan:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	if not editorLive() then return end
+	local p = toCard(pointerPos(input))
+	if not p then return end
+	local onCard = p.X >= 0 and p.X <= PlayerCards.W and p.Y >= 0 and p.Y <= PlayerCards.H
+	-- 1) the handles of the selected item (they may stick out of the card)
+	local it = editSel and editor.items[editSel]
+	if it then
+		local q = toItem(p, it.place)
+		local hw, hh = PlayerCards.SW * it.place.s / 2, PlayerCards.SH * it.place.s / 2
+		if (q - Vector2.new(0, -hh - 30)).Magnitude <= 18 then
+			drag = { mode = "turn", slot = editSel, start = p, place = table.clone(it.place) }
+			return
+		end
+		for _, c in { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } } do
+			if (q - Vector2.new(c[1] * hw, c[2] * hh)).Magnitude <= 16 then
+				drag = { mode = "size", slot = editSel, start = p, place = table.clone(it.place) }
+				return
+			end
+		end
+		if inside(p, it.place) then
+			drag = { mode = "move", slot = editSel, start = p, place = table.clone(it.place) }
+			return
+		end
+	end
+	if not onCard then return end
+	-- 2) any item under the pointer (the top one first)
+	for i = 3, 1, -1 do
+		local o = editor.items[i]
+		if o and inside(p, o.place) then
+			editSel = i
+			updateHandles()
+			drag = { mode = "move", slot = i, start = p, place = table.clone(o.place) }
+			return
+		end
+	end
+	-- 3) empty spot on the card = deselect
+	editSel = nil
+	updateHandles()
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseWheel then
+		if not editorLive() or not editSel or not editor.items[editSel] then return end
+		local p = toCard(UIS:GetMouseLocation())
+		if not p or p.X < 0 or p.X > PlayerCards.W or p.Y < 0 or p.Y > PlayerCards.H then return end
+		local cur = table.clone(editor.items[editSel].place)
+		cur.s = cur.s * (1 + input.Position.Z * 0.07)
+		setPlace(editSel, cur)
+		commit(editSel)
+		return
+	end
+	if not drag or not editor then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	local p = toCard(pointerPos(input))
+	if not p then return end
+	local s0 = drag.place
+	local c = Vector2.new(s0.x, s0.y)
+	local nxt = table.clone(s0)
+	if drag.mode == "move" then
+		local d = p - drag.start
+		nxt.x, nxt.y = s0.x + d.X, s0.y + d.Y
+	elseif drag.mode == "size" then
+		local d0 = math.max(8, (drag.start - c).Magnitude)
+		nxt.s = s0.s * (p - c).Magnitude / d0
+	else -- turn
+		local a0 = math.atan2(drag.start.Y - c.Y, drag.start.X - c.X)
+		local a1 = math.atan2(p.Y - c.Y, p.X - c.X)
+		local r = s0.r + math.deg(a1 - a0)
+		local snap = math.floor(r / 45 + 0.5) * 45
+		if math.abs(r - snap) <= SNAP then r = snap end
+		nxt.r = r
+	end
+	setPlace(drag.slot, nxt)
+end)
+
+UIS.InputEnded:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	if not drag then return end
+	commit(drag.slot)
+	drag = nil
+	if refreshAfterDrag then refreshAfterDrag = false if refreshLocker and lockerOpen then refreshLocker() end end
+end)
+
+-- send placements one at a time (the newest one per slot wins)
+task.spawn(function()
+	while true do
+		task.wait(0.2)
+		local slot = next(pendingPlace)
+		if slot then
+			local p = pendingPlace[slot]
+			pendingPlace[slot] = nil
+			local ok, res, msg = pcall(function() return EquipR:InvokeServer("place", slot, p) end)
+			if not ok or res ~= true then
+				if ok and msg == "Slow down." then
+					if not pendingPlace[slot] then pendingPlace[slot] = p end
+				else
+					localPos[slot] = nil
+					lockMsg = (ok and msg) or "Could not reach the server."
+					if lockerOpen and lockTab == "card" and refreshLocker then refreshLocker() end
+				end
+			end
+		end
+	end
+end)
+-- forget a local placement once the server's copy matches it
+local function syncLocal()
+	local srv = PlayerCards.Read(player).pos
+	for i = 1, 3 do
+		local l = localPos[i]
+		if l and not pendingPlace[i] and not (drag and drag.slot == i) then
+			local s = srv[i]
+			if math.abs(s.x - l.x) < 0.11 and math.abs(s.y - l.y) < 0.11 and math.abs(s.s - l.s) < 0.011 and math.abs(s.r - l.r) < 0.11 then localPos[i] = nil end
+		end
+	end
+end
+
+local FLEX_TABS = { { id = "skin", name = "PLAYER SKINS" }, { id = "gun", name = "GUN SKINS" }, { id = "card", name = "CARDS" } }
+local flexTab = "skin" -- v5.12: the picker under a showcase slot has three tabs instead of one long list
+
 local function cardSide()
 	lockInfo = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, lockSide)
-	lbl(lockInfo, "YOUR CARD", 13, 4, 0, 690, 18, K.redHi, F.MB)
-	PlayerCards.Render(lockInfo, myCardData(), 690).Position = UDim2.fromOffset(2, 24)
+	buildEditor()
 	local pcData = PlayerCards.Read(player)
-	lbl(lockInfo, "SHOWCASE", 28, 2, 236, 400, 40, K.text, F.H)
-	box(lockInfo, 2, 278, 690, 1, K.line)
+	-- how to edit + the selected item's buttons
+	lbl(lockInfo, "CLICK AN ITEM ON YOUR CARD:  DRAG = MOVE  //  CORNER = SIZE  //  ROUND HANDLE = TURN  //  WHEEL = SIZE", 11, 4, 226, 690, 16, K.dim, F.MB)
+	local resetB = new("TextButton", { Text = "RESET SPOT", TextSize = 16, FontFace = F.H, TextColor3 = K.text, BackgroundColor3 = K.panel3, AutoButtonColor = false,
+		BorderSizePixel = 0, Position = UDim2.fromOffset(2, 250), Size = UDim2.fromOffset(160, 36) }, lockInfo)
+	stroke(resetB, K.line2, 1)
+	hot(resetB, K.panel3, K.panel2, nil)
+	resetB.MouseButton1Click:Connect(function()
+		local slot = editSel or cardSlot
+		if not slot then lockMsg = "Select an item on your card first." refreshLocker() return end
+		setPlace(slot, PlayerCards.DefaultPlace(slot))
+		commit(slot)
+	end)
+	local resetAll = new("TextButton", { Text = "RESET ALL", TextSize = 16, FontFace = F.H, TextColor3 = K.text, BackgroundColor3 = K.panel3, AutoButtonColor = false,
+		BorderSizePixel = 0, Position = UDim2.fromOffset(172, 250), Size = UDim2.fromOffset(140, 36) }, lockInfo)
+	stroke(resetAll, K.line2, 1)
+	hot(resetAll, K.panel3, K.panel2, nil)
+	resetAll.MouseButton1Click:Connect(function()
+		for i = 1, 3 do setPlace(i, PlayerCards.DefaultPlace(i)) commit(i) end
+	end)
+
+	lbl(lockInfo, "SHOWCASE", 28, 2, 300, 400, 40, K.text, F.H)
+	box(lockInfo, 2, 342, 690, 1, K.line)
 	for i = 1, 3 do
 		local v = pcData.show[i]
 		local on = cardSlot == i
 		local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0,
-			Position = UDim2.fromOffset(2 + (i - 1) * 236, 294), Size = UDim2.fromOffset(218, 330) }, lockInfo)
+			Position = UDim2.fromOffset(2 + (i - 1) * 236, 356), Size = UDim2.fromOffset(218, 300) }, lockInfo)
 		local st = stroke(b, on and K.red or K.line, on and 2.5 or 1)
 		if not on then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
 		lbl(b, "SLOT " .. i, 11, 12, 8, 120, 14, on and K.redHi or K.mute, F.MB)
-		local well = box(b, 8, 28, 202, 250, K.void, 0.1)
+		local well = box(b, 8, 28, 202, 222, K.void, 0.1)
 		if PlayerCards.Parse(v) then
-			queueThumb(well, { kind = "flex", value = v, w = 202, h = 250 })
+			queueThumb(well, { kind = "flex", value = v, w = 202, h = 222 })
 		else
 			for _, sz in { Vector2.new(26, 3), Vector2.new(3, 26) } do
 				new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(sz.X, sz.Y), BackgroundColor3 = K.mute, BorderSizePixel = 0 }, well)
 			end
 		end
-		local nm = lbl(b, PlayerCards.Parse(v) and PlayerCards.ItemName(v) or "EMPTY", 15, 12, 286, 196, 22, PlayerCards.Parse(v) and K.text or K.mute, F.H)
+		local nm = lbl(b, PlayerCards.Parse(v) and PlayerCards.ItemName(v) or "EMPTY", 15, 12, 258, 196, 22, PlayerCards.Parse(v) and K.text or K.mute, F.H)
 		nm.TextTruncate = Enum.TextTruncate.AtEnd
 		b.MouseButton1Click:Connect(function()
 			if cardSlot == i then cardSlot = nil else cardSlot = i end
+			editSel = PlayerCards.Parse(v) and i or editSel
 			lockMsg = ""
 			lockGrid.CanvasPosition = Vector2.zero
 			refreshLocker()
@@ -903,15 +1271,31 @@ local function cardSide()
 	if lockMsg ~= "" then lbl(lockInfo, lockMsg, 13, 2, 818, 690, 18, K.redHi, F.MB, Enum.TextXAlignment.Center) end
 end
 
+-- v5.12: the viewer on the right is KEPT between refreshes (it used to be destroyed and rebuilt after every click, so the model blinked);
+-- it only swaps its model when a different item is selected.
+local function ensureViewer(rectKey, x, y, w, h, item, itemKey)
+	if lockViewer and lockViewer.rectKey ~= rectKey then lockViewer.destroy() lockViewer = nil end
+	if not lockViewer then
+		lockViewer = newViewer(lockerRoot, x, y, w, h)
+		lockViewer.rectKey = rectKey
+	end
+	if lockViewer.itemKey ~= itemKey then
+		lockViewer.set(item)
+		lockViewer.itemKey = itemKey
+	end
+end
+
 function refreshLocker()
+	if drag then refreshAfterDrag = true return end -- never rebuild under a dragging finger
+	syncLocal()
 	for id, t in lockTabBtns do
 		t.b.TextColor3 = (id == lockTab) and K.text or K.dim
 		t.u.Visible = id == lockTab
 	end
 	local keep = lockGrid.CanvasPosition
 	for _, c in lockGrid:GetChildren() do if c:IsA("GuiObject") then c:Destroy() end end
-	if lockViewer then lockViewer.destroy() lockViewer = nil end
 	if lockInfo then lockInfo:Destroy() lockInfo = nil end
+	if lockTab ~= "card" then destroyEditor() end
 	if lockTab == "skin" then
 		-- v5.11: only the BASE skins; colourways are picked under the preview
 		local worn = wornSkin()
@@ -929,8 +1313,7 @@ function refreshLocker()
 		if not (selectedLock and selectedLock.kind == "skin") then selectedLock = { kind = "skin", base = Cat.BaseOf(worn), variant = worn } end
 		if Cat.BaseOf(selectedLock.variant) ~= selectedLock.base or not Cat.OwnsSkin(player, selectedLock.variant) then selectedLock.variant = selectedLock.base end
 		lockGrid.CanvasPosition = keep
-		lockViewer = newViewer(lockerRoot, 1170, 214, 694, 430)
-		lockViewer.set({ kind = "skin", id = selectedLock.variant })
+		ensureViewer("skin", 1170, 214, 694, 430, { kind = "skin", id = selectedLock.variant }, "skin|" .. selectedLock.variant)
 		skinSide(selectedLock)
 	elseif lockTab == "gun" then
 		local ownedSet = {}
@@ -973,29 +1356,59 @@ function refreshLocker()
 		lockGrid.CanvasPosition = keep
 		local sel = selectedLock and selectedLock.kind == "gun" and selectedLock.item
 		if sel then
-			lockViewer = newViewer(lockerRoot, 1170, 214, 694, 540)
-			lockViewer.set(sel)
+			ensureViewer("gun", 1170, 214, 694, 540, sel, "gun|" .. sel.gun .. "|" .. sel.id)
 			gunSide(sel)
+		elseif lockViewer then
+			lockViewer.destroy()
+			lockViewer = nil
 		end
 	else -- card
+		if lockViewer then lockViewer.destroy() lockViewer = nil end
 		if cardSlot then
-			lockSection("SHOWCASE  //  SLOT " .. cardSlot, "PICK WHAT THIS SLOT SHOWS", 1)
-			lockRow(2, { "" }, 250, flexCard, 250)
-			local skins, guns = {}, {}
-			for _, id in Cat.OwnedSkins(player) do table.insert(skins, "skin:" .. id) end
-			for _, id in Cat.OwnedGunSkins(player) do table.insert(guns, "gun:" .. id) end
-			local order = 3
-			for _, sec in { { "PLAYER SKINS", skins }, { "GUN SKINS", guns } } do
-				if #sec[2] > 0 then
-					lockSection(sec[1], nil, order)
-					lockRow(order + 1, sec[2], 250, flexCard, 250)
-					order += 2
-				end
+			-- the slot, then three tabs (PLAYER SKINS / GUN SKINS / CARDS) and only the open tab's items (was one long list)
+			lockSection("SHOWCASE  //  SLOT " .. cardSlot, nil, 1)
+			local bar = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 56), LayoutOrder = 2 }, lockGrid)
+			for i, t in FLEX_TABS do
+				local on = flexTab == t.id
+				local b = new("TextButton", { Text = t.name, TextSize = 22, FontFace = F.H, TextColor3 = on and K.text or K.dim, BackgroundColor3 = on and K.panel3 or K.panel,
+					AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset((i - 1) * 222, 6), Size = UDim2.fromOffset(210, 46) }, bar)
+				local st = stroke(b, on and K.red or K.line, on and 2 or 1)
+				if on then box(b, 0, 43, 210, 3, K.red) else hot(b, K.panel, K.panel2, st, K.line, K.line2) end
+				b.MouseButton1Click:Connect(function()
+					if flexTab == t.id then return end
+					flexTab = t.id
+					lockGrid.CanvasPosition = Vector2.zero
+					refreshLocker()
+				end)
 			end
-			local cards = {}
-			for _, id in ownedCardIds() do table.insert(cards, "card:" .. id) end
-			lockSection("POWER-UP CARDS", nil, order)
-			lockRow(order + 1, cards, 196, flexCard, 250)
+			local cur = PlayerCards.Read(player).show[cardSlot]
+			local emptyOn = not PlayerCards.Parse(cur)
+			local clr = new("TextButton", { Text = emptyOn and "SLOT IS EMPTY" or "EMPTY THIS SLOT", TextSize = 18, FontFace = F.H, TextColor3 = emptyOn and K.mute or K.text,
+				BackgroundColor3 = K.panel, AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(1040 - 200, 6), Size = UDim2.fromOffset(200, 46) }, bar)
+			local cst = stroke(clr, K.line, 1)
+			if not emptyOn then
+				hot(clr, K.panel, K.panel2, cst, K.line, K.redHi)
+				clr.MouseButton1Click:Connect(function()
+					local slot = cardSlot
+					local ok, res, msg = pcall(function() return EquipR:InvokeServer("show", slot, "") end)
+					lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+				end)
+			end
+			local list, w = {}, 250
+			if flexTab == "skin" then
+				for _, id in Cat.OwnedSkins(player) do table.insert(list, "skin:" .. id) end
+			elseif flexTab == "gun" then
+				for _, id in Cat.OwnedGunSkins(player) do table.insert(list, "gun:" .. id) end
+			else
+				for _, id in ownedCardIds() do table.insert(list, "card:" .. id) end
+				w = 196
+			end
+			if #list > 0 then
+				lockRow(3, list, w, flexCard, 250)
+			else
+				local e = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 80), LayoutOrder = 3 }, lockGrid)
+				lbl(e, flexTab == "gun" and "NO GUN SKINS YET" or "NOTHING HERE YET", 26, 0, 16, 1040, 40, K.mute, F.H)
+			end
 		else
 			lockSection("BACKGROUNDS", nil, 1)
 			lockRow(2, PlayerCards.Order, 334, bannerCard, 230)
@@ -1009,7 +1422,7 @@ for _, t in LOCK_TABS do
 	lockTabBtns[t.id].b.MouseButton1Click:Connect(function()
 		if lockTab == t.id then return end
 		lockTab = t.id
-		selectedLock, cardSlot, lockMsg = nil, nil, ""
+		selectedLock, cardSlot, lockMsg, editSel = nil, nil, "", nil
 		lockGrid.CanvasPosition = Vector2.zero
 		refreshLocker()
 	end)
@@ -1031,6 +1444,8 @@ local function openShop()
 	shopRoot.Visible, lockerRoot.Visible = true, false
 	armedId, toastText, previewItem = nil, "", nil
 	pv.Visible = false
+	shopSide = "essence" -- v5.12: the shop always opens on the ESSENCE SHOP
+	for _, p in panels do p.scroll.CanvasPosition = Vector2.zero end
 	if pendingPreview then shopTab = (pendingPreview.kind == "gun" and "gun") or (pendingPreview.kind == "banner" and "banner") or "skin" end
 	refreshShop()
 	updateButton()
@@ -1061,6 +1476,8 @@ end
 closeLocker = function()
 	if not lockerOpen then return end
 	lockerOpen = false
+	destroyEditor()
+	editSel = nil
 	if lockViewer then lockViewer.destroy() lockViewer = nil end
 	if lockInfo then lockInfo:Destroy() lockInfo = nil end
 	dim.Visible, stage.Visible, lockerRoot.Visible = false, false, false
@@ -1087,7 +1504,7 @@ player:GetAttributeChangedSignal("CosmeticsOpen"):Connect(function()
 		openShop()
 	elseif v == "card" then
 		if shopOpen then closeShop() end
-		lockTab, selectedLock, cardSlot, lockMsg = "card", nil, nil, ""
+		lockTab, selectedLock, cardSlot, lockMsg, editSel = "card", nil, nil, "", nil
 		if lockerOpen then refreshLocker() else openLocker() end
 	elseif lockerOpen then closeLocker() elseif not shopOpen then openLocker() end
 end)
@@ -1109,9 +1526,26 @@ local function softRefresh()
 		if shopOpen then refreshShop() elseif lockerOpen then refreshLocker() end
 	end)
 end
-for _, a in { "Souls", "Essence", "Skin", "SkinsOwnedJson", "GunSkinsOwnedJson", "GunSkinsJson", "PlayerCardJson", "BannersOwnedJson", "CardsJson", "Level" } do
+for _, a in { "Souls", "Essence", "Skin", "SkinsOwnedJson", "GunSkinsOwnedJson", "GunSkinsJson", "BannersOwnedJson", "CardsJson", "Level" } do
 	player:GetAttributeChangedSignal(a):Connect(softRefresh)
 end
+-- v5.12: when only the PLACEMENT of the showcase items changed (the server echoing a move), just move them on the editor card - no page rebuild
+local function cardSig()
+	local d = PlayerCards.Read(player)
+	return d.bg .. "|" .. table.concat(d.show, ",")
+end
+local lastCardSig = cardSig()
+player:GetAttributeChangedSignal("PlayerCardJson"):Connect(function()
+	local sig = cardSig()
+	local onlyMoved = sig == lastCardSig
+	lastCardSig = sig
+	if onlyMoved and lockerOpen and lockTab == "card" and editor then
+		syncLocal()
+		if not drag then buildEditor() end
+		return
+	end
+	softRefresh()
+end)
 player:GetAttributeChangedSignal("LobbyMenuOpen"):Connect(updateButton)
 player:GetAttributeChangedSignal("StarterDone"):Connect(updateButton)
 updateButton()
