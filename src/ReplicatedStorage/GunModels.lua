@@ -1,4 +1,4 @@
--- GunModels v3 (v4.8: FULL REMODEL - every gun rebuilt with real foregrips / hand rests, no glowing team parts, nothing floating, fingered gloves)
+-- GunModels v3.1 (v5.10: optional gun SKIN - Describe / BuildViewmodel / BuildWorld take a GunSkins id as their last argument and repaint the gun with it) (v3: v4.8: FULL REMODEL - every gun rebuilt with real foregrips / hand rests, no glowing team parts, nothing floating, fingered gloves)
 -- GunModels: procedural gun models + attachable sights. Replaces GunModelBuilder + RifleModel.
 -- Gun space: origin = top of the pistol grip, -Z = downrange, +Y = up. Unit scale ~ one Roblox rifle.
 -- Adding a gun: write Models.<ID> = function(k) ... end using the kit below. It MUST call
@@ -10,6 +10,17 @@
 -- Sights: Iron (built into the gun) or an optic in Sights (mounted at k.mount, Iron-tagged parts get hidden).
 -- v4.8: nothing glows any more (the old team-coloured Neon stripes are gone). SetAccent / TeamAccent are kept as harmless no-ops.
 local GunModels = {}
+
+-- v5.10: gun skins (ReplicatedStorage.GunSkins, optional - without it every gun just stays stock)
+local GunSkins
+do
+	local holder = script.Parent
+	local mod = holder and holder:FindFirstChild("GunSkins")
+	if mod then
+		local ok, res = pcall(require, mod)
+		if ok then GunSkins = res end
+	end
+end
 
 local V, CF = Vector3.new, CFrame.new
 local rad = math.rad
@@ -883,7 +894,7 @@ Sights.Sniper8x = { Display = "8x", Mag = 8, Eye = 0.2, Overlay = true, Scale = 
 
 -- ================= ASSEMBLY =================
 -- Returns the part list + points (gun space, unscaled) for a gun and sight.
-function GunModels.Describe(modelId, sightId)
+function GunModels.Describe(modelId, sightId, skinId)
 	local fn = Models[modelId] or Models.VX9
 	local k = newKit()
 	fn(k)
@@ -911,6 +922,7 @@ function GunModels.Describe(modelId, sightId)
 		eye = sight.Eye
 	end
 	k.pts.Aim = aim
+	if skinId and GunSkins then pcall(GunSkins.Apply, k.parts, skinId, C) end -- v5.10: repaint
 	return { Parts = k.parts, Points = k.pts, Eye = eye, Sight = sight, SightId = sight.Build and sightId or "Iron", View = k.view }
 end
 
@@ -1029,8 +1041,8 @@ end
 
 -- First-person viewmodel: anchored parts moved every frame by GunClient with BulkMoveTo.
 -- Groups: gun, mag, cycle (bolt/pump/slide), left (left arm, relative to the palm point), flash. Each entry = { Part, Offset } in gun space (scaled).
-function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor)
-	local desc = GunModels.Describe(modelId, sightId)
+function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor, skinId)
+	local desc = GunModels.Describe(modelId, sightId, skinId)
 	local pts = desc.Points
 	local model = Instance.new("Model")
 	model.Name = "Viewmodel"
@@ -1115,8 +1127,8 @@ end
 
 -- Third-person world gun: welded, unanchored Model (PrimaryPart = Root) with attachments
 -- RightGrip, LeftForegrip, LeftMagwell, MuzzlePoint, AimPoint and parts Muzzle/Flash/Mag (used by ThirdPersonClient).
-function GunModels.BuildWorld(modelId, sightId, s, accent, name)
-	local desc = GunModels.Describe(modelId, sightId)
+function GunModels.BuildWorld(modelId, sightId, s, accent, name, skinId)
+	local desc = GunModels.Describe(modelId, sightId, skinId)
 	local pts = desc.Points
 	local model = Instance.new("Model")
 	model.Name = name or "Gun"
