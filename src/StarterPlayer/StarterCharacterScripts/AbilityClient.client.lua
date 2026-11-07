@@ -1,4 +1,5 @@
 -- AbilityClient v2.1 (v4.7: NEW movement ability DASH - press F to dash forward fast in the direction you move (or look when standing still). 3 charges, each used charge takes 10 s to come back, one after the other.) (v2: LocalScript in StarterPlayer > StarterCharacterScripts) - BOTH games. Keep the two copies identical.
+-- v5.9: wall climb onto a ceiling: the body turns to face the ceiling and lies under it (head = climbing direction).
 -- v4.0: wall run + wall climb rebuilt. They now START BY THEMSELVES (no SPACE needed), look like a person running / climbing
 -- (upright body, lean, camera roll, ledge vault, dust; the limb animation lives in AbilityPose) and feel better.
 -- The 5 movement abilities. You can wear ONE (loadout slot MOVE, saved as Loadout.Move; read from the Player attribute "LoadoutJson"):
@@ -105,6 +106,7 @@ local mode = nil              -- nil | "wallrun" | "climb"
 local normal = Vector3.yAxis  -- surface normal while attached
 local lastLook = Vector3.zAxis
 local lookNow, upNow = Vector3.zAxis, Vector3.yAxis
+local ceilHead = Vector3.zAxis -- v5.9: heading along an overhang / ceiling while climbing (see bodyBasis)
 local runDir, climbV, speedNow = Vector3.zero, Vector3.zero, 0
 local surfDist, missT = CFG.HOLD_FACE, 0
 local modeT, upT, idleT, sendT = 0, 0, 0, 0
@@ -339,6 +341,7 @@ local function enterMode(m, hit, initDir, initSpeed)
 	local l = flat(root.CFrame.LookVector)
 	lookNow = l.Magnitude > 0.05 and l.Unit or lastLook
 	upNow = Vector3.yAxis
+	ceilHead = lookNow -- v5.9: grabbing a ceiling straight away = head the way you were facing
 	alignCF = root.CFrame.Rotation
 	hum.PlatformStand = true
 	hum.AutoRotate = false
@@ -678,13 +681,24 @@ local function bodyBasis()
 		local a = rad(CFG.WR_LEAN_SIDE) -- feet toward the wall, head tilts AWAY from it (like running on a wall)
 		return look, Vector3.yAxis * cos(a) - toward * sin(a)
 	end
-	-- climb
+	-- climb (v5.9): the body always FACES the surface (chest + face toward it, like on a wall) and the head points the way you are
+	-- climbing along it. On a wall that is straight up. On an overhang / ceiling it is your heading along the ceiling (ceilHead), so the
+	-- body pitches back over the corner and lies under the ceiling looking up at it, instead of standing upside down on it hanging from
+	-- the head. Moving backwards keeps the heading (you crawl feet first, no spin); moving sideways turns you smoothly.
 	local t = clamp(-normal.Y * 1.5, 0, 1)
-	local up = Vector3.yAxis:Lerp(normal, t)
-	if up.Magnitude < 0.1 then up = normal end
 	local mv = flat(runDir)
-	local moveLook = mv.Magnitude > 0.05 and mv.Unit or lastLook
-	return toward:Lerp(moveLook, t), up
+	if t < 0.3 then
+		if fn.Magnitude > 0.3 then ceilHead = fn.Unit end -- ready for a ceiling: over the top of this wall = away from it
+	elseif mv.Magnitude > 0.35 and mv.Unit:Dot(ceilHead) > -0.3 then
+		ceilHead = ceilHead:Lerp(mv.Unit, 0.08)
+		if ceilHead.Magnitude < 0.05 then ceilHead = mv.Unit end
+		ceilHead = ceilHead.Unit
+	end
+	local headRef = Vector3.yAxis:Lerp(ceilHead, t)
+	local up = headRef - normal * headRef:Dot(normal) -- head direction, laid flat on the surface
+	if up.Magnitude < 0.1 then up = ceilHead - normal * ceilHead:Dot(normal) end
+	if up.Magnitude < 0.1 then up = Vector3.yAxis end
+	return -normal, up.Unit
 end
 
 local function alignTo(dt)
