@@ -1,4 +1,4 @@
--- CosmeticsCatalog v1 (ModuleScript in ReplicatedStorage) - LOBBY place only. NEW in v5.10.
+-- CosmeticsCatalog v2 (ModuleScript in ReplicatedStorage) - LOBBY place only. NEW in v5.10. v5.11: player card BANNERS (kind "banner", from PlayerCards) + colourway helpers.
 -- One list of everything the cosmetics shop sells + the ownership helpers, used by CosmeticsServer (checks every purchase / equip) and CosmeticsClient (the shop + the locker).
 -- Data lives in the two cosmetic modules: Skins (player skin EDITIONS, `price`) and GunSkins (gun skins, `price`). A price is { souls = n } (free currency) or { essence = n } (premium).
 --   Cat.Items(kind)       kind = "skin" | "gun"  -> { { kind, id, name, sub, gun?, price, currency = "souls" | "essence", amount, card? ... } ... }  sorted cheapest first
@@ -9,6 +9,7 @@ local RS = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local Skins = require(RS:WaitForChild("Skins"))
 local GunSkins = require(RS:WaitForChild("GunSkins"))
+local PlayerCards = require(RS:WaitForChild("PlayerCards")) -- v5.11
 
 local Cat = {}
 
@@ -27,6 +28,11 @@ local function gunItem(s)
 	return { kind = "gun", id = s.id, name = s.name, sub = s.sub, gun = s.gun, gunName = s.gunName, theme = s.theme, glow = s.glow, price = s.price, currency = cur, amount = amt }
 end
 
+local function bannerItem(b)
+	local cur, amt = currencyOf(b.price)
+	return { kind = "banner", id = b.id, name = b.name, anim = b.anim, price = b.price, currency = cur, amount = amt }
+end
+
 local function sorted(list)
 	table.sort(list, function(a, b)
 		if a.amount ~= b.amount then return a.amount < b.amount end
@@ -35,9 +41,9 @@ local function sorted(list)
 	return list
 end
 
-Cat.byKind = { skin = {}, gun = {} }
+Cat.byKind = { skin = {}, gun = {}, banner = {} }
 do
-	local sk, gu = {}, {}
+	local sk, gu, ba = {}, {}, {}
 	for _, s in Skins.List do
 		if s.price then
 			local it = skinItem(s)
@@ -50,7 +56,12 @@ do
 		table.insert(gu, it)
 		Cat.byKind.gun[s.id] = it
 	end
-	Cat.lists = { skin = sorted(sk), gun = sorted(gu) }
+	for _, b in PlayerCards.Banners do
+		local it = bannerItem(b)
+		Cat.byKind.banner[b.id] = it
+		if b.price then table.insert(ba, it) end
+	end
+	Cat.lists = { skin = sorted(sk), gun = sorted(gu), banner = sorted(ba) }
 end
 
 function Cat.Items(kind) return Cat.lists[kind] or {} end
@@ -87,5 +98,33 @@ function Cat.OwnedGunSkins(player)
 	end
 	return out
 end
+
+-- v5.11 player card backgrounds
+function Cat.OwnsBanner(player, id)
+	if not PlayerCards.Is(id) then return false end
+	if PlayerCards.IsFree(id) then return true end
+	return setFrom(player, "BannersOwnedJson")[id] == true
+end
+function Cat.OwnedBanners(player)
+	local set, out = setFrom(player, "BannersOwnedJson"), {}
+	for _, id in PlayerCards.Order do
+		if PlayerCards.IsFree(id) or set[id] then table.insert(out, id) end
+	end
+	return out
+end
+-- v5.11 colourways: the base skins (no `base`), and every edition of one base skin
+function Cat.BaseSkins()
+	local out = {}
+	for _, id in Skins.Order do if not Skins.Get(id).base then table.insert(out, id) end end
+	return out
+end
+function Cat.Colourways(baseId)
+	local out = {}
+	for _, id in Skins.Order do
+		if Skins.Get(id).base == baseId then table.insert(out, id) end
+	end
+	return out
+end
+function Cat.BaseOf(id) local s = Skins.Get(id); return s.base or s.id end
 
 return Cat
