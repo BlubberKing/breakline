@@ -1,4 +1,4 @@
--- LoadoutRules (ModuleScript in ServerScriptService, named "LoadoutRules") - BOTH places, keep the two copies identical. NEW in v4.7 (shop).
+-- LoadoutRules (ModuleScript in ServerScriptService, named "LoadoutRules") - BOTH places, keep the two copies identical. NEW in v4.7 (shop). v5.11: no duplicate gadgets / reserve items.
 -- The one place that decides what a saved loadout may contain:
 --   * every id must be a real catalog item of the right kind (as before)
 --   * and the player must OWN it (bought in the shop / given as starter gear). Until a player made the starter pick (StarterDone) nothing is
@@ -61,6 +61,16 @@ function R.Clean(player, l)
 		out.Gadgets[i] = ok(g, "gadget") and g or ""
 		local r = type(l.Reserve) == "table" and l.Reserve[i]
 		out.Reserve[i] = ((Catalog.Is(r, "gadget") or Catalog.Is(r, "weapon")) and R.Owns(player, r)) and r or ""
+	end
+	-- v5.11: no item twice - the same gadget in two gadget slots, or the same item in two RESERVE slots, is cleared (the first one stays).
+	-- (The Breakline pre-game picker let you fill all three reserve slots with one item; the lobby already swapped them.)
+	for _, arr in { out.Gadgets, out.Reserve } do
+		local seen = {}
+		for i = 1, 3 do
+			if arr[i] ~= "" then
+				if seen[arr[i]] then arr[i] = "" else seen[arr[i]] = true end
+			end
+		end
 	end
 	return out
 end
