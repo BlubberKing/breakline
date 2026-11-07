@@ -1,4 +1,4 @@
--- MatchServer v3 (v4.1: 1v1 mode, death screen hand-off, revive spawns). Wall Push main mode (GDD 2.1). Server-authoritative.
+-- MatchServer v3 (v5.9: RedSpawn / BlueSpawn markers in every map) (v4.1: 1v1 mode, death screen hand-off, revive spawns). Wall Push main mode (GDD 2.1). Server-authoritative.
 -- v5 MAPS: no more mode child on MapBounds. The mode comes from the lobby queue; the map is a random <name>_map folder out of ServerStorage >
 --   breaklineMaps or 1v1Maps (MatchConfig.MAPS), cloned into Workspace; its own MapBounds part is what the match is fitted to.
 --   1v1 = one player per team (Red vs Blue), no wall, no boxes, first to MatchConfig.V1.KillsToWin (5) kills wins the round.
@@ -172,6 +172,7 @@ stateFolder.Name = "MatchState"
 stateFolder:SetAttribute("Mode", MODE)
 stateFolder:SetAttribute("MapName", MAP_NAME) -- v5: shown under the clock on the loadout screen (v5.8: + big on the loading screen)
 stateFolder:SetAttribute("MapImage", MAP_IMAGE) -- v5.8: the map's loading picture ("" = none yet), shown full screen by LoadingScreen
+stateFolder:SetAttribute("MapFolder", loadedMap and loadedMap.Name or "") -- v5.9: the cloned <name>_map folder in Workspace (MatchFlow builds the watercolor fly-through from it)
 stateFolder:SetAttribute("KillsA", 0)
 stateFolder:SetAttribute("KillsB", 0)
 stateFolder:SetAttribute("KillsToWin", C.V1.KillsToWin)
@@ -973,14 +974,113 @@ local function resetToLobby()
 	end
 end
 
+-- ===================== v5.9: map spawn points =====================
+-- Every <name>_map folder carries its own spawn markers: parts named RedSpawn and BlueSpawn (team name + "Spawn"). A team can have ONE
+-- marker or SEVERAL (several parts with the same name, or a Model / Folder named RedSpawn holding parts). The markers are hidden and never
+-- block anything. Players (and bots) are spread over their team's markers by slot: more markers than players = spread evenly (1 player on 3
+-- markers = the middle one), fewer markers than players = the extra players stand side by side on the shared marker (SPAWN_SPREAD studs apart).
+-- Everyone faces the other team's markers. A map without markers falls back to the old finish-line spawns.
+local SPAWN_SPREAD = 3.6
+local mapSpawns = { [TEAM_A] = {}, [TEAM_B] = {} }
+do
+	local seen = {}
+	local function addPart(teamName, p)
+		if seen[p] or not p:IsA("BasePart") then return end
+		seen[p] = true
+		p.Transparency = 1
+		p.CanCollide, p.CanQuery, p.CanTouch, p.CastShadow = false, false, false, false
+		if p:IsA("SpawnLocation") then p.Enabled = false end -- only our code places players (Roblox would spawn lobby players on it)
+		for _, d in p:GetDescendants() do
+			if d:IsA("Decal") or d:IsA("Texture") then d.Transparency = 1 end
+		end
+		table.insert(mapSpawns[teamName], { pos = p.Position, bottom = p.Position.Y - p.Size.Y / 2, top = p.Position.Y + p.Size.Y / 2 })
+	end
+	if loadedMap then
+		for _, d in loadedMap:GetDescendants() do
+			for _, tn in { TEAM_A, TEAM_B } do
+				if d.Name == tn .. "Spawn" then
+					if d:IsA("BasePart") then addPart(tn, d)
+					else for _, q in d:GetDescendants() do addPart(tn, q) end end
+				end
+			end
+		end
+	end
+	for tn, list in mapSpawns do -- stable order: across the map (left to right), then along it
+		table.sort(list, function(a, b)
+			local la, lb = toLocal(a.pos), toLocal(b.pos)
+			if math.abs(la.X - lb.X) > 0.5 then return la.X < lb.X end
+			return la.Z < lb.Z
+		end)
+		if #list > 0 then print(("[MatchServer] %s: %d spawn point(s) from the map"):format(tn, #list)) end
+	end
+	if loadedMap and (#mapSpawns[TEAM_A] == 0 or #mapSpawns[TEAM_B] == 0) then
+		warn("[MatchServer] the map has no RedSpawn / BlueSpawn part for one of the teams - that team uses the finish-line spawns.")
+	end
+end
+local function spawnBots(teamName)
+	local b = Roster.Bots
+	if not b and RunService:IsStudio() then b = { [TEAM_A] = C.BOTS.StudioRed or 0, [TEAM_B] = C.BOTS.StudioBlue or 0 } end
+	return (b and tonumber(b[teamName])) or 0
+end
+local function teamSize(teamName)
+	return #teamObjs[teamName]:GetPlayers() + spawnBots(teamName)
+end
+local function centroid(list)
+	if #list == 0 then return nil end
+	local sum = Vector3.zero
+	for _, s in list do sum += s.pos end
+	return sum / #list
+end
+-- CFrame for slot (0 based) of a team with n members, hip = root height above the floor. nil = this map has no markers for the team.
+local function mapSpawnCF(teamName, slot, n, hip)
+	local pts = mapSpawns[teamName]
+	if not pts or #pts == 0 then return nil end
+	n = math.max(n or 1, slot + 1, 1)
+	local base, j, m
+	if #pts >= n then
+		base, j, m = pts[math.floor((slot + 0.5) * #pts / n) + 1], 0, 1
+	else
+		base, j = pts[(slot % #pts) + 1], slot // #pts
+		m = (n - 1 - (slot % #pts)) // #pts + 1 -- how many players share THIS marker (keeps each group centred on it)
+	end
+	local enemy = centroid(mapSpawns[teamName == TEAM_A and TEAM_B or TEAM_A]) or origin.Position
+	local fwd = Vector3.new(enemy.X - base.pos.X, 0, enemy.Z - base.pos.Z)
+	if fwd.Magnitude < 0.5 then fwd = Vector3.new(origin.Position.X - base.pos.X, 0, origin.Position.Z - base.pos.Z) end
+	if fwd.Magnitude < 0.5 then fwd = origin.LookVector * Vector3.new(1, 0, 1) end
+	fwd = fwd.Unit
+	local right = fwd:Cross(Vector3.yAxis)
+	local pos = base.pos + right * ((j - (m - 1) / 2) * SPAWN_SPREAD)
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore = { mapFolder }
+	for _, pl in Players:GetPlayers() do if pl.Character then table.insert(ignore, pl.Character) end end
+	for _, m2 in workspace:GetChildren() do if m2:GetAttribute("IsBot") then table.insert(ignore, m2) end end
+	rp.FilterDescendantsInstances = ignore
+	local from = Vector3.new(pos.X, base.top + 2, pos.Z)
+	local hit = workspace:Raycast(from, Vector3.new(0, -(base.top - base.bottom + 30), 0), rp)
+	local floorY = hit and hit.Position.Y or base.bottom
+	pos = Vector3.new(pos.X, floorY + (hip or 3.1), pos.Z)
+	return CFrame.lookAt(pos, pos + fwd)
+end
+
 -- ===================== guaranteed team spawn =====================
 -- Roblox's own SpawnLocation matching is not reliable for both teams (a pad can end up under your floor, or a team can fall back
 -- to a random spawn). So after every character loads we place it ourselves on its team's finish line: slot = its place in the team,
 -- height = a raycast down onto the real floor (ignores the generated pieces + players).
-local function teamSpawnCF(player, teamName)
+local function teamSpawnCF(player, teamName, char)
 	local mates = teamObjs[teamName]:GetPlayers()
 	table.sort(mates, function(a, b) return a.UserId < b.UserId end)
 	local slot = (table.find(mates, player) or 1) - 1
+	do -- v5.9: the map's own RedSpawn / BlueSpawn markers win
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local hip = 3.1
+		if hum and root then
+			hip = (hum.RigType == Enum.HumanoidRigType.R6 and 2 or hum.HipHeight) + root.Size.Y / 2 + 0.05
+		end
+		local cf = mapSpawnCF(teamName, slot, teamSize(teamName), hip)
+		if cf then return cf end
+	end
 	local x = spawnX[(slot % #spawnX) + 1]
 	local z = SIGN[teamName] * LINE_Z
 	local from = origin * Vector3.new(x, 20, z)
@@ -1004,7 +1104,7 @@ local function onCharacter(player, char)
 			if typeof(rezCF) == "CFrame" and phase == "Playing" then
 				char:PivotTo(rezCF)
 			else
-				char:PivotTo(teamSpawnCF(player, tn))
+				char:PivotTo(teamSpawnCF(player, tn, char))
 			end
 		end
 		if rezCF ~= nil then player:SetAttribute("RezCF", nil) end
@@ -1279,6 +1379,8 @@ do
 	BotAPI.Mode = MODE
 	BotAPI.Teams = { TEAM_A, TEAM_B }
 	BotAPI.SpawnCF = function(teamName, slot)
+		local mcf = mapSpawnCF(teamName, slot, teamSize(teamName), 3.1) -- v5.9: map spawn markers first
+		if mcf then return mcf end
 		local x = spawnX[(slot % #spawnX) + 1]
 		local z = SIGN[teamName] * LINE_Z
 		local from = origin * Vector3.new(x, 20, z)
