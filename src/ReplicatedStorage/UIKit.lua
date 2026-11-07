@@ -1,4 +1,5 @@
--- UIKit v5.10 (ModuleScript in ReplicatedStorage) - BOTH games. Keep the two copies identical (Breakline is the master).
+-- UIKit v5.13 (ModuleScript in ReplicatedStorage) - BOTH games. Keep the two copies identical (Breakline is the master).
+-- v5.13: the movement ability icons (AbilityIcon) each get a solid figure doing the move on top of the old line drawing.
 -- v5.10: NEW SoulIcon (a little ghost / soul with a glow + a glimmer - it used to be a plain diamond), NEW EssenceIcon (a faceted purple gem with a glimmer),
 --        UIKit.LoadImage (loads a picture and falls back to a thumbnail link when the direct asset does not show - the black loading picture bug).
 -- Breakline: LoadingScreen (ReplicatedFirst) + MatchFlow. Lobby: LobbyLoading (ReplicatedFirst) + LobbyClient (logo).
@@ -424,48 +425,88 @@ function K.Logo(parent, size, props, mode)
 	return holder, api
 end
 
--- ===== ability icons (v3.8): small drawn graphics for the 4 movement abilities =====
+-- ===== ability icons (v3.8, v5.13 figures): small drawn graphics for the movement abilities =====
 -- K.AbilityIcon(parent, id, size, color) -> Frame (size x size). id = "DASH" | "DJUMP" | "MJUMP" | "WRUN" | "WCLIMB".
 -- Built from thin rotated bars so they stay crisp at any size. Color defaults to white.
-local function ibar(parent, size, x1, y1, x2, y2, th, col)
+-- v5.13 (owner: "improve all the movement icons, same art style, a solid coloured person in every one doing the action"): every icon keeps its
+-- line drawing (speed lines, chevrons, wall, ceiling, arrow - now a shade darker so the figure reads first) and gets a SOLID FIGURE doing the
+-- move: round head, thick torso, pill-shaped arms + legs (two segments each, the far limbs a little darker for depth). DASH = lunging runner,
+-- DJUMP = tucked jumper over two air chevrons, MJUMP = launching figure off the coil with an arrow, WRUN = runner leaning off the wall with the
+-- feet on it, WCLIMB = climber flat against the wall reaching for the ceiling, arrow going wall -> ceiling. Same size + colour argument as before.
+local function ibar(parent, size, x1, y1, x2, y2, th, col, round)
 	local dx, dy = (x2 - x1) * size, (y2 - y1) * size
 	local len = math.sqrt(dx * dx + dy * dy)
-	return new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5),
+	local f = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromOffset((x1 + x2) / 2 * size, (y1 + y2) / 2 * size),
-		Size = UDim2.fromOffset(len + th * 0.6, th), Rotation = math.deg(math.atan2(dy, dx)),
+		Size = UDim2.fromOffset(len + th * (round and 1 or 0.6), th), Rotation = math.deg(math.atan2(dy, dx)),
 		BackgroundColor3 = col, BorderSizePixel = 0 }, parent)
+	if round then new("UICorner", { CornerRadius = UDim.new(1, 0) }, f) end
+	return f
+end
+-- the solid figure. P = { head = {x, y}, neck, hip, lEl, lHand, rEl, rHand, lKnee, lFoot, rKnee, rFoot } in 0..1 icon space.
+-- "l" limbs are the FAR side (drawn first, a little darker), "r" limbs the near side.
+local function figure(h, size, P, col)
+	local far = col:Lerp(Color3.new(0, 0, 0), 0.28)
+	local limb = math.max(2, size * 0.085)
+	local body = math.max(3, size * 0.13)
+	local function seg(a, b, c, t) ibar(h, size, a[1], a[2], b[1], b[2], t or limb, c, true) end
+	seg(P.hip, P.lKnee, far) seg(P.lKnee, P.lFoot, far)
+	seg(P.neck, P.lEl, far) seg(P.lEl, P.lHand, far)
+	seg(P.neck, P.hip, col, body)
+	seg(P.hip, P.rKnee, col) seg(P.rKnee, P.rFoot, col)
+	seg(P.neck, P.rEl, col) seg(P.rEl, P.rHand, col)
+	local d = math.max(4, size * 0.18)
+	local head = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(P.head[1] * size, P.head[2] * size), Size = UDim2.fromOffset(d, d),
+		BackgroundColor3 = col, BorderSizePixel = 0 }, h)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, head)
 end
 function K.AbilityIcon(parent, id, size, color)
 	color = color or Color3.new(1, 1, 1)
 	local h = new("Frame", { Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1 }, parent)
-	local th = math.max(2, math.floor(size * 0.09))
-	local function B(x1, y1, x2, y2, c, t) return ibar(h, size, x1, y1, x2, y2, t or th, c or color) end
-	local function chevronUp(cx, cy, w, c) B(cx - w, cy + w * 0.7, cx, cy, c); B(cx + w, cy + w * 0.7, cx, cy, c) end
-	if id == "DASH" then -- speed lines trailing a bold arrow
-		B(0.1, 0.3, 0.46, 0.3, color:Lerp(Color3.new(0, 0, 0), 0.45), math.max(1, th - 1))
-		B(0.04, 0.5, 0.58, 0.5)
-		B(0.16, 0.7, 0.46, 0.7, color:Lerp(Color3.new(0, 0, 0), 0.45), math.max(1, th - 1))
-		B(0.62, 0.5, 0.9, 0.5)
-		B(0.9, 0.5, 0.72, 0.28); B(0.9, 0.5, 0.72, 0.72)
-	elseif id == "DJUMP" then -- two stacked chevrons
-		chevronUp(0.5, 0.32, 0.26)
-		chevronUp(0.5, 0.64, 0.26, color:Lerp(Color3.new(0, 0, 0), 0.35))
-	elseif id == "MJUMP" then -- big arrow over a coiled base
-		B(0.5, 0.78, 0.5, 0.2)
-		chevronUp(0.5, 0.2, 0.24)
-		B(0.26, 0.9, 0.74, 0.9)
-		B(0.32, 0.8, 0.68, 0.8, color:Lerp(Color3.new(0, 0, 0), 0.4), math.max(1, th - 1))
-	elseif id == "WRUN" then -- wall on the left, runner dashes along it
-		B(0.18, 0.1, 0.18, 0.9, color:Lerp(Color3.new(0, 0, 0), 0.25), th + 1)
-		B(0.38, 0.3, 0.86, 0.3)
-		B(0.3, 0.52, 0.86, 0.52)
-		B(0.38, 0.74, 0.86, 0.74)
-		B(0.86, 0.52, 0.7, 0.4); B(0.86, 0.52, 0.7, 0.64)
-	elseif id == "WCLIMB" then -- wall + ceiling corner, arrow climbing
-		B(0.14, 0.12, 0.14, 0.9, color:Lerp(Color3.new(0, 0, 0), 0.25), th + 1)
-		B(0.14, 0.12, 0.9, 0.12, color:Lerp(Color3.new(0, 0, 0), 0.25), th + 1)
-		B(0.5, 0.82, 0.5, 0.36)
-		chevronUp(0.5, 0.36, 0.2)
+	local th = math.max(2, math.floor(size * 0.08))
+	local line = color:Lerp(Color3.new(0, 0, 0), 0.3)  -- the line drawing sits a shade behind the figure
+	local faint = color:Lerp(Color3.new(0, 0, 0), 0.5)
+	local thin = math.max(1, th - 1)
+	local function B(x1, y1, x2, y2, c, t) return ibar(h, size, x1, y1, x2, y2, t or th, c or line) end
+	local function chevronUp(cx, cy, w, c, t) B(cx - w, cy + w * 0.7, cx, cy, c, t); B(cx + w, cy + w * 0.7, cx, cy, c, t) end
+	if id == "DASH" then -- speed lines behind a runner in a deep forward lunge
+		B(0.05, 0.3, 0.3, 0.3, faint, thin)
+		B(0.02, 0.48, 0.34, 0.48, line)
+		B(0.08, 0.66, 0.3, 0.66, faint, thin)
+		figure(h, size, { head = { 0.74, 0.2 }, neck = { 0.66, 0.31 }, hip = { 0.5, 0.54 },
+			lEl = { 0.53, 0.36 }, lHand = { 0.42, 0.44 }, rEl = { 0.78, 0.4 }, rHand = { 0.9, 0.36 },
+			lKnee = { 0.38, 0.66 }, lFoot = { 0.22, 0.78 }, rKnee = { 0.68, 0.66 }, rFoot = { 0.74, 0.88 } }, color)
+	elseif id == "DJUMP" then -- a tucked jumper above two stacked air chevrons (the second jump)
+		chevronUp(0.5, 0.74, 0.2, line)
+		chevronUp(0.5, 0.88, 0.2, faint, thin)
+		figure(h, size, { head = { 0.5, 0.14 }, neck = { 0.5, 0.25 }, hip = { 0.5, 0.45 },
+			lEl = { 0.36, 0.22 }, lHand = { 0.3, 0.1 }, rEl = { 0.64, 0.22 }, rHand = { 0.7, 0.1 },
+			lKnee = { 0.37, 0.5 }, lFoot = { 0.42, 0.62 }, rKnee = { 0.63, 0.5 }, rFoot = { 0.58, 0.62 } }, color)
+	elseif id == "MJUMP" then -- a figure shooting straight up off the coiled base, big arrow beside it
+		B(0.14, 0.92, 0.66, 0.92, line)
+		B(0.2, 0.83, 0.6, 0.83, faint, thin)
+		B(0.84, 0.86, 0.84, 0.18, line)
+		chevronUp(0.84, 0.16, 0.11, line)
+		figure(h, size, { head = { 0.4, 0.16 }, neck = { 0.4, 0.27 }, hip = { 0.4, 0.5 },
+			lEl = { 0.3, 0.36 }, lHand = { 0.27, 0.46 }, rEl = { 0.46, 0.14 }, rHand = { 0.5, 0.03 },
+			lKnee = { 0.37, 0.61 }, lFoot = { 0.36, 0.73 }, rKnee = { 0.44, 0.61 }, rFoot = { 0.45, 0.73 } }, color)
+	elseif id == "WRUN" then -- the wall on the left, a runner leaning out from it with the feet planted on it, streaks behind
+		B(0.12, 0.06, 0.12, 0.94, line, th + 1)
+		B(0.72, 0.6, 0.94, 0.6, faint, thin)
+		B(0.66, 0.74, 0.92, 0.74, faint, thin)
+		B(0.76, 0.88, 0.94, 0.88, faint, thin)
+		figure(h, size, { head = { 0.62, 0.18 }, neck = { 0.54, 0.28 }, hip = { 0.38, 0.5 },
+			lEl = { 0.42, 0.24 }, lHand = { 0.22, 0.22 }, rEl = { 0.68, 0.38 }, rHand = { 0.8, 0.3 },
+			lKnee = { 0.34, 0.68 }, lFoot = { 0.18, 0.72 }, rKnee = { 0.22, 0.46 }, rFoot = { 0.18, 0.6 } }, color)
+	elseif id == "WCLIMB" then -- wall + ceiling corner, a climber flat on the wall reaching for the ceiling, arrow wall -> ceiling
+		B(0.12, 0.08, 0.12, 0.94, line, th + 1)
+		B(0.12, 0.08, 0.94, 0.08, line, th + 1)
+		B(0.74, 0.86, 0.74, 0.32, line, th)
+		B(0.74, 0.32, 0.9, 0.32, line, th)
+		B(0.9, 0.32, 0.82, 0.24, line, th); B(0.9, 0.32, 0.82, 0.4, line, th)
+		figure(h, size, { head = { 0.3, 0.3 }, neck = { 0.28, 0.4 }, hip = { 0.28, 0.64 },
+			lEl = { 0.4, 0.34 }, lHand = { 0.26, 0.17 }, rEl = { 0.42, 0.5 }, rHand = { 0.22, 0.48 },
+			lKnee = { 0.42, 0.7 }, lFoot = { 0.22, 0.78 }, rKnee = { 0.38, 0.82 }, rFoot = { 0.22, 0.92 } }, color)
 	end
 	return h
 end
