@@ -1,4 +1,4 @@
--- CardRoll v1.0 (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v4.3 (GDD section 4.2).
+-- CardRoll v1.1 (v5.9: no sub line under the title; hover never covers the rarity name) (v1.0) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v4.3 (GDD section 4.2).
 -- Phase "Cards" (right after the Warp run-in, before the 3-2-1): the power-up card roll + pick, and the card on your HUD.
 --   1. The screen dims. CHOOSE YOUR CARD drops in.
 --   2. Reel 1 (left) pops up and spins like a slot machine. 0.5 s later reel 2 (middle) pops up and spins, 0.5 s later reel 3.
@@ -43,6 +43,9 @@ local N = 6                          -- cards per strip (holder 0 = the card it 
 local TRAVEL = 11                    -- cards that fly past while a reel spins
 local OVER = 22                      -- the reel overshoots by this many pixels, then bounces back
 local CY = 548                       -- reel centre (1920 x 1080 canvas)
+local LABEL_Y = CY - CH / 2 - 14     -- v5.9: bottom edge of the rarity name above each card (clear of the housing outline + glow)
+local HOVER_LIFT, HOVER_SCALE = 14, 1.05 -- hovered card: lift (px) and size
+local GLOW_PAD = 10                  -- extra room the card's hover glow needs above its top edge
 local HUD_W = 112                    -- card width on the HUD
 local HUD_X, HUD_Y = 1872 - HUD_W, 1080 - 40 - 190 - 18 - HUD_W * 1.4 -- top-left of the HUD card: right edge, above MatchHUD's item row
 
@@ -239,12 +242,10 @@ local function runRoll(my)
 	-- title
 	local title = label(cv, "CHOOSE YOUR CARD", 60, F.H, WHITE, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 90), Size = UDim2.fromOffset(1000, 70), TextTransparency = 1 })
 	new("UIStroke", { Color = BLACK, Thickness = 3, Transparency = 0.4 }, title)
-	local sub = label(cv, "3 CARDS FROM YOUR DECK   //   ONE CARD FOR THE WHOLE MATCH", 14, F.MB, K.dim, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 164),
-		Size = UDim2.fromOffset(1000, 18), TextTransparency = 1 })
-	local rule = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 194), Size = UDim2.fromOffset(0, 2), BackgroundColor3 = K.red, BorderSizePixel = 0 }, cv)
+	-- v5.9: the small explainer line under the title is gone (the screen explains itself)
+	local rule = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 168), Size = UDim2.fromOffset(0, 2), BackgroundColor3 = K.red, BorderSizePixel = 0 }, cv)
 	title.Position = UDim2.fromOffset(960, 70)
 	tween(title, TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(960, 90), TextTransparency = 0 })
-	tween(sub, TweenInfo.new(0.5), { TextTransparency = 0 })
 	tween(rule, TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = UDim2.fromOffset(260, 2) })
 
 	-- reels
@@ -319,8 +320,8 @@ local function runRoll(my)
 		r.pos = r.posStart
 		r.key = keyCap(cv, tostring(i), cx, CY + CH / 2 + 30)
 		r.key.Visible = false
-		r.rarityLbl = label(cv, r.R.name, 26, F.H, r.R.id == "signature" and WHITE or r.R.glow, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(cx, CY - CH / 2 - 58),
-			Size = UDim2.fromOffset(CW, 32), TextTransparency = 1 })
+		r.rarityLbl = label(cv, r.R.name, 26, F.H, r.R.id == "signature" and WHITE or r.R.glow, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(cx, LABEL_Y),
+			Size = UDim2.fromOffset(CW, 32), TextTransparency = 1, ZIndex = 20 })
 		new("UIStroke", { Color = BLACK, Thickness = 2.5, Transparency = 0.3 }, r.rarityLbl)
 		s.reels[i] = r
 		return r
@@ -408,9 +409,20 @@ local function runRoll(my)
 		timerBar = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, track)
 		timerNum = label(cv, tostring(PICK), 44, F.H, WHITE, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, CY + CH / 2 + 110), Size = UDim2.fromOffset(200, 50) })
 		local mid = s.reels[2]
-		autoTag = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(mid.cx, CY - CH / 2 - 62), Size = UDim2.fromOffset(150, 20), BackgroundColor3 = K.red, BorderSizePixel = 0 }, cv)
-		label(autoTag, "AUTO PICK", 11, F.MB, WHITE, { Size = UDim2.fromScale(1, 1) })
+		autoTag = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(mid.cx, LABEL_Y - 34), Size = UDim2.fromOffset(150, 20), BackgroundColor3 = K.red, BorderSizePixel = 0, ZIndex = 20 }, cv)
+		label(autoTag, "AUTO PICK", 11, F.MB, WHITE, { Size = UDim2.fromScale(1, 1), ZIndex = 21 })
 		for _, r in s.reels do r.key.Visible = true end
+	end
+
+	-- v5.9: the rarity name (and the AUTO PICK tag over the middle card) ride up with a lifted / enlarged card and sit above it, so the
+	-- card's glowing border can never cover them (it did on hover: 16 px lift + 6 % scale reached into the rarity text)
+	local function liftLabels(r, lift, scale, time)
+		local grow = CH / 2 * (scale - 1) + GLOW_PAD * math.max(0, scale - 1) / 0.06
+		local y = LABEL_Y - lift - math.max(0, grow)
+		tween(r.rarityLbl, TweenInfo.new(time, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(r.cx, y) })
+		if autoTag and r.i == 2 and autoTag.Visible then
+			tween(autoTag, TweenInfo.new(time, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(r.cx, y - 34) })
+		end
 	end
 
 	local function setHover(i)
@@ -419,8 +431,9 @@ local function runRoll(my)
 		for j, r in s.reels do
 			if r.slot then
 				local on = (j == i)
-				tween(r.sscale, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Scale = on and 1.06 or 1 })
-				tween(r.slot, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(r.cx, CY - (on and 16 or 0)) })
+				tween(r.sscale, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Scale = on and HOVER_SCALE or 1 })
+				tween(r.slot, TweenInfo.new(0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(r.cx, CY - (on and HOVER_LIFT or 0)) })
+				liftLabels(r, on and HOVER_LIFT or 0, on and HOVER_SCALE or 1, 0.2)
 				tween(r.dim, TweenInfo.new(0.2), { BackgroundTransparency = (i and not on) and 0.45 or 1 })
 				r.api.setGlow(on)
 			end
@@ -454,6 +467,7 @@ local function runRoll(my)
 				r.slot.Active = false
 				tween(r.sscale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = on and 1.1 or 0.9 })
 				tween(r.slot, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(r.cx, CY + (on and -10 or 60)) })
+				liftLabels(r, on and 10 or -60, on and 1.1 or 0.9, 0.35)
 				tween(r.dim, TweenInfo.new(0.3), { BackgroundTransparency = on and 1 or 0.35 })
 				fadeHousing(r.housing) -- v5.8: the frame goes away for every reel (it used to turn into an opaque / grey box behind each card)
 				r.key.Visible = false
