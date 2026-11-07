@@ -1,4 +1,4 @@
--- ShopClient v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.7.
+-- ShopClient v1.1 (v5.9: cart icon, Essence next to the souls, clear CLOSE button, no filler line) (v1) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.7.
 -- 1) SHOP. Opens from the SHOP button (left side of the screen, halfway down) or from the shop NPC (ShopServer adds the prompt; the server then fires
 --    ShopRemotes.Open). Three tabs at the top: GUNS / GADGETS / MOVEMENT. Click an item = a panel on the right: guns show their real stats (WeaponConfig),
 --    gadgets show what they do + their numbers (GadgetConfig), movement abilities what they do + their numbers. Prices are SOULS (LobbyCatalog.Price).
@@ -74,12 +74,8 @@ local function gunPicture(parent, weaponId)
 			minV, maxV = minV:Min(d.CF.Position - half), maxV:Max(d.CF.Position + half)
 		end
 	end
-	local center = (minV + maxV) / 2
-	local len = math.max(maxV.Z - minV.Z, (maxV.Y - minV.Y) * 2.2)
 	local cam = new("Camera", { FieldOfView = 16 }, vp)
-	local dist = (len / 2) / math.tan(math.rad(8)) / 2.2 + 1
-	cam.CFrame = CFrame.lookAt(center + Vector3.new(dist, dist * 0.08, 0), center)
-	vp.CurrentCamera = cam
+	UI.FitViewport(vp, cam, model, Vector3.new(1, 0.08, 0), { pad = 0.1, fov = 16 }) -- v5.9: fitted, never cropped
 	return vp
 end
 
@@ -103,14 +99,25 @@ local shopBtn = new("TextButton", { Name = "ShopButton", Text = "", AutoButtonCo
 do
 	local st = stroke(shopBtn, K.line, 1)
 	box(shopBtn, 0, 0, 3, 64, K.red)
-	-- little shopping bag drawn from frames
-	local bag = box(shopBtn, 20, 26, 22, 20, K.text)
-	new("UICorner", { CornerRadius = UDim.new(0, 3) }, bag)
-	local handle = new("Frame", { Position = UDim2.fromOffset(25, 18), Size = UDim2.fromOffset(12, 14), BackgroundTransparency = 1 }, shopBtn)
-	stroke(handle, K.text, 2)
-	new("UICorner", { CornerRadius = UDim.new(0, 6) }, handle)
-	lbl(shopBtn, "SHOP", 24, 56, 8, 90, 28, K.text, F.H)
-	lbl(shopBtn, "UNLOCK GEAR", 10, 57, 36, 96, 16, K.dim, F.M)
+	-- v5.9: a shopping CART drawn from thin bars (the old bag - solid box + round handle - read as a padlock)
+	local cart = new("Frame", { Position = UDim2.fromOffset(14, 17), Size = UDim2.fromOffset(34, 30), BackgroundTransparency = 1 }, shopBtn)
+	local function seg(x1, y1, x2, y2, th)
+		local dx, dy = x2 - x1, y2 - y1
+		local f = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2),
+			Size = UDim2.fromOffset(math.sqrt(dx * dx + dy * dy) + th * 0.6, th), Rotation = math.deg(math.atan2(dy, dx)), BackgroundColor3 = K.text, BorderSizePixel = 0 }, cart)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, f)
+	end
+	seg(1, 2, 6, 2, 2.5)     -- handle
+	seg(6, 2, 10, 19, 2.5)   -- back of the basket, down to the base
+	seg(8, 7, 32, 7, 2.5)    -- basket top rim
+	seg(32, 7, 29, 17, 2.5)  -- front of the basket
+	seg(10, 17, 29, 17, 2.5) -- basket bottom
+	seg(10, 19, 30, 22, 2)   -- frame under the basket
+	for _, wx in { 13, 27 } do -- wheels
+		local w = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(wx, 27), Size = UDim2.fromOffset(6, 6), BackgroundColor3 = K.text, BorderSizePixel = 0 }, cart)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, w)
+	end
+	lbl(shopBtn, "SHOP", 26, 58, 0, 90, 64, K.text, F.H)
 	hot(shopBtn, K.panel, K.panel2, st, K.line, K.red)
 end
 
@@ -149,23 +156,22 @@ local refreshAll
 local shop = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, stage)
 local starter = new("Frame", { Name = "Starter", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, stage)
 lbl(shop, "SHOP", 56, 64, 28, 400, 70, K.text, F.H)
-lbl(shop, "SPEND YOUR SOULS ON NEW GEAR  //  ONLY WHAT YOU OWN SHOWS UP IN YOUR LOADOUT", 12, 68, 98, 900, 16, K.dim, F.M)
+-- v5.9: the explainer line under SHOP is gone
 box(shop, 64, 130, 1792, 1, K.line)
 
 -- souls (top right) + close
-local soulsBox = box(shop, 1460, 40, 270, 52, K.panel, 0.1)
+-- v5.9: souls + ESSENCE (to the right of the souls) in one box, and the shared clear CLOSE button
+local soulsBox = box(shop, 1280, 40, 400, 52, K.panel, 0.1)
 stroke(soulsBox, K.line, 1)
 do
 	local ic = UI.SoulIcon(soulsBox, 34)
 	ic.Position = UDim2.fromOffset(12, 9)
+	local ec = UI.EssenceIcon(soulsBox, 32)
+	ec.Position = UDim2.fromOffset(214, 10)
 end
-local soulsLbl = lbl(soulsBox, "0", 28, 56, 0, 200, 52, K.text, F.H)
-local closeBtn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0, Position = UDim2.fromOffset(1748, 40), Size = UDim2.fromOffset(108, 52) }, shop)
-do
-	local st = stroke(closeBtn, K.line, 1)
-	lbl(closeBtn, "ESC  CLOSE", 14, 0, 0, 108, 52, K.text, F.HM, Enum.TextXAlignment.Center)
-	hot(closeBtn, K.panel2, K.panel3, st, K.line, K.line2)
-end
+local soulsLbl = lbl(soulsBox, "0", 28, 56, 0, 150, 52, K.text, F.H)
+local essenceLbl = lbl(soulsBox, "0", 28, 256, 0, 140, 52, K.text, F.H)
+local closeBtn = UI.CloseButton(shop, "CLOSE", { Position = UDim2.fromOffset(1704, 45) })
 
 -- tabs
 local TABS = { { id = "gun", name = "GUNS" }, { id = "gadget", name = "GADGETS" }, { id = "move", name = "MOVEMENT" } }
@@ -352,6 +358,7 @@ end
 
 function refreshAll()
 	soulsLbl.Text = commas(souls())
+	essenceLbl.Text = commas(player:GetAttribute("Essence") or 0)
 	for id, t in tabBtns do
 		t.b.TextColor3 = (id == tab) and K.text or K.dim
 		t.u.Visible = id == tab
@@ -405,6 +412,7 @@ UIS.InputBegan:Connect(function(input, gpe)
 end)
 
 player:GetAttributeChangedSignal("Souls"):Connect(function() if shopOpen then refreshAll() end end)
+player:GetAttributeChangedSignal("Essence"):Connect(function() if shopOpen then refreshAll() end end)
 player:GetAttributeChangedSignal("OwnedJson"):Connect(function() if shopOpen then refreshAll() end end)
 player:GetAttributeChangedSignal("LobbyMenuOpen"):Connect(updateButton)
 player:GetAttributeChangedSignal("StarterDone"):Connect(updateButton)
