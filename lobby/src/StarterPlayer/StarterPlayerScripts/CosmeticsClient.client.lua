@@ -1,4 +1,11 @@
--- CosmeticsClient v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- CosmeticsClient v2 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- v5.11 (owner Nov 7):
+--   * drag-to-turn really works now: the viewer used holder.InputBegan, but the info panel sat ON TOP of the viewer (so the click never reached it) and the
+--     lobby's first-person camera could keep the mouse locked. Now a global click is hit-tested against the viewer and a Modal button frees the cursor.
+--   * the COSMETICS button just says COSMETICS (the "SKINS // SHOP" line is gone); the made-up skin descriptions / taglines and the gun "paint job" text are gone.
+--   * colourways: the LOCKER only lists the three base skins; the colourways you own are picked from a swatch row under the preview (ORIGINAL + editions).
+--     The SHOP still sells every colourway as its own item.
+--   * new PLAYER CARD tab in the locker (background + 3 showcase slots of your lobby player card) and a PLAYER CARDS tab in the shop (backgrounds to buy).
 -- Two screens + one button:
 --  1) COSMETICS SHOP: the COSMETICS button on the left of the screen, right UNDER the SHOP button (same look). Tabs PLAYER SKINS / GUN SKINS. Every tab is split in two halves:
 --     the ESSENCE SHOP (premium currency, big, on the LEFT = the first thing you see) and the SOULS SHOP (free currency, on the right, clearly labelled EARN BY PLAYING).
@@ -20,6 +27,8 @@ local Skins = require(RS:WaitForChild("Skins"))
 local GunSkins = require(RS:WaitForChild("GunSkins"))
 local GunModels = require(RS:WaitForChild("GunModels"))
 local Cat = require(RS:WaitForChild("CosmeticsCatalog"))
+local PlayerCards = require(RS:WaitForChild("PlayerCards")) -- v5.11
+local GuiService = game:GetService("GuiService")
 local Remotes = RS:WaitForChild("CosmeticsRemotes")
 local BuyR, EquipR = Remotes:WaitForChild("Buy"), Remotes:WaitForChild("Equip")
 
@@ -76,12 +85,14 @@ local function essence() return player:GetAttribute("Essence") or 0 end
 local function balance(cur) return cur == "essence" and essence() or souls() end
 local function owned(item)
 	if item.kind == "skin" then return Cat.OwnsSkin(player, item.id) end
+	if item.kind == "banner" then return Cat.OwnsBanner(player, item.id) end
 	return Cat.OwnsGunSkin(player, item.id)
 end
 local function wornSkin() local s = player:GetAttribute("Skin"); return Skins.Is(s) and s or Skins.Default end
 local function equippedOn(gun) return GunSkins.Equipped(player, gun) end
 local function isEquipped(item)
 	if item.kind == "skin" then return wornSkin() == item.id end
+	if item.kind == "banner" then return PlayerCards.Read(player).bg == item.id end
 	return item.gun ~= nil and equippedOn(item.gun) == item.id
 end
 local function myWeapon()
@@ -119,6 +130,11 @@ end
 
 -- a small still picture (cards): figure or gun fitted into the frame, never cropped
 local function thumb(parent, item)
+	if item.kind == "banner" then -- v5.11: player card background (animated ones move here too)
+		return PlayerCards.DrawBanner(parent, item.id, true)
+	elseif item.kind == "flex" then -- v5.11: a showcase item (skin / gun skin / card)
+		return PlayerCards.ShowcaseItem(parent, item.value, item.w, item.h)
+	end
 	local vp = new("ViewportFrame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Ambient = rgb(150, 152, 160), LightColor = rgb(255, 250, 244),
 		LightDirection = Vector3.new(-0.5, -0.9, -0.4) }, parent)
 	local cam = new("Camera", { FieldOfView = 20 }, vp)
@@ -194,29 +210,61 @@ local function newViewer(parent, x, y, w, h)
 		if not V.dragging and os.clock() - V.touched > 3 then V.yaw += dt * 0.5 end
 		place()
 	end))
-	holder.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			V.dragging = true
-			V.touched = os.clock()
+	-- v5.11: hit-test every click ourselves (the info panel is layered over the viewer, so holder.InputBegan never fired) and turn by how far the
+	-- pointer moved (Delta as a fallback while the mouse is locked)
+	local function shown()
+		local o = holder
+		while o and o:IsA("GuiObject") do
+			if not o.Visible then return false end
+			o = o.Parent
 		end
-	end)
+		return o ~= nil and (not o:IsA("ScreenGui") or o.Enabled)
+	end
+	local function pointer(input)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			local inset = GuiService:GetGuiInset()
+			return Vector2.new(input.Position.X, input.Position.Y) + inset
+		end
+		return UIS:GetMouseLocation()
+	end
+	local function over(pos)
+		local ap, as = holder.AbsolutePosition, holder.AbsoluteSize
+		return pos.X >= ap.X and pos.X <= ap.X + as.X and pos.Y >= ap.Y and pos.Y <= ap.Y + as.Y
+	end
+	local lastPos
+	table.insert(conns, UIS.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			if not holder.Parent or not shown() then return end
+			local pos = pointer(input)
+			if over(pos) then
+				V.dragging = true
+				V.touched = os.clock()
+				lastPos = pos
+			end
+		end
+	end))
 	table.insert(conns, UIS.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseWheel then
+			if holder.Parent and shown() and over(UIS:GetMouseLocation()) then
+				V.dist = math.clamp(V.dist * (1 - input.Position.Z * 0.09), V.baseDist * 0.4, V.baseDist * 1.6)
+				V.touched = os.clock()
+			end
+			return
+		end
 		if not V.dragging then return end
 		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-			V.yaw -= input.Delta.X * 0.011
-			V.pitch = math.clamp(V.pitch + input.Delta.Y * 0.008, -1.25, 1.25)
+			local pos = pointer(input)
+			local d = lastPos and (pos - lastPos) or Vector2.zero
+			lastPos = pos
+			if d.Magnitude < 0.01 then d = Vector2.new(input.Delta.X, input.Delta.Y) end -- mouse locked: the position does not move, the delta does
+			V.yaw -= d.X * 0.011
+			V.pitch = math.clamp(V.pitch + d.Y * 0.008, -1.25, 1.25)
 			V.touched = os.clock()
 		end
 	end))
 	table.insert(conns, UIS.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then V.dragging = false V.touched = os.clock() end
 	end))
-	holder.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseWheel then
-			V.dist = math.clamp(V.dist * (1 - input.Position.Z * 0.09), V.baseDist * 0.4, V.baseDist * 1.6)
-			V.touched = os.clock()
-		end
-	end)
 	function V.destroy()
 		for _, c in conns do c:Disconnect() end
 		table.clear(conns)
@@ -238,8 +286,7 @@ do
 	box(btn, 0, 0, 3, 64, ESS)
 	local ic = UI.EssenceIcon(btn, 36)
 	ic.Position = UDim2.fromOffset(12, 14)
-	lbl(btn, "COSMETICS", 19, 54, 8, 100, 28, K.text, F.H)
-	lbl(btn, "SKINS  //  SHOP", 10, 55, 36, 100, 16, K.dim, F.MB)
+	lbl(btn, "COSMETICS", 21, 54, 0, 100, 64, K.text, F.H) -- v5.11: just the name (the "SKINS // SHOP" line was filler)
 	hot(btn, K.panel, K.panel2, st, K.line, ESS)
 end
 
@@ -255,15 +302,23 @@ rescale()
 if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale) end
 
 -- menu flag (blocks walking / abilities behind the UI, same flag the shop + card index use)
+-- v5.11: a visible Modal button frees the mouse while a cosmetics screen is open (the lobby camera is first person, which can lock it)
+local modalBtn = new("TextButton", { Name = "ModalCursor", Text = "", Modal = true, BackgroundTransparency = 1, Size = UDim2.fromOffset(1, 1), Visible = false }, gui)
 local menuWas, flagHolders = nil, 0
 local function holdMenu()
 	if flagHolders == 0 then menuWas = player:GetAttribute("LobbyMenuOpen") end
 	flagHolders += 1
 	player:SetAttribute("LobbyMenuOpen", true)
+	player:SetAttribute("CosmeticsShown", true) -- LobbyClient ignores ESC / TAB while this is set
+	modalBtn.Visible = true
 end
 local function releaseMenu()
 	flagHolders = math.max(0, flagHolders - 1)
-	if flagHolders == 0 then player:SetAttribute("LobbyMenuOpen", menuWas) end
+	if flagHolders == 0 then
+		player:SetAttribute("LobbyMenuOpen", menuWas)
+		player:SetAttribute("CosmeticsShown", nil)
+		modalBtn.Visible = false
+	end
 end
 
 local shopOpen, lockerOpen = false, false
@@ -273,21 +328,28 @@ local lockerRoot = new("Frame", { Name = "Locker", Size = UDim2.fromScale(1, 1),
 -- ======================================================================================
 -- shared: info panel with a viewer, used by the PREVIEW (shop) and the locker's right side
 -- ======================================================================================
-local function describe(item)
-	if item.kind == "skin" then return item.desc or "" end
-	local d = ("A %s paint job for the %s. Same stats, new look: every part of the gun is repainted."):format(string.lower(item.name), item.gunName or "gun")
-	if item.glow then d ..= " The bright parts glow." end
-	return d
+-- v5.11: no descriptions any more (the owner: they read as AI). Only plain facts: what it is, what it goes on.
+local function describe(_item) return "" end
+local function baseName(id) local s = Skins.Get(id); return s.base and Skins.Get(s.base).name or s.name end
+local function subLine(item)
+	if item.kind == "skin" then
+		local s = Skins.Get(item.id)
+		return s.base and (baseName(item.id) .. " COLOURWAY") or "BASE SKIN"
+	elseif item.kind == "banner" then
+		return item.anim and "PLAYER CARD  //  ANIMATED" or "PLAYER CARD"
+	end
+	return "FOR THE  " .. string.upper(item.gunName or "")
 end
 local function kindLine(item)
-	if item.kind == "skin" then return "PLAYER SKIN  //  " .. string.upper(item.sub or "") end
+	if item.kind == "skin" then return "PLAYER SKIN  //  " .. subLine(item) end
+	if item.kind == "banner" then return "PLAYER CARD BACKGROUND" .. (item.anim and "  //  ANIMATED" or "") end
 	return "GUN SKIN  //  FOR THE " .. string.upper(item.gunName or "")
 end
 
 -- ======================================================================================
 -- SHOP
 -- ======================================================================================
-local shopTab = "skin"            -- skin | gun
+local shopTab = "skin"            -- skin | gun | banner (v5.11)
 local gunFilter = myWeapon()      -- a gun id, or "ALL"
 local previewItem, armedId, armedAt, toastText, toastGood = nil, nil, 0, "", false
 local refreshShop, openPreview, closePreview
@@ -306,7 +368,8 @@ local balSouls = lbl(balBox, "0", 28, 56, 0, 150, 52, K.text, F.H)
 local balEss = lbl(balBox, "0", 28, 256, 0, 140, 52, ESS_PALE, F.H)
 local shopClose = UI.CloseButton(shopRoot, "CLOSE", { Position = UDim2.fromOffset(1704, 45) })
 
-local TABS = { { id = "skin", name = "PLAYER SKINS" }, { id = "gun", name = "GUN SKINS" } }
+local TABS = { { id = "skin", name = "PLAYER SKINS" }, { id = "gun", name = "GUN SKINS" }, { id = "banner", name = "PLAYER CARDS" } } -- v5.11: + PLAYER CARDS
+local LOCK_TABS = { { id = "skin", name = "PLAYER SKINS" }, { id = "gun", name = "GUN SKINS" }, { id = "card", name = "PLAYER CARD" } }
 local tabBtns = {}
 for i, t in TABS do
 	local b = new("TextButton", { Text = t.name, TextSize = 24, FontFace = F.H, TextColor3 = K.dim, BackgroundTransparency = 1, AutoButtonColor = false,
@@ -370,7 +433,7 @@ local function shopCard(scroll, item, order)
 	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(isEss and rgb(30, 18, 46) or rgb(16, 26, 38), rgb(8, 9, 12)) }, well)
 	queueThumb(well, item)
 	lbl(b, string.upper(item.name), 24, 14, 222, 300, 30, K.text, F.H)
-	lbl(b, item.kind == "gun" and ("FOR THE  " .. string.upper(item.gunName or "")) or string.upper(item.sub or ""), 11, 15, 252, 300, 14, item.kind == "gun" and K.soulPale or K.dim, F.MB)
+	lbl(b, subLine(item), 11, 15, 252, 300, 14, item.kind == "gun" and K.soulPale or K.dim, F.MB)
 	if isOwned then
 		local eq = isEquipped(item)
 		local tag = chip(b, 14, 280, eq and 120 or 90, 24, eq and "EQUIPPED" or "OWNED", eq and rgb(14, 56, 36) or rgb(24, 70, 44), K.green, K.green, 12)
@@ -378,11 +441,6 @@ local function shopCard(scroll, item, order)
 	else
 		priceRow(b, 14, 286, item, false)
 	end
-	local view = lbl(b, "PREVIEW", 11, 0, 290, 334, 16, K.mute, F.MB, Enum.TextXAlignment.Right)
-	view.Position = UDim2.new(1, -16, 0, 290)
-	view.Size = UDim2.fromOffset(100, 16)
-	view.AnchorPoint = Vector2.new(1, 0)
-	view.TextXAlignment = Enum.TextXAlignment.Right
 	b.MouseButton1Click:Connect(function() openPreview(item) end)
 	return b
 end
@@ -394,7 +452,7 @@ end
 local function shopItems(cur)
 	local out = {}
 	for _, it in Cat.Items(shopTab) do
-		if it.currency == cur and (shopTab == "skin" or gunFilter == "ALL" or it.gun == gunFilter) then table.insert(out, it) end
+		if it.currency == cur and (shopTab ~= "gun" or gunFilter == "ALL" or it.gun == gunFilter) then table.insert(out, it) end
 	end
 	return out
 end
@@ -427,7 +485,7 @@ function refreshShop()
 		local list = shopItems(cur)
 		for i, it in list do shopCard(p.scroll, it, i) end
 		if #list == 0 then
-			local e = lbl(p.scroll, "NOTHING HERE FOR THIS GUN YET", 18, 0, 0, 400, 40, K.mute, F.H, Enum.TextXAlignment.Left)
+			local e = lbl(p.scroll, shopTab == "gun" and "NOTHING HERE FOR THIS GUN YET" or "NOTHING HERE YET", 18, 0, 0, 400, 40, K.mute, F.H, Enum.TextXAlignment.Left)
 			e.LayoutOrder = 1
 		end
 		p.scroll.CanvasPosition = keep
@@ -450,24 +508,40 @@ local pvDim = new("TextButton", { Text = "", AutoButtonColor = false, Size = UDi
 local pvPanel = box(pv, 150, 100, 1620, 880, K.panel, 0)
 pvPanel.ZIndex = 21
 stroke(pvPanel, K.line2, 1.5)
-local pvViewer, pvBody
+local pvViewer, pvBody, pvFlat
 local function pvClear()
 	if pvViewer then pvViewer.destroy() pvViewer = nil end
 	if pvBody then pvBody:Destroy() pvBody = nil end
+	if pvFlat then pvFlat:Destroy() pvFlat = nil end
+end
+-- your own card data (used to preview a background on YOUR card)
+local function myCardData(bg)
+	local cd = PlayerCards.Read(player)
+	if bg then cd = { bg = bg, show = cd.show } end
+	return { userId = player.UserId, name = player.DisplayName, username = player.Name, level = player:GetAttribute("Level"), card = cd }
 end
 
 function openPreview(item, keepView)
 	previewItem = item
 	if not keepView then armedId, toastText = nil, "" end
-	local reuse = keepView and pvViewer ~= nil
+	local reuse = keepView and (pvViewer ~= nil or pvFlat ~= nil)
 	if not reuse then pvClear() end
 	pv.Visible = true
 	if pvBody then pvBody:Destroy() end
 	pvBody = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 22 }, pvPanel)
 	if not reuse then
-		pvViewer = newViewer(pvPanel, 24, 24, 960, 832)
-		pvViewer.holder.ZIndex = 22
-		pvViewer.set(item)
+		if item.kind == "banner" then
+			-- v5.11: a background is shown on YOUR player card, big
+			pvFlat = box(pvPanel, 24, 24, 960, 832, rgb(8, 9, 12), 0)
+			pvFlat.ZIndex = 22
+			stroke(pvFlat, K.line, 1)
+			local c = PlayerCards.Render(pvFlat, myCardData(item.id), 912)
+			c.Position = UDim2.fromOffset(24, (832 - 912 * PlayerCards.H / PlayerCards.W) / 2)
+		else
+			pvViewer = newViewer(pvPanel, 24, 24, 960, 832)
+			pvViewer.holder.ZIndex = 22
+			pvViewer.set(item)
+		end
 	end
 	local isEss = item.currency == "essence"
 	local X = 1020
@@ -478,11 +552,13 @@ function openPreview(item, keepView)
 	tier.ZIndex = 23
 	for _, c in tier:GetChildren() do if c:IsA("GuiObject") then c.ZIndex = 24 end end
 	box(pvBody, X, 188, 576, 1, K.line).ZIndex = 23
-	local d = lbl(pvBody, describe(item), 17, X, 204, 576, 140, K.text, F.B, nil, true)
-	d.LineHeight = 1.18
-	d.ZIndex = 23
+	if describe(item) ~= "" then
+		local d = lbl(pvBody, describe(item), 17, X, 204, 576, 140, K.text, F.B, nil, true)
+		d.LineHeight = 1.18
+		d.ZIndex = 23
+	end
 	if item.kind == "gun" then
-		local g = lbl(pvBody, "THIS SKIN GOES ON:  " .. string.upper(item.gunName or ""), 14, X, 330, 576, 22, K.soulPale, F.MB)
+		local g = lbl(pvBody, "GOES ON:  " .. string.upper(item.gunName or ""), 16, X, 206, 576, 24, K.soulPale, F.MB)
 		g.ZIndex = 23
 	end
 	-- price + action
@@ -501,7 +577,7 @@ function openPreview(item, keepView)
 			hot(e, K.red, K.redHi, nil)
 			e.MouseButton1Click:Connect(function()
 				e.Text = "..."
-				local ok, res, msg = pcall(function() return EquipR:InvokeServer(item.kind, item.id, item.gun) end)
+				local ok, res, msg = pcall(function() return EquipR:InvokeServer(item.kind == "banner" and "card" or item.kind, item.id, item.gun) end)
 				toastText, toastGood = (ok and msg) or "Could not reach the server.", ok and res == true
 				refreshShop()
 			end)
@@ -556,16 +632,20 @@ pvDim.MouseButton1Click:Connect(closePreview)
 -- ======================================================================================
 -- LOCKER
 -- ======================================================================================
-local lockTab = "skin"
-local selectedLock = nil -- { kind, id, gun? }  (id "STOCK" = the plain gun)
+local lockTab = "skin"            -- skin | gun | card
+local selectedLock = nil -- skin: { kind = "skin", base, variant }   gun: { kind = "gun", id, gun, item }  (id "STOCK" = the plain gun)
+local cardSlot = nil     -- PLAYER CARD tab: the showcase slot being filled (1..3) or nil (= choosing a background)
 local lockViewer, lockInfo
 local refreshLocker
+local closeLocker -- forward (a locked colourway / background jumps to the shop)
+local lockMsg = ""
+local pendingPreview = nil -- shop item to open right after the shop opens (from a locked colourway / background)
 
 lbl(lockerRoot, "COSMETICS", 56, 64, 28, 700, 70, K.text, F.H)
 box(lockerRoot, 64, 130, 1792, 1, K.line)
 local lockClose = UI.CloseButton(lockerRoot, "CLOSE", { Position = UDim2.fromOffset(1704, 45) })
 local lockTabBtns = {}
-for i, t in TABS do
+for i, t in LOCK_TABS do
 	local b = new("TextButton", { Text = t.name, TextSize = 24, FontFace = F.H, TextColor3 = K.dim, BackgroundTransparency = 1, AutoButtonColor = false,
 		Position = UDim2.fromOffset(64 + (i - 1) * 250, 146), Size = UDim2.fromOffset(230, 52) }, lockerRoot)
 	local u = box(b, 0, 50, 230, 3, K.red)
@@ -587,9 +667,31 @@ new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), Pa
 new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 12) }, lockGrid)
 local lockSide = new("Frame", { Position = UDim2.fromOffset(1170, 214), Size = UDim2.fromOffset(694, 826), BackgroundTransparency = 1 }, lockerRoot)
 
+-- jump to the shop preview of something you do not own yet
+local function showInShop(kind, id)
+	local it = Cat.Find(kind, id)
+	if not it then return end
+	pendingPreview = it
+	if closeLocker then closeLocker() end
+	player:SetAttribute("CosmeticsOpen", "shop")
+end
+
+local function bigButton(parent, text, y, on, danger)
+	local b = new("TextButton", { Text = text, TextSize = 24, FontFace = F.H, TextColor3 = on and K.green or K.text, BackgroundColor3 = on and rgb(18, 52, 34) or (danger and K.panel3 or K.red),
+		AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(2, y), Size = UDim2.fromOffset(690, 70) }, parent)
+	if on then stroke(b, K.green, 1) elseif danger then stroke(b, K.line2, 1) hot(b, K.panel3, K.panel2, nil) else hot(b, K.red, K.redHi, nil) end
+	return b
+end
+
 local function lockCard(parent, item, order, w)
-	local on = selectedLock and selectedLock.kind == item.kind and selectedLock.id == item.id
-	local eq = (item.id == "STOCK") and (equippedOn(item.gun) == nil) or ((item.id ~= "STOCK") and isEquipped(item))
+	local on, eq
+	if item.kind == "skin" then
+		on = selectedLock and selectedLock.kind == "skin" and selectedLock.base == item.base
+		eq = Cat.BaseOf(wornSkin()) == item.base
+	else
+		on = selectedLock and selectedLock.kind == item.kind and selectedLock.id == item.id
+		eq = (item.id == "STOCK") and (equippedOn(item.gun) == nil) or ((item.id ~= "STOCK") and isEquipped(item))
+	end
 	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0, LayoutOrder = order, Size = UDim2.fromOffset(w, 300) }, parent)
 	local st = stroke(b, on and K.red or K.line, on and 2.5 or 1)
 	hot(b, K.panel2, rgb(30, 33, 40), (not on) and st or nil, K.line, K.line2)
@@ -597,7 +699,7 @@ local function lockCard(parent, item, order, w)
 	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(20, 24, 32), rgb(8, 9, 12)) }, well)
 	queueThumb(well, item)
 	lbl(b, string.upper(item.name), 22, 14, 206, w - 28, 28, K.text, F.H)
-	local sub = item.kind == "gun" and ("FOR  " .. string.upper(item.gunName or "")) or string.upper(item.sub or "")
+	local sub = item.kind == "gun" and ("FOR  " .. string.upper(item.gunName or "")) or (item.sub or "")
 	lbl(b, sub, 11, 15, 234, w - 28, 14, item.kind == "gun" and K.soulPale or K.dim, F.MB)
 	if eq then
 		local txt = item.kind == "gun" and ("EQUIPPED ON " .. string.upper(item.gunName or "")) or "EQUIPPED"
@@ -605,7 +707,12 @@ local function lockCard(parent, item, order, w)
 		chip(b, 14, 262, cw, 24, txt, rgb(14, 56, 36), K.green, K.green, 11)
 	end
 	b.MouseButton1Click:Connect(function()
-		selectedLock = { kind = item.kind, id = item.id, gun = item.gun, item = item }
+		if item.kind == "skin" then
+			selectedLock = { kind = "skin", base = item.base, variant = item.id }
+		else
+			selectedLock = { kind = item.kind, id = item.id, gun = item.gun, item = item }
+		end
+		lockMsg = ""
 		refreshLocker()
 	end)
 	return b
@@ -618,46 +725,182 @@ local function lockSection(title, sub, order)
 	box(h, 0, 42, 1040, 1, K.line)
 	return h
 end
-local function lockRow(order, items, w)
-	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 300), LayoutOrder = order, AutomaticSize = Enum.AutomaticSize.Y }, lockGrid)
-	new("UIGridLayout", { CellSize = UDim2.fromOffset(w, 300), CellPadding = UDim2.fromOffset(14, 14), SortOrder = Enum.SortOrder.LayoutOrder }, row)
-	for i, it in items do lockCard(row, it, i, w) end
+local function lockRow(order, items, w, cardFn, hgt)
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, hgt or 300), LayoutOrder = order, AutomaticSize = Enum.AutomaticSize.Y }, lockGrid)
+	new("UIGridLayout", { CellSize = UDim2.fromOffset(w, hgt or 300), CellPadding = UDim2.fromOffset(14, 14), SortOrder = Enum.SortOrder.LayoutOrder }, row)
+	for i, it in items do (cardFn or lockCard)(row, it, i, w) end
 	return row
 end
 
-local function lockSideBody(item)
-	if lockInfo then lockInfo:Destroy() lockInfo = nil end
-	if not item then return end
+-- ----- PLAYER SKINS: base skin + its colourways -----
+local function skinSide(sel)
+	lockInfo = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, lockSide)
+	local base, variant = sel.base, sel.variant
+	local worn = wornSkin()
+	local vs = Skins.Get(variant)
+	lbl(lockInfo, string.upper(Skins.Get(base).name), 46, 2, 446, 690, 54, K.text, F.H)
+	lbl(lockInfo, "COLOURWAY:  " .. (vs.base and vs.name or "ORIGINAL"), 13, 4, 500, 690, 18, K.redHi, F.MB)
+	-- swatch row: ORIGINAL + every colourway of this skin (owned = pick it, not owned = see it in the shop)
+	local list = { base }
+	for _, id in Cat.Colourways(base) do table.insert(list, id) end
+	local SWW = math.min(166, math.floor((690 - (#list - 1) * 8) / #list))
+	for i, id in list do
+		local s = Skins.Get(id)
+		local own = Cat.OwnsSkin(player, id)
+		local on = id == variant
+		local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0,
+			Position = UDim2.fromOffset(2 + (i - 1) * (SWW + 8), 530), Size = UDim2.fromOffset(SWW, 86) }, lockInfo)
+		local st = stroke(b, on and K.red or K.line, on and 2.5 or 1)
+		if not on then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
+		local sw = box(b, 8, 8, SWW - 16, 34, s.card or K.panel3, own and 0 or 0.6)
+		stroke(sw, Color3.new(1, 1, 1), 1, 0.75)
+		if id == worn then chip(sw, SWW - 16 - 34, 7, 28, 20, "ON", rgb(14, 56, 36), K.green, nil, 10) end
+		lbl(b, s.base and s.name or "ORIGINAL", 15, 8, 46, SWW - 16, 20, own and K.text or K.mute, F.H).TextTruncate = Enum.TextTruncate.AtEnd
+		local info = own and "" or ((s.price and s.price.essence) and (commas(s.price.essence) .. " ESSENCE") or (s.price and s.price.souls and (commas(s.price.souls) .. " SOULS")) or "")
+		lbl(b, own and "OWNED" or ("LOCKED  " .. info), 9, 8, 66, SWW - 16, 14, own and K.dim or K.mute, F.MB).TextTruncate = Enum.TextTruncate.AtEnd
+		b.MouseButton1Click:Connect(function()
+			if own then
+				selectedLock.variant = id
+				lockMsg = ""
+				refreshLocker()
+			else
+				showInShop("skin", id)
+			end
+		end)
+	end
+	local eq = worn == variant
+	local btn = bigButton(lockInfo, eq and "EQUIPPED" or "EQUIP", 740, eq)
+	btn.MouseButton1Click:Connect(function()
+		if eq then return end
+		btn.Text = "..."
+		local ok, res = pcall(function() return EquipR:InvokeServer("skin", variant) end)
+		if not ok or res ~= true then btn.Text = "COULD NOT EQUIP" end
+	end)
+end
+
+-- ----- GUN SKINS -----
+local function gunSide(item)
 	lockInfo = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, lockSide)
 	local isStock = item.id == "STOCK"
 	local eq = isStock and (equippedOn(item.gun) == nil) or ((not isStock) and isEquipped(item))
-	lbl(lockInfo, (item.kind == "gun" and ("GUN SKIN  //  FOR THE " .. string.upper(item.gunName or "")) or ("PLAYER SKIN  //  " .. string.upper(item.sub or ""))), 12, 4, 568, 680, 16, K.redHi, F.MB)
+	lbl(lockInfo, "GUN SKIN  //  FOR THE " .. string.upper(item.gunName or ""), 12, 4, 568, 680, 16, K.redHi, F.MB)
 	lbl(lockInfo, string.upper(item.name), 46, 2, 586, 690, 54, K.text, F.H)
-	local desc = isStock and ("The plain " .. (item.gunName or "gun") .. ", no paint.") or describe(item)
-	local d = lbl(lockInfo, desc, 15, 4, 642, 690, 56, K.dim, F.B, nil, true)
-	d.LineHeight = 1.15
-	if item.kind == "gun" then lbl(lockInfo, "GOES ON:  " .. string.upper(item.gunName or ""), 13, 4, 700, 690, 18, K.soulPale, F.MB) end
+	lbl(lockInfo, "GOES ON:  " .. string.upper(item.gunName or ""), 14, 4, 646, 690, 20, K.soulPale, F.MB)
 	local label, action
-	if item.kind == "skin" then
-		label = eq and "EQUIPPED" or "EQUIP"
-		action = function() return EquipR:InvokeServer("skin", item.id) end
-	elseif isStock then
+	if isStock then
 		label = eq and "ON STOCK" or ("BACK TO STOCK " .. string.upper(item.gunName or ""))
 		action = function() return EquipR:InvokeServer("gun", "", item.gun) end
 	else
 		label = eq and ("EQUIPPED ON " .. string.upper(item.gunName or "")) or ("EQUIP ON " .. string.upper(item.gunName or ""))
 		action = function() return EquipR:InvokeServer("gun", item.id, item.gun) end
 	end
-	local b = new("TextButton", { Text = label, TextSize = 24, FontFace = F.H, TextColor3 = eq and K.green or K.text, BackgroundColor3 = eq and rgb(18, 52, 34) or K.red, AutoButtonColor = false,
-		BorderSizePixel = 0, Position = UDim2.fromOffset(2, 740), Size = UDim2.fromOffset(690, 70) }, lockInfo)
-	if eq then stroke(b, K.green, 1) else hot(b, K.red, K.redHi, nil) end
+	local b = bigButton(lockInfo, label, 740, eq)
 	b.MouseButton1Click:Connect(function()
 		if eq then return end
 		b.Text = "..."
 		local ok, res = pcall(action)
 		if not ok or res ~= true then b.Text = "COULD NOT EQUIP" end
-		-- the server's attribute change refreshes the screen
 	end)
+end
+
+-- ----- PLAYER CARD: background + showcase -----
+local function ownedCardIds()
+	local raw = player:GetAttribute("CardsJson")
+	local out = {}
+	local ok, t = pcall(HttpService.JSONDecode, HttpService, type(raw) == "string" and raw or "{}")
+	local Cards = require(RS:WaitForChild("Cards"))
+	if ok and type(t) == "table" then
+		for _, c in Cards.List do if (t[c.id] or 0) > 0 then table.insert(out, c.id) end end
+	end
+	if #out == 0 then for _, c in Cards.List do table.insert(out, c.id) end end -- everybody has the starter collection
+	table.sort(out, function(a, b) return Cards.Sort(Cards.ById[a], Cards.ById[b]) end)
+	return out
+end
+
+local function bannerCard(parent, id, order, w)
+	local bd = PlayerCards.ById[id]
+	local own = Cat.OwnsBanner(player, id)
+	local eq = PlayerCards.Read(player).bg == id
+	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0, LayoutOrder = order, Size = UDim2.fromOffset(w, 230) }, parent)
+	local st = stroke(b, eq and K.green or K.line, eq and 2 or 1)
+	if not eq then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
+	local well = box(b, 1, 1, w - 2, 150, K.void, 0)
+	well.ClipsDescendants = true
+	queueThumb(well, { kind = "banner", id = id })
+	if not own then box(well, 0, 0, w - 2, 150, Color3.new(0, 0, 0), 0.45).ZIndex = 5 end
+	lbl(b, bd.name, 22, 14, 156, w - 28, 28, own and K.text or K.mute, F.H)
+	local status = eq and "EQUIPPED" or (own and (bd.anim and "OWNED  //  ANIMATED" or "OWNED") or (bd.price.essence and (commas(bd.price.essence) .. " ESSENCE") or (commas(bd.price.souls) .. " SOULS")))
+	lbl(b, status, 11, 15, 188, w - 28, 16, eq and K.green or (own and K.dim or (bd.price and bd.price.essence and ESS_PALE or K.soulPale)), F.MB)
+	b.MouseButton1Click:Connect(function()
+		if not own then showInShop("banner", id) return end
+		if eq then return end
+		local ok, res, msg = pcall(function() return EquipR:InvokeServer("card", id) end)
+		lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+	end)
+	return b
+end
+
+local function flexCard(parent, value, order, w)
+	local cur = PlayerCards.Read(player).show[cardSlot or 1]
+	local on = cur == value
+	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0, LayoutOrder = order, Size = UDim2.fromOffset(w, 250) }, parent)
+	local st = stroke(b, on and K.green or K.line, on and 2 or 1)
+	if not on then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
+	local well = box(b, 1, 1, w - 2, 196, K.void, 0.1)
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(20, 24, 32), rgb(8, 9, 12)) }, well)
+	if value == "" then
+		lbl(well, "NONE", 26, 0, 0, w - 2, 196, K.mute, F.H, Enum.TextXAlignment.Center)
+	else
+		queueThumb(well, { kind = "flex", value = value, w = w - 2, h = 196 })
+	end
+	local nm = lbl(b, value == "" and "EMPTY SLOT" or PlayerCards.ItemName(value), 16, 12, 202, w - 24, 22, K.text, F.H)
+	nm.TextTruncate = Enum.TextTruncate.AtEnd
+	if on then lbl(b, "IN THIS SLOT", 10, 13, 226, w - 24, 14, K.green, F.MB) end
+	b.MouseButton1Click:Connect(function()
+		if on or not cardSlot then return end
+		local ok, res, msg = pcall(function() return EquipR:InvokeServer("show", cardSlot, value) end)
+		lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+	end)
+	return b
+end
+
+local function cardSide()
+	lockInfo = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, lockSide)
+	lbl(lockInfo, "YOUR CARD", 13, 4, 0, 690, 18, K.redHi, F.MB)
+	PlayerCards.Render(lockInfo, myCardData(), 690).Position = UDim2.fromOffset(2, 24)
+	local pcData = PlayerCards.Read(player)
+	lbl(lockInfo, "SHOWCASE", 28, 2, 236, 400, 40, K.text, F.H)
+	box(lockInfo, 2, 278, 690, 1, K.line)
+	for i = 1, 3 do
+		local v = pcData.show[i]
+		local on = cardSlot == i
+		local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0,
+			Position = UDim2.fromOffset(2 + (i - 1) * 236, 294), Size = UDim2.fromOffset(218, 330) }, lockInfo)
+		local st = stroke(b, on and K.red or K.line, on and 2.5 or 1)
+		if not on then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
+		lbl(b, "SLOT " .. i, 11, 12, 8, 120, 14, on and K.redHi or K.mute, F.MB)
+		local well = box(b, 8, 28, 202, 250, K.void, 0.1)
+		if PlayerCards.Parse(v) then
+			queueThumb(well, { kind = "flex", value = v, w = 202, h = 250 })
+		else
+			for _, sz in { Vector2.new(26, 3), Vector2.new(3, 26) } do
+				new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(sz.X, sz.Y), BackgroundColor3 = K.mute, BorderSizePixel = 0 }, well)
+			end
+		end
+		local nm = lbl(b, PlayerCards.Parse(v) and PlayerCards.ItemName(v) or "EMPTY", 15, 12, 286, 196, 22, PlayerCards.Parse(v) and K.text or K.mute, F.H)
+		nm.TextTruncate = Enum.TextTruncate.AtEnd
+		b.MouseButton1Click:Connect(function()
+			if cardSlot == i then cardSlot = nil else cardSlot = i end
+			lockMsg = ""
+			lockGrid.CanvasPosition = Vector2.zero
+			refreshLocker()
+		end)
+	end
+	if cardSlot then
+		local back = bigButton(lockInfo, "CHANGE BACKGROUND INSTEAD", 740, false, true)
+		back.MouseButton1Click:Connect(function() cardSlot = nil lockMsg = "" refreshLocker() end)
+	end
+	if lockMsg ~= "" then lbl(lockInfo, lockMsg, 13, 2, 818, 690, 18, K.redHi, F.MB, Enum.TextXAlignment.Center) end
 end
 
 function refreshLocker()
@@ -668,31 +911,35 @@ function refreshLocker()
 	local keep = lockGrid.CanvasPosition
 	for _, c in lockGrid:GetChildren() do if c:IsA("GuiObject") then c:Destroy() end end
 	if lockViewer then lockViewer.destroy() lockViewer = nil end
-	-- ----- build the lists -----
-	local items = {}
+	if lockInfo then lockInfo:Destroy() lockInfo = nil end
 	if lockTab == "skin" then
-		for _, id in Cat.OwnedSkins(player) do
-			local s = Skins.Get(id)
-			table.insert(items, { kind = "skin", id = id, name = s.name, sub = s.sub, desc = s.desc })
+		-- v5.11: only the BASE skins; colourways are picked under the preview
+		local worn = wornSkin()
+		local items = {}
+		for _, baseId in Cat.BaseSkins() do
+			local cws = Cat.Colourways(baseId)
+			local n = 1
+			for _, id in cws do if Cat.OwnsSkin(player, id) then n += 1 end end
+			local showId = (Cat.BaseOf(worn) == baseId) and worn or baseId
+			table.insert(items, { kind = "skin", id = showId, base = baseId, name = Skins.Get(baseId).name,
+				sub = (#cws > 0) and ("%d / %d COLOURWAYS"):format(n, #cws + 1) or "" })
 		end
-		lockSection("YOUR PLAYER SKINS", ("%d OWNED"):format(#items), 1)
+		lockSection("YOUR PLAYER SKINS", nil, 1)
 		lockRow(2, items, 328)
-		if not (selectedLock and selectedLock.kind == "skin") then
-			local worn = wornSkin()
-			for _, it in items do if it.id == worn then selectedLock = { kind = "skin", id = it.id, item = it } end end
-		else
-			local found = false
-			for _, it in items do if it.id == selectedLock.id then selectedLock.item = it found = true end end
-			if not found then selectedLock = nil end
-		end
-	else
+		if not (selectedLock and selectedLock.kind == "skin") then selectedLock = { kind = "skin", base = Cat.BaseOf(worn), variant = worn } end
+		if Cat.BaseOf(selectedLock.variant) ~= selectedLock.base or not Cat.OwnsSkin(player, selectedLock.variant) then selectedLock.variant = selectedLock.base end
+		lockGrid.CanvasPosition = keep
+		lockViewer = newViewer(lockerRoot, 1170, 214, 694, 430)
+		lockViewer.set({ kind = "skin", id = selectedLock.variant })
+		skinSide(selectedLock)
+	elseif lockTab == "gun" then
 		local ownedSet = {}
 		for _, id in Cat.OwnedGunSkins(player) do ownedSet[id] = true end
 		local order, any = 1, false
 		for _, g in GunSkins.GunOrder do
 			local mine = {}
-			for _, s in GunSkins.ForGun(g) do
-				if ownedSet[s.id] then table.insert(mine, { kind = "gun", id = s.id, name = s.name, sub = s.sub, gun = g, gunName = s.gunName, glow = s.glow }) end
+			for _, sk in GunSkins.ForGun(g) do
+				if ownedSet[sk.id] then table.insert(mine, { kind = "gun", id = sk.id, name = sk.name, sub = sk.sub, gun = g, gunName = sk.gunName, glow = sk.glow }) end
 			end
 			if #mine > 0 then
 				any = true
@@ -706,40 +953,63 @@ function refreshLocker()
 			end
 		end
 		if not any then
-			local e = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 200), LayoutOrder = 1 }, lockGrid)
-			lbl(e, "YOU DON'T OWN ANY GUN SKINS YET", 34, 0, 20, 1040, 50, K.text, F.H)
-			lbl(e, "Gun skins are bought in the COSMETICS SHOP with essence or souls. Each skin belongs to one gun and shows up here once you own it.", 16, 0, 78, 900, 60, K.dim, F.B, nil, true)
+			local e = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 120), LayoutOrder = 1 }, lockGrid)
+			lbl(e, "NO GUN SKINS YET", 34, 0, 20, 1040, 50, K.text, F.H)
 			selectedLock = nil
-		else
-			if not (selectedLock and selectedLock.kind == "gun") then
-				-- default: the gun you play with, or the first one you own skins for
-				local w = myWeapon()
-				local pick
-				for _, g in { w, table.unpack(GunSkins.GunOrder) } do
-					for _, s in GunSkins.ForGun(g) do
-						if ownedSet[s.id] and not pick then pick = { kind = "gun", id = equippedOn(g) or s.id, gun = g, item = { kind = "gun", id = equippedOn(g) or s.id, name = GunSkins.ById[equippedOn(g) or s.id].name, sub = s.sub, gun = g, gunName = s.gunName, glow = s.glow } } end
+		elseif not (selectedLock and selectedLock.kind == "gun") then
+			-- default: the gun you play with, or the first one you own skins for
+			local w = myWeapon()
+			local pick
+			for _, g in { w, table.unpack(GunSkins.GunOrder) } do
+				for _, sk in GunSkins.ForGun(g) do
+					if ownedSet[sk.id] and not pick then
+						local id = equippedOn(g) or sk.id
+						pick = { kind = "gun", id = id, gun = g, item = { kind = "gun", id = id, name = GunSkins.ById[id].name, sub = sk.sub, gun = g, gunName = sk.gunName, glow = sk.glow } }
 					end
 				end
-				selectedLock = pick
 			end
+			selectedLock = pick
 		end
+		lockGrid.CanvasPosition = keep
+		local sel = selectedLock and selectedLock.kind == "gun" and selectedLock.item
+		if sel then
+			lockViewer = newViewer(lockerRoot, 1170, 214, 694, 540)
+			lockViewer.set(sel)
+			gunSide(sel)
+		end
+	else -- card
+		if cardSlot then
+			lockSection("SHOWCASE  //  SLOT " .. cardSlot, "PICK WHAT THIS SLOT SHOWS", 1)
+			lockRow(2, { "" }, 250, flexCard, 250)
+			local skins, guns = {}, {}
+			for _, id in Cat.OwnedSkins(player) do table.insert(skins, "skin:" .. id) end
+			for _, id in Cat.OwnedGunSkins(player) do table.insert(guns, "gun:" .. id) end
+			local order = 3
+			for _, sec in { { "PLAYER SKINS", skins }, { "GUN SKINS", guns } } do
+				if #sec[2] > 0 then
+					lockSection(sec[1], nil, order)
+					lockRow(order + 1, sec[2], 250, flexCard, 250)
+					order += 2
+				end
+			end
+			local cards = {}
+			for _, id in ownedCardIds() do table.insert(cards, "card:" .. id) end
+			lockSection("POWER-UP CARDS", nil, order)
+			lockRow(order + 1, cards, 196, flexCard, 250)
+		else
+			lockSection("BACKGROUNDS", nil, 1)
+			lockRow(2, PlayerCards.Order, 334, bannerCard, 230)
+		end
+		lockGrid.CanvasPosition = keep
+		cardSide()
 	end
-	lockGrid.CanvasPosition = keep
-	-- ----- the viewer + info on the right -----
-	local sel = selectedLock and selectedLock.item
-	if sel and sel.kind ~= lockTab then sel = nil end
-	if sel then
-		lockViewer = newViewer(lockerRoot, 1170, 214, 694, 540)
-		lockViewer.set(sel)
-	end
-	lockSideBody(sel)
 end
 
-for _, t in TABS do
+for _, t in LOCK_TABS do
 	lockTabBtns[t.id].b.MouseButton1Click:Connect(function()
 		if lockTab == t.id then return end
 		lockTab = t.id
-		selectedLock = nil
+		selectedLock, cardSlot, lockMsg = nil, nil, ""
 		lockGrid.CanvasPosition = Vector2.zero
 		refreshLocker()
 	end)
@@ -761,8 +1031,14 @@ local function openShop()
 	shopRoot.Visible, lockerRoot.Visible = true, false
 	armedId, toastText, previewItem = nil, "", nil
 	pv.Visible = false
+	if pendingPreview then shopTab = (pendingPreview.kind == "gun" and "gun") or (pendingPreview.kind == "banner" and "banner") or "skin" end
 	refreshShop()
 	updateButton()
+	if pendingPreview then
+		local it = pendingPreview
+		pendingPreview = nil
+		openPreview(it)
+	end
 end
 local function closeShop()
 	if not shopOpen then return end
@@ -782,10 +1058,11 @@ local function openLocker()
 	refreshLocker()
 	updateButton()
 end
-local function closeLocker()
+closeLocker = function()
 	if not lockerOpen then return end
 	lockerOpen = false
 	if lockViewer then lockViewer.destroy() lockViewer = nil end
+	if lockInfo then lockInfo:Destroy() lockInfo = nil end
 	dim.Visible, stage.Visible, lockerRoot.Visible = false, false, false
 	releaseMenu()
 	updateButton()
@@ -800,10 +1077,19 @@ shopLink.MouseButton1Click:Connect(function()
 end)
 
 -- the hanger button next to PLAY (and TAB) in LobbyClient sets this attribute
+-- v5.11: "card" = open the locker on the PLAYER CARD tab (EDIT CARD on the play screen), "shop" = open the shop
 player:GetAttributeChangedSignal("CosmeticsOpen"):Connect(function()
-	if not player:GetAttribute("CosmeticsOpen") then return end
+	local v = player:GetAttribute("CosmeticsOpen")
+	if not v then return end
 	player:SetAttribute("CosmeticsOpen", nil)
-	if lockerOpen then closeLocker() elseif not shopOpen then openLocker() end
+	if v == "shop" then
+		if lockerOpen then closeLocker() end
+		openShop()
+	elseif v == "card" then
+		if shopOpen then closeShop() end
+		lockTab, selectedLock, cardSlot, lockMsg = "card", nil, nil, ""
+		if lockerOpen then refreshLocker() else openLocker() end
+	elseif lockerOpen then closeLocker() elseif not shopOpen then openLocker() end
 end)
 
 UIS.InputBegan:Connect(function(input, gpe)
@@ -823,7 +1109,7 @@ local function softRefresh()
 		if shopOpen then refreshShop() elseif lockerOpen then refreshLocker() end
 	end)
 end
-for _, a in { "Souls", "Essence", "Skin", "SkinsOwnedJson", "GunSkinsOwnedJson", "GunSkinsJson" } do
+for _, a in { "Souls", "Essence", "Skin", "SkinsOwnedJson", "GunSkinsOwnedJson", "GunSkinsJson", "PlayerCardJson", "BannersOwnedJson", "CardsJson", "Level" } do
 	player:GetAttributeChangedSignal(a):Connect(softRefresh)
 end
 player:GetAttributeChangedSignal("LobbyMenuOpen"):Connect(updateButton)
