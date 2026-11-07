@@ -1,4 +1,4 @@
--- AbilityClient v2.1 (v4.7: NEW movement ability DASH - press F to dash forward fast in the direction you move (or look when standing still). 3 charges, each used charge takes 10 s to come back, one after the other.) (v2: LocalScript in StarterPlayer > StarterCharacterScripts) - BOTH games. Keep the two copies identical.
+-- AbilityClient v2.1 (v5.12: the 3 dash charge pips sit a little lower so they no longer cover the word DASH) (v4.7: NEW movement ability DASH - press F to dash forward fast in the direction you move (or look when standing still). 3 charges, each used charge takes 10 s to come back, one after the other.) (v2: LocalScript in StarterPlayer > StarterCharacterScripts) - BOTH games. Keep the two copies identical.
 -- v5.9: wall climb onto a ceiling: the body turns to face the ceiling and lies under it (head = climbing direction).
 -- v4.0: wall run + wall climb rebuilt. They now START BY THEMSELVES (no SPACE needed), look like a person running / climbing
 -- (upright body, lean, camera roll, ledge vault, dust; the limb animation lives in AbilityPose) and feel better.
@@ -962,7 +962,8 @@ local barLbl = UI.new("TextLabel", { BackgroundTransparency = 1, Position = UDim
 -- dash: three charge pips under the icon (each fills while its charge is coming back)
 local dashPips, dashCount = {}, nil
 for i = 1, 3 do
-	local back = UI.new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(210 + (i - 2) * 76, 96), Size = UDim2.fromOffset(68, 9),
+	-- v5.12: 12 px lower (y 96 -> 108): the pips covered the ability name (DASH) under the box
+	local back = UI.new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(210 + (i - 2) * 76, 108), Size = UDim2.fromOffset(68, 9),
 		BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.4, BorderSizePixel = 0, Visible = false }, holder)
 	UI.new("UIStroke", { Color = K.line2, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, back)
 	local fill = UI.new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = ICON_COL.DASH, BorderSizePixel = 0, ZIndex = 2 }, back)
