@@ -1,4 +1,4 @@
--- MatchClient v2: Wall Push HUD + box controls + box visuals.
+-- MatchClient v2.1 (v5.9: no dark plate behind the top display): Wall Push HUD + box controls + box visuals.
 --  * top bar: phase / countdown, box counts per team, wall progress bar (finish line to finish line)
 --  * carrying a box: LEFT CLICK (or the Throw button on mobile) = throw, Q = drop. Guns are locked by GunClient/GunServer.
 --  * hides pick-up prompts you can't use (your own plugged boxes, anything while you carry)
@@ -64,19 +64,7 @@ top.Position = UDim2.new(0.5, 0, 0, 14)
 top.Size = UDim2.fromOffset(520, 92)
 top.BackgroundTransparency = 1
 top.Parent = gui
-do -- very soft dark fade behind the text so white reads on bright maps (not a box)
-	local fade = Instance.new("Frame")
-	fade.Size = UDim2.new(1.4, 0, 1.3, 0)
-	fade.Position = UDim2.fromScale(-0.2, -0.15)
-	fade.BackgroundColor3 = Color3.new(0, 0, 0)
-	fade.BorderSizePixel = 0
-	fade.ZIndex = 0
-	fade.Parent = top
-	local g = Instance.new("UIGradient")
-	g.Rotation = 90
-	g.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.62), NumberSequenceKeypoint.new(1, 1) })
-	g.Parent = fade
-end
+-- v5.9: the dark fade behind the top display is gone (owner: no boxes behind the HUD)
 
 local function hlabel(size, pos, text, ts, color, font, anchor)
 	local l = Instance.new("TextLabel")
