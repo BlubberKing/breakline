@@ -1,6 +1,8 @@
--- CosmeticsServer v3 (Script in ServerScriptService) - LOBBY place only. NEW in v5.10.
+-- CosmeticsServer v3.1 (Script in ServerScriptService) - LOBBY place only. NEW in v5.10.
+-- v5.13: Equip("place") also keeps the REPOSITION angle (yaw / pitch, degrees; a power-up card is limited to PlayerCards.CARD_TILT), and putting a
+--        NEW item into a showcase slot resets that slot's angle to straight (the old angle belonged to the old item). Spot / size / turn stay.
 -- v5.12: the 3 showcase items on the player card are free to move / resize / turn:
---     Equip("place", slot 1..3, { x, y, s, r })   where the item of that slot sits on the card (PlayerCards.CleanPlace clamps it), saved in PlayerCard.pos
+--     Equip("place", slot 1..3, { x, y, s, r, yaw, pitch })   where the item of that slot sits on the card (PlayerCards.CleanPlace clamps it), saved in PlayerCard.pos
 -- v5.11: player card BANNERS can be bought (Buy("banner", id)) and the PLAYER CARD is saved here:
 --     Equip("card", bannerId)              background of your lobby player card (must be free or owned)
 --     Equip("show", slot 1..3, value)      a showcase slot: "skin:<Skins id>" / "gun:<GunSkins id>" / "card:<Cards id>" (must be owned) or "" = empty
@@ -135,8 +137,15 @@ EquipR.OnServerInvoke = function(player, kind, id, gunId)
 		local show = type(pc.show) == "table" and table.clone(pc.show) or {}
 		for i = 1, 3 do if type(show[i]) ~= "string" then show[i] = "" end end
 		if value ~= "" then for i = 1, 3 do if show[i] == value then show[i] = "" end end end -- the same item never shows twice
+		local changed = show[slot] ~= value
 		show[slot] = value
 		pc.show = show
+		if changed then -- v5.13: a new item starts straight (keeps its spot, size and turn)
+			local pos = {}
+			for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i, (PlayerCards.Parse(show[i]))) end
+			pos[slot].yaw, pos[slot].pitch = 0, 0
+			pc.pos = pos
+		end
 		Profiles.Set(player, "PlayerCard", pc)
 		task.spawn(Profiles.Save, player)
 		return true, "Showcase updated."
@@ -145,9 +154,11 @@ EquipR.OnServerInvoke = function(player, kind, id, gunId)
 		if not slot or slot < 1 or slot > 3 or slot % 1 ~= 0 then return false, "Unknown slot." end
 		if type(t) ~= "table" then return false, "Bad placement." end
 		local pc = table.clone(Profiles.Get(player, "PlayerCard") or {})
+		local show = type(pc.show) == "table" and pc.show or {}
 		local pos = {}
-		for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i) end
-		pos[slot] = PlayerCards.CleanPlace({ x = t.x, y = t.y, s = t.s, r = t.r }, slot)
+		for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i, (PlayerCards.Parse(show[i]))) end
+		-- v5.13: + the REPOSITION angle (yaw / pitch); the kind of item in the slot decides the limit (cards only lean a little)
+		pos[slot] = PlayerCards.CleanPlace({ x = t.x, y = t.y, s = t.s, r = t.r, yaw = t.yaw, pitch = t.pitch }, slot, (PlayerCards.Parse(show[slot])))
 		pc.pos = pos
 		Profiles.Set(player, "PlayerCard", pc)
 		task.spawn(Profiles.Save, player)
@@ -175,8 +186,8 @@ Players.PlayerAdded:Connect(function(p)
 		pc = type(pc) == "table" and table.clone(pc) or {}
 		if not Cat.OwnsBanner(p, pc.bg) then pc.bg = PlayerCards.Default end
 		if type(pc.show) ~= "table" then pc.show = { "", "", "" } end
-		local pos = {} -- v5.12: placements of the showcase items (checked / defaults)
-		for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i) end
+		local pos = {} -- v5.12: placements of the showcase items (checked / defaults); v5.13: + the REPOSITION angle
+		for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i, (PlayerCards.Parse(pc.show[i]))) end
 		pc.pos = pos
 		Profiles.Set(p, "PlayerCard", pc)
 	end)
