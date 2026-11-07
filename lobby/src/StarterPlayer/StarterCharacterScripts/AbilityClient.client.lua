@@ -6,8 +6,9 @@
 --   DASH   Dash         - F (gamepad Y): burst of speed in the direction you move / look. 3 charges; every charge you use needs DASH_RECHARGE (10 s) to come back.
 --   MJUMP  Mega Jump    - HOLD SPACE on the ground: a charge bar fills (bottom middle), release = launch, higher the longer you held.
 --                         A quick tap is a normal jump. Cooldown after the launch.
---   WRUN   Wall Run     - SPRINT INTO A WALL and you run UP it (fast at first, the push runs out after ~1.1s, then you vault over the
---                         top if there is a ledge, or kick off). Jump / sprint-jump NEXT TO a wall and you run ALONG it (any direction,
+--   WRUN   Wall Run     - SPRINT INTO A WALL and you run UP it (v5.8: at a steady speed until the stamina bar is empty, then you drop;
+--                         run off the top and you vault over). v5.8: hold W and tilt the camera up / down to run diagonally up / down
+--                         and across the wall in one move. Jump / sprint-jump NEXT TO a wall and you run ALONG it (any direction,
 --                         camera-relative). Walls only (never ceilings). A STAMINA bar drains while you run and refills on the ground.
 --                         SPACE on the wall = wall jump (flies off in the direction you look). You CAN shoot while wall-running.
 --   WCLIMB Wall Climb   - WALK INTO A WALL (hold the move key at it for a split second) and you grab on and climb, as long as you want.
@@ -54,9 +55,12 @@ local CFG = {
 	MJ_CHARGE_SLOW = 0.5,   -- walk speed multiplier while charging
 	-- wall run
 	WR_SPEED = 32,          -- speed along a wall
-	WR_UP_SPEED = 27,       -- speed when running UP a wall (fades out over WR_UP_TIME)
-	WR_UP_TIME = 1.15,      -- seconds of up-run push
-	WR_SECONDS = 3.4,       -- stamina: seconds of running from full (up-run costs 1.4x)
+	WR_UP_SPEED = 25,       -- v5.8: speed when running straight UP a wall. CONSTANT now (no fade-out): you keep going up until the stamina is empty
+	WR_UP_COST = 1.25,      -- v5.8: straight-up running drains stamina this much faster (diagonals in between). Was 1.4 + a 1.15 s push that faded out
+	WR_CLIMB_DEAD = 10,     -- v5.8: camera pitch (degrees above level) before W starts angling the run UP the wall
+	WR_CLIMB_FULL = 62,     -- v5.8: camera pitch at which W runs straight up (in between = a diagonal, e.g. ~36 deg pitch = 45 deg up + across)
+	WR_DOWN_DEAD = 28,      -- v5.8: camera pitch BELOW level before W angles the run down the wall (max 40 deg down)
+	WR_SECONDS = 3.4,       -- stamina: seconds of running from full (straight up costs WR_UP_COST x)
 	WR_REGEN = 2.6,         -- seconds to refill from empty (on the ground; 15% as fast in the air)
 	WR_MIN_START = 0.25,    -- after running dry you need this much stamina back to start again
 	WR_MIN_SPEED = 18,      -- you need this much flat speed to start a wall run (sprint = 30, walk = 16)
@@ -174,6 +178,49 @@ local function surfaceDir(n, input)
 	local want = (f.Magnitude > 0.05 and f.Unit * input.Y or Vector3.zero) + (r.Magnitude > 0.05 and r.Unit * input.X or Vector3.zero)
 	if want.Magnitude < 0.05 then return Vector3.zero end
 	return want.Unit * math.min(1, input.Magnitude)
+end
+
+-- v5.8: ONE direction rule for every wall run (up, along and every diagonal in between), so running up and across is as easy as
+-- running along. Horizontal part = which way along the wall (same as sideDir: camera direction + A / D, and when the camera points into
+-- the wall you keep your current way). Vertical part = camera PITCH while holding W: level = along, looking up = angled up, looking far up
+-- = straight up, looking down = angled down. When there is no clear way along the wall (head-on up-run, camera into the wall) and you
+-- look up or are already running up, it is straight up.
+local function wallDir(n, input, current)
+	if input.Magnitude < 0.1 then return Vector3.zero end
+	local t = Vector3.yAxis:Cross(n)
+	if t.Magnitude < 0.05 then return Vector3.zero end
+	t = t.Unit
+	local cf = camera.CFrame
+	local f, r = flat(cf.LookVector), flat(cf.RightVector)
+	local along = (f.Magnitude > 0.05 and f.Unit:Dot(t) * input.Y or 0) + (r.Magnitude > 0.05 and r.Unit:Dot(t) * input.X or 0)
+	local horiz -- unit vector along the wall, or nil = no clear way
+	if math.abs(along) >= 0.25 then
+		horiz = t * (along > 0 and 1 or -1)
+	elseif math.abs(input.X) < 0.3 then
+		local c = flat(current)
+		if c.Magnitude > 0.2 and math.abs(current.Y) < 0.9 then horiz = c.Unit end
+	end
+	-- vertical share from the camera pitch (only while W is held)
+	local climb = 0
+	if input.Y > 0.3 then
+		local pitch = math.deg(math.asin(clamp(cf.LookVector.Y, -1, 1)))
+		if pitch > CFG.WR_CLIMB_DEAD then
+			climb = clamp((pitch - CFG.WR_CLIMB_DEAD) / (CFG.WR_CLIMB_FULL - CFG.WR_CLIMB_DEAD), 0, 1)
+		elseif pitch < -CFG.WR_DOWN_DEAD then
+			climb = -clamp((-pitch - CFG.WR_DOWN_DEAD) / 40, 0, 0.45)
+		end
+		-- already running (nearly) straight up and the camera faces the wall: keep going up
+		if current.Y > 0.55 and f.Magnitude > 0.05 and f.Unit:Dot(-flat(n).Unit) > 0.6 and climb >= 0 then
+			climb = math.max(climb, 1 - math.abs(along))
+		end
+	end
+	if not horiz then
+		if climb > 0 or current.Y > 0.55 then return Vector3.yAxis end
+		local c = flat(current)
+		return c.Magnitude > 0.05 and c.Unit or t
+	end
+	local a = climb * math.pi / 2
+	return (horiz * cos(a) + Vector3.yAxis * sin(a)).Unit
 end
 
 -- v5.7: direction while running ALONG a wall. The run stays horizontal (never drifts up the wall because the camera looks into it):
@@ -660,7 +707,7 @@ end
 local function updateWallRun(dt)
 	modeT += dt
 	local upRun = runDir.Y > 0.55
-	stamina -= dt / CFG.WR_SECONDS * (upRun and 1.4 or 1)
+	stamina -= dt / CFG.WR_SECONDS * (1 + (CFG.WR_UP_COST - 1) * math.max(0, runDir.Y)) -- v5.8: cost scales with how steep you run
 	if stamina <= 0 then
 		stamina, exhausted = 0, true
 		playSound("WallExhausted") -- v5.7 sound hook
@@ -681,13 +728,7 @@ local function updateWallRun(dt)
 		end
 	end
 	local inp = moveInput()
-	local want
-	if runDir.Y > 0.55 then
-		want = surfaceDir(normal, inp) -- running UP: camera-relative on the wall (A / D slide you sideways, which turns it into a side run)
-	else
-		want = sideDir(normal, inp, runDir) -- running ALONG: stays horizontal, the camera cannot tilt it up the wall
-		if inp.Y > 0.3 and camera.CFrame.LookVector.Y > 0.82 then want = Vector3.yAxis; upT = 0 end -- look straight up + W = run up
-	end
+	local want = wallDir(normal, inp, runDir) -- v5.8: up / along / any diagonal, from camera pitch + the move keys
 	if want.Magnitude < 0.1 then
 		idleT += dt
 		if idleT > CFG.WR_IDLE_EXIT then exitMode(normal * 4) return end
@@ -699,21 +740,10 @@ local function updateWallRun(dt)
 	if runDir.Magnitude < 0.05 then runDir = want end
 	runDir = runDir.Unit
 	upRun = runDir.Y > 0.55
-	-- up-run: the push fades out; when it is spent you vault over the top or kick off
-	local target = CFG.WR_SPEED
-	if upRun then
-		upT += dt
-		local k = clamp(upT / CFG.WR_UP_TIME, 0, 1)
-		k = k * k * (3 - 2 * k)
-		target = CFG.WR_UP_SPEED * (1 - k)
-		if k >= 0.97 then
-			if tryVault() then return end
-			exitMode(normal * 9 + Vector3.new(0, 8, 0))
-			return
-		end
-	else
-		upT = math.max(0, upT - dt * 0.5)
-	end
+	-- v5.8: NO fade-out on the way up any more. Speed blends from WR_SPEED (along) to WR_UP_SPEED (straight up) and stays there until the
+	-- stamina runs out (handled at the top) or you run off the top of the wall (vault, handled by the wall probe above).
+	local target = CFG.WR_SPEED + (CFG.WR_UP_SPEED - CFG.WR_SPEED) * math.max(0, runDir.Y)
+	if upRun then upT += dt else upT = 0 end
 	speedNow = approach(speedNow, target, 7, dt)
 	if runDir.Y < -0.15 then -- running down onto the floor ends the run
 		local fl = cast(root.Position, Vector3.new(0, -3.6, 0))
