@@ -7,6 +7,11 @@
 --   UIKit.SoulIcon(parent, size)           the faceted blue soul crystal
 --   UIKit.Logo(parent, size, props, mode)  v3.7 logo: slim spaced BREAK / LINE, red slash with light flowing through it.
 --                                          mode "left" (corner logos) or "center" (loading screens: intro / outro). Returns holder, api
+--   UIKit.FitViewport(vp, cam, root, dir, opts)  v5.9: frames a model in a ViewportFrame so it fills the frame without being cropped,
+--                                          centred on what you actually SEE (visible parts only) and re-fitted when the frame changes size.
+--   UIKit.EssenceIcon(parent, size)        v5.9: the purple Essence glimmers (three small four-point sparkles)
+--   UIKit.CloseButton(parent, text, props) v5.9: the top-right BACK / CLOSE button of every menu: framed, an X mark, the word, an ESC cap.
+--                                          props = Position / AnchorPoint / ZIndex ... Returns the TextButton (connect MouseButton1Click).
 local TweenService = game:GetService("TweenService")
 
 local K = {}
@@ -59,6 +64,132 @@ function K.SoulIcon(parent, size)
 		Size = UDim2.fromOffset(math.floor(d * 0.46), math.floor(d * 0.46)), Rotation = 45, BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, h)
 	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(C.soulPale, C.soul) }, inner)
 	return h
+end
+
+-- ===== v5.9: fit a model into a ViewportFrame =====
+-- vp = ViewportFrame, cam = its Camera, root = Model / Folder / part holding the parts to show (parts with Transparency >= 1 are ignored),
+-- dir = direction FROM the model TO the camera (world space), opts = { pad = 0.1 (share of the frame left empty around the model), fov = 16 }.
+-- The camera keeps `dir`, is shifted sideways so the visible silhouette is centred, and is pulled back just far enough that the whole
+-- silhouette fits both the width and the height of the frame (real perspective, every corner of every part is checked).
+function K.FitViewport(vp, cam, root, dir, opts)
+	opts = opts or {}
+	local pad = opts.pad or 0.1
+	cam.FieldOfView = opts.fov or cam.FieldOfView
+	local pts = {}
+	local parts = root:IsA("BasePart") and { root } or {}
+	for _, d in root:GetDescendants() do if d:IsA("BasePart") then table.insert(parts, d) end end
+	for _, p in parts do
+		if p.Transparency < 1 then
+			local h, cf = p.Size / 2, p.CFrame
+			for _, sx in { -1, 1 } do for _, sy in { -1, 1 } do for _, sz in { -1, 1 } do
+				table.insert(pts, cf:PointToWorldSpace(Vector3.new(sx * h.X, sy * h.Y, sz * h.Z)))
+			end end end
+		end
+	end
+	if #pts == 0 then return end
+	local center = Vector3.zero
+	for _, q in pts do center += q end
+	center /= #pts
+	dir = (dir.Magnitude > 0.001) and dir.Unit or Vector3.new(1, 0, 0)
+	local upHint = math.abs(dir.Y) > 0.98 and Vector3.zAxis or Vector3.yAxis
+	local rot = CFrame.lookAt(Vector3.zero, -dir, upHint) -- camera rotation (looks along -dir)
+	local loc = {}
+	for i, q in pts do loc[i] = rot:PointToObjectSpace(q - center) end -- x right, y up, z toward the camera
+	local function fit()
+		local sz = vp.AbsoluteSize
+		local aspect = (sz.X > 1 and sz.Y > 1) and sz.X / sz.Y or (opts.aspect or 1)
+		local tv = math.tan(math.rad(cam.FieldOfView / 2)) * (1 - pad)
+		local th = tv * aspect
+		local ox, oy, dist = 0, 0, 1
+		for _ = 1, 3 do
+			-- distance that fits every corner, for the current sideways offset
+			dist = 0
+			for _, q in loc do
+				local need = math.max(math.abs(q.X - ox) / th, math.abs(q.Y - oy) / tv) + q.Z
+				if need > dist then dist = need end
+			end
+			dist += 0.05
+			-- re-centre on the projected silhouette
+			local minX, maxX, minY, maxY = math.huge, -math.huge, math.huge, -math.huge
+			for _, q in loc do
+				local d = dist - q.Z
+				local sx, sy = (q.X - ox) / d, (q.Y - oy) / d
+				minX, maxX, minY, maxY = math.min(minX, sx), math.max(maxX, sx), math.min(minY, sy), math.max(maxY, sy)
+			end
+			ox += (minX + maxX) / 2 * dist
+			oy += (minY + maxY) / 2 * dist
+		end
+		cam.CFrame = CFrame.new(center) * rot * CFrame.new(ox, oy, dist)
+	end
+	fit()
+	vp.CurrentCamera = cam
+	vp:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+end
+
+-- ===== v5.9: Essence icon (premium currency): three purple four-point glimmers, one big + two small =====
+K.C.essence = rgb(176, 108, 255)
+K.C.essencePale = rgb(232, 210, 255)
+function K.EssenceIcon(parent, size)
+	local C = K.C
+	local h = new("Frame", { Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1 }, parent)
+	-- one glimmer = two thin rounded arms crossing (vertical + horizontal), bright in the middle and fading to the tips, with a pale core
+	local function glimmer(cx, cy, s)
+		local kp = ColorSequenceKeypoint.new
+		local tp = NumberSequenceKeypoint.new
+		for _, rot in { 0, 90 } do
+			local arm = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(cx, cy), Size = UDim2.fromOffset(math.max(2, math.floor(s * 0.2)), math.floor(s)),
+				Rotation = rot, BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, h)
+			new("UICorner", { CornerRadius = UDim.new(1, 0) }, arm)
+			new("UIGradient", { Rotation = 90, Color = ColorSequence.new({ kp(0, C.essence), kp(0.5, C.essencePale), kp(1, C.essence) }),
+				Transparency = NumberSequence.new({ tp(0, 0.75), tp(0.3, 0.15), tp(0.5, 0), tp(0.7, 0.15), tp(1, 0.75) }) }, arm)
+		end
+		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(cx, cy), Size = UDim2.fromOffset(math.max(2, math.floor(s * 0.26)), math.max(2, math.floor(s * 0.26))),
+			Rotation = 45, BackgroundColor3 = C.essencePale, BorderSizePixel = 0 }, h)
+	end
+	glimmer(0.42, 0.56, size * 0.78)
+	glimmer(0.8, 0.24, size * 0.4)
+	glimmer(0.16, 0.18, size * 0.3)
+	return h
+end
+
+-- ===== v5.9: BACK / CLOSE button (top-right corner of the menus) =====
+-- 152 x 42: dark plate with a light frame, a white X, the word in bold, a small ESC key cap on the right. Hover = red plate.
+function K.CloseButton(parent, text, props)
+	local C, F = K.C, K.F
+	local W, H = 152, 42
+	local b = new("TextButton", { Name = "CloseButton", Text = "", AutoButtonColor = false, Size = UDim2.fromOffset(W, H), BackgroundColor3 = C.panel2,
+		BackgroundTransparency = 0.02, BorderSizePixel = 0 }, parent)
+	for k, v in props or {} do b[k] = v end
+	local z = b.ZIndex
+	new("UICorner", { CornerRadius = UDim.new(0, 6) }, b)
+	local st = new("UIStroke", { Color = C.line2, Thickness = 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
+	local x = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(24, H / 2), Size = UDim2.fromOffset(18, 18), BackgroundTransparency = 1, ZIndex = z + 1 }, b)
+	for _, r in { 45, -45 } do
+		local bar = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(21, 3), Rotation = r,
+			BackgroundColor3 = C.text, BorderSizePixel = 0, ZIndex = z + 1 }, x)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
+	end
+	new("TextLabel", { BackgroundTransparency = 1, Text = text or "CLOSE", TextSize = 19, FontFace = F.H, TextColor3 = C.text, Position = UDim2.fromOffset(42, 0),
+		Size = UDim2.fromOffset(W - 42 - 46, H), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = z + 1 }, b)
+	local cap = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -9, 0.5, 0), Size = UDim2.fromOffset(36, 22), BackgroundColor3 = C.panel3,
+		BorderSizePixel = 0, ZIndex = z + 1 }, b)
+	new("UICorner", { CornerRadius = UDim.new(0, 4) }, cap)
+	local capSt = new("UIStroke", { Color = C.line2, Thickness = 1 }, cap)
+	new("TextLabel", { BackgroundTransparency = 1, Text = "ESC", TextSize = 11, FontFace = F.MB, TextColor3 = C.dim, Size = UDim2.fromScale(1, 1), ZIndex = z + 2 }, cap)
+	local info = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	b.MouseEnter:Connect(function()
+		K.tween(b, info, { BackgroundColor3 = C.red })
+		K.tween(st, info, { Color = C.redHi })
+		K.tween(cap, info, { BackgroundColor3 = C.redHi })
+		capSt.Color = C.redHi
+	end)
+	b.MouseLeave:Connect(function()
+		K.tween(b, info, { BackgroundColor3 = C.panel2 })
+		K.tween(st, info, { Color = C.line2 })
+		K.tween(cap, info, { BackgroundColor3 = C.panel3 })
+		capSt.Color = C.line2
+	end)
+	return b
 end
 
 -- ===== logo: slim, serious BREAK / LINE with a red slash that has light flowing through it (v3.7) =====
