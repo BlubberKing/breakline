@@ -1,3 +1,7 @@
+-- LoadingScreen v3.1 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- v5.10: (1) the picture is loaded with UIKit.LoadImage, which checks that it REALLY loaded and falls back to a thumbnail link of the same asset id (the black picture bug);
+--        the link that worked is saved as the Player attribute MapImageSrc so the Warp reuses it. (2) the screen stays at least MIN_SHOW = 15 s, and once everybody has loaded
+--        it counts down the server's hold (MatchConfig.LOAD_HOLD) as MATCH STARTS IN n.
 -- LoadingScreen v3 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
 -- v5.8: MAP LOADING SCREEN. Instead of the black logo screen, the picked map's own picture fills the whole screen (a watercolour +
 --       pencil sketch per map), slowly drifting / zooming. Bottom right: the mode line (BREAKLINE // 3V3 or 1V1 // DUEL) and the MAP NAME
@@ -53,7 +57,7 @@ local MARGIN = px(64)
 -- ===== the map picture (full screen, Crop keeps it filling any aspect ratio) =====
 local artHolder = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 1 }, root)
 local art = new("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1.06, 1.06),
-	BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Crop, ImageTransparency = 1, Image = "", ZIndex = 1 }, artHolder)
+	BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Crop, ImageTransparency = 0.995, Image = "", ZIndex = 1 }, artHolder) -- (0.995, not 1: a fully transparent label may skip loading its picture)
 -- shade so the white text reads on a light watercolour: soft dark wash from the bottom + a little from the right
 local shadeB = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.fromScale(1, 0.52),
 	BackgroundColor3 = Color3.fromRGB(8, 9, 13), BorderSizePixel = 0, BackgroundTransparency = 1, ZIndex = 2 }, root)
@@ -138,9 +142,10 @@ task.spawn(function() -- animated dots + smooth progress
 	end
 end)
 
-local function setStatus(text, withDots)
+local function setStatus(text, withDots, quiet)
 	if status == text then return end
 	status, dots = text, withDots ~= false
+	if quiet then return end -- a ticking countdown: no fade each second
 	statusLbl.TextTransparency = 1
 	tw(statusLbl, 0.25, { TextTransparency = 0 })
 end
@@ -167,16 +172,15 @@ local function showMap(State)
 	local img = tostring(State:GetAttribute("MapImage") or "")
 	if not artShown and img ~= "" then
 		artShown = true
-		art.Image = img
 		task.spawn(function()
-			local done = false
-			task.spawn(function()
-				pcall(function() ContentProvider:PreloadAsync({ art }) end)
-				done = true
-			end)
-			local w0 = os.clock()
-			while not done and os.clock() - w0 < 6 do task.wait(0.05) end
+			-- v5.10: load it for real (direct asset first, then the thumbnail link) instead of trusting that setting .Image is enough
+			local src = UI.LoadImage(art, img, 5)
 			if not gui.Parent then return end
+			if not src then
+				warn("[Breakline] the map loading picture (" .. img .. ") could not be loaded. Check the id is an IMAGE id (not a Decal id) and that this experience may use it.")
+				return
+			end
+			player:SetAttribute("MapImageSrc", src) -- the Warp reuses the link that worked
 			tw(art, 1.2, { ImageTransparency = 0 }, Enum.EasingStyle.Quad)
 			tw(shadeB, 1.2, { BackgroundTransparency = 0 }, Enum.EasingStyle.Quad)
 			tw(shadeR, 1.2, { BackgroundTransparency = 0 }, Enum.EasingStyle.Quad)
@@ -248,13 +252,17 @@ progress = 0.85
 
 -- ===== 4) show what the server is waiting for until the match starts =====
 -- v5.8: the picture stays up at least MIN_SHOW seconds, so a fast load still shows the map instead of flashing it
-local MIN_SHOW = 3.5
+local MIN_SHOW = 15 -- v5.10: at least 15 s on screen (was 3.5)
 while true do
 	local phase = State:GetAttribute("Phase")
 	if phase ~= "Waiting" and os.clock() - t0 >= MIN_SHOW then break end
 	local expected = State:GetAttribute("Expected") or 0
 	local ready = State:GetAttribute("Ready") or 0
-	if State:GetAttribute("AllReady") or phase ~= "Waiting" then
+	local holdEnds = State:GetAttribute("LoadHoldEnds") or 0
+	if holdEnds > 0 and phase == "Waiting" then
+		setStatus(("ALL PLAYERS LOADED   //   MATCH STARTS IN %d"):format(math.max(0, math.ceil(holdEnds - workspace:GetServerTimeNow()))), false, true)
+		progress = 1
+	elseif State:GetAttribute("AllReady") or phase ~= "Waiting" then
 		setStatus("ALL PLAYERS LOADED", false)
 		progress = 1
 	elseif expected > 0 then
