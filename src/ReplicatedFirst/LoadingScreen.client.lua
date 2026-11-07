@@ -1,4 +1,7 @@
--- LoadingScreen v3.1 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- LoadingScreen v3.2 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- v5.13 (owner: "the camera zooms in ever so slightly, it looks weird"): the map picture is now a STILL image. No slow drift / zoom while loading
+--        and no push-in when the screen leaves (it just fades). It is shown as zoomed OUT as it can be while still filling the whole screen with no
+--        empty space: Size 1 x 1 + ScaleType Crop (before: 106 % and growing, so the edges were always cut off a bit more than needed).
 -- v5.10: (1) the picture is loaded with UIKit.LoadImage, which checks that it REALLY loaded and falls back to a thumbnail link of the same asset id (the black picture bug);
 --        the link that worked is saved as the Player attribute MapImageSrc so the Warp reuses it. (2) the screen stays at least MIN_SHOW = 15 s, and once everybody has loaded
 --        it counts down the server's hold (MatchConfig.LOAD_HOLD) as MATCH STARTS IN n.
@@ -56,7 +59,7 @@ local MARGIN = px(64)
 
 -- ===== the map picture (full screen, Crop keeps it filling any aspect ratio) =====
 local artHolder = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 1 }, root)
-local art = new("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1.06, 1.06),
+local art = new("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1), -- v5.13: exactly the screen
 	BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Crop, ImageTransparency = 0.995, Image = "", ZIndex = 1 }, artHolder) -- (0.995, not 1: a fully transparent label may skip loading its picture)
 -- shade so the white text reads on a light watercolour: soft dark wash from the bottom + a little from the right
 local shadeB = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.fromScale(1, 0.52),
@@ -121,13 +124,7 @@ new("UIGradient", { Transparency = NumberSequence.new(1, 0) }, glint)
 
 local status, dots, progress = "LOADING", true, 0
 local shown = 0
-local t0 = os.clock()
-local drift = RunService.RenderStepped:Connect(function()
-	-- slow Ken Burns drift on the picture
-	local t = os.clock() - t0
-	art.Size = UDim2.fromScale(1.06 + t * 0.0025, 1.06 + t * 0.0025)
-	art.Position = UDim2.new(0.5, math.sin(t * 0.07) * px(14), 0.5, math.cos(t * 0.05) * px(6))
-end)
+-- v5.13: no drift / zoom any more - the picture stands still (Crop already keeps it filling any screen shape with no empty space)
 task.spawn(function() -- animated dots + smooth progress
 	local n, acc = 0, 0
 	while gui.Parent do
@@ -198,11 +195,9 @@ local function finish()
 	tw(nameShift, 0.6, { PaddingRight = UDim.new(0, -px(80)) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 	tw(nameLbl, 0.5, { TextTransparency = 1 })
 	tw(modeLbl, 0.4, { TextTransparency = 1 })
-	tw(art, 0.9, { Size = UDim2.fromScale(art.Size.X.Scale + 0.05, art.Size.Y.Scale + 0.05) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	task.wait(0.25)
 	tw(root, 0.55, { GroupTransparency = 1 }, Enum.EasingStyle.Quad)
 	task.wait(0.6)
-	drift:Disconnect()
 	logoApi.stop()
 	gui:Destroy()
 end
