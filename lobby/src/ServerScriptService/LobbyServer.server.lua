@@ -4,6 +4,12 @@
 --   2. One lobby server at a time (MemoryStore lock) packs queue entries into Red 3 / Blue 3 (parties stay together).
 --   3. It reserves a Breakline server, saves the roster under that server's id, and tells every lobby server to teleport its players.
 -- Teleport + ReserveServer only work in a published game, NOT in Studio's Play button.
+-- v5.11 READY UP (remote LobbyRemotes.Ready(modeId | nil)): the play screen's GAME MODES page has a READY UP button on every mode.
+--   * solo: READY UP = start searching for that mode right away (same as the old Queue remote)
+--   * party: every member presses READY UP. The LEADER's mode is the party's mode; once every member is ready for it the party is queued.
+--     Ready states are shared between lobby servers (MessagingService topic "PartyReady"), shown to the clients as the attribute PartyReadyJson
+--     ({ [userId] = modeId }). Ready(nil) = un-ready; while the party is searching it cancels the search for everybody.
+--   * QueuedMode attribute = the mode you are searching for.
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
@@ -30,12 +36,13 @@ local function publish(topic, data)
 	pcall(function() MessagingService:PublishAsync(topic, data) end)
 end
 
-local function setQueued(ids, on, key)
+local function setQueued(ids, on, key, mode)
 	for _, uid in ids do
 		local p = Players:GetPlayerByUserId(uid)
 		if p then
 			p:SetAttribute("Queued", on or nil)
 			p:SetAttribute("QueuedAt", on and os.time() or nil)
+			p:SetAttribute("QueuedMode", on and mode or nil) -- v5.11
 			queuedKey[uid] = on and key or nil
 		end
 	end
@@ -129,10 +136,9 @@ end)
 
 Players.PlayerRemoving:Connect(function(p) lastLoadout[p] = nil lastSkin[p] = nil lastDeck[p] = nil end)
 
--- ===== queue remote =====
-QueueR.OnServerEvent:Connect(function(player, on, modeId)
-	if os.clock() - (lastQueue[player] or 0) < 1 then return end
-	lastQueue[player] = os.clock()
+-- ===== queue =====
+local clearReady -- forward (v5.11)
+local function setQueue(player, on, modeId)
 	if Profiles.Get(player, "StarterDone") ~= true then Party.Notice(player, "Pick your starting gear first.") return end -- v4.7
 	if PC.BREAKLINE_PLACE_ID == 0 then Party.Notice(player, "Set BREAKLINE_PLACE_ID in PlaceConfig first.") return end
 
@@ -153,19 +159,132 @@ QueueR.OnServerEvent:Connect(function(player, on, modeId)
 			queue:SetAsync(key, { ids = ids, mode = modeId }, PC.QUEUE_TIMEOUT, os.time())
 		end)
 		if not ok then Party.Notice(player, "Matchmaking is busy, try again.") return end
-		setQueued(ids, true, key)
-		publish("QueueState", { ids = ids, on = true, key = key })
+		setQueued(ids, true, key, modeId)
+		publish("QueueState", { ids = ids, on = true, key = key, mode = modeId })
 	else
 		pcall(function() queue:RemoveAsync(key) end)
 		setQueued(ids, false)
 		publish("QueueState", { ids = ids, on = false })
+		if party and clearReady then clearReady(id) end
 	end
+	return true
+end
+QueueR.OnServerEvent:Connect(function(player, on, modeId)
+	if os.clock() - (lastQueue[player] or 0) < 1 then return end
+	lastQueue[player] = os.clock()
+	setQueue(player, on, modeId)
 end)
 
 pcall(function()
 	MessagingService:SubscribeAsync("QueueState", function(msg)
 		local d = msg.Data
-		if type(d) == "table" and type(d.ids) == "table" then setQueued(d.ids, d.on, d.key) end
+		if type(d) == "table" and type(d.ids) == "table" then setQueued(d.ids, d.on, d.key, d.mode) end
+	end)
+end)
+
+-- ===== v5.11: READY UP =====
+local ReadyR = RS.LobbyRemotes:FindFirstChild("Ready") or Instance.new("RemoteEvent")
+ReadyR.Name = "Ready"
+ReadyR.Parent = RS.LobbyRemotes
+local readyState = {} -- [partyId] = { [tostring(userId)] = modeId }
+local lastReady = {}
+local function pushReady(pid)
+	local json = HttpService:JSONEncode(readyState[pid] or {})
+	for _, p in Players:GetPlayers() do
+		if p:GetAttribute("PartyId") == pid then p:SetAttribute("PartyReadyJson", json) end
+	end
+end
+-- the leader's server checks: is every member ready for the leader's mode? then queue the party
+local function checkParty(pid)
+	local st = readyState[pid]
+	if not st then return end
+	for _, p in Players:GetPlayers() do
+		if p:GetAttribute("PartyId") == pid and p:GetAttribute("PartyLeader") == p.UserId then
+			if p:GetAttribute("Queued") then return end
+			local party = Party.Get(p)
+			local mode = st[tostring(p.UserId)]
+			if not party or not mode then return end
+			for _, m in party.members do
+				if st[tostring(m.id)] ~= mode then return end
+			end
+			setQueue(p, true, mode)
+			return
+		end
+	end
+end
+local function applyReady(pid, uid, mode, clearAll)
+	if clearAll then readyState[pid] = nil else
+		readyState[pid] = readyState[pid] or {}
+		readyState[pid][tostring(uid)] = mode
+	end
+	pushReady(pid)
+	if not clearAll then checkParty(pid) end
+end
+clearReady = function(pid)
+	applyReady(pid, nil, nil, true)
+	publish("PartyReady", { pid = pid, clear = true })
+end
+pcall(function()
+	MessagingService:SubscribeAsync("PartyReady", function(msg)
+		local d = msg.Data
+		if type(d) ~= "table" or type(d.pid) ~= "string" then return end
+		applyReady(d.pid, d.uid, d.mode, d.clear)
+	end)
+end)
+ReadyR.OnServerEvent:Connect(function(player, modeId)
+	if os.clock() - (lastReady[player] or 0) < 0.35 then return end
+	lastReady[player] = os.clock()
+	if modeId ~= nil then modeId = (modeId == "1v1") and "1v1" or "breakline" end
+	local party, pid = Party.Get(player)
+	if not party then
+		-- solo: READY UP = search now, READY again (nil) = cancel
+		if modeId and player:GetAttribute("Queued") and player:GetAttribute("QueuedMode") ~= modeId then setQueue(player, false) end
+		setQueue(player, modeId ~= nil, modeId)
+		return
+	end
+	if player:GetAttribute("Queued") then
+		-- anybody in a searching party can stop the search (that also clears every ready)
+		if modeId == nil then
+			local leaderP = Players:GetPlayerByUserId(party.leader)
+			if leaderP then setQueue(leaderP, false) else
+				pcall(function() queue:RemoveAsync(pid) end)
+				local ids = {}
+				for _, m in party.members do table.insert(ids, m.id) end
+				setQueued(ids, false)
+				publish("QueueState", { ids = ids, on = false })
+				clearReady(pid)
+			end
+		end
+		return
+	end
+	if modeId and #party.members > (MODE_SIZE[modeId] or 1) then
+		Party.Notice(player, modeId == "1v1" and "1v1 is solo only. Leave your party to queue for it." or "Your party is bigger than a team.")
+		return
+	end
+	if modeId and Profiles.Get(player, "StarterDone") ~= true then Party.Notice(player, "Pick your starting gear first.") return end
+	applyReady(pid, player.UserId, modeId)
+	publish("PartyReady", { pid = pid, uid = player.UserId, mode = modeId })
+end)
+-- a party that changes (somebody joins / leaves / a new leader) starts the ready check again
+for _, p in Players:GetPlayers() do p:SetAttribute("PartyReadyJson", nil) end
+Players.PlayerAdded:Connect(function(p)
+	p:GetAttributeChangedSignal("PartyMembers"):Connect(function()
+		local pid = p:GetAttribute("PartyId")
+		if pid and readyState[pid] then
+			-- forget the ready of anybody who is no longer in the party
+			local raw = p:GetAttribute("PartyMembers")
+			local okJ, list = pcall(HttpService.JSONDecode, HttpService, raw or "[]")
+			if okJ and type(list) == "table" then
+				local keep = {}
+				for _, m in list do keep[tostring(m.id)] = true end
+				for uid in readyState[pid] do if not keep[uid] then readyState[pid][uid] = nil end end
+			end
+			pushReady(pid)
+		elseif not pid then
+			p:SetAttribute("PartyReadyJson", nil)
+		else
+			pushReady(pid)
+		end
 	end)
 end)
 
@@ -327,6 +446,7 @@ end)
 -- leaving the lobby while queued (not teleporting) cancels the search
 Players.PlayerRemoving:Connect(function(player)
 	lastQueue[player] = nil
+	lastReady[player] = nil
 	local key = queuedKey[player.UserId]
 	if key and not player:GetAttribute("Teleporting") then
 		pcall(function() queue:RemoveAsync(key) end)
