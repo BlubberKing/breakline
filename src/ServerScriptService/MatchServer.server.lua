@@ -77,7 +77,7 @@ local function listMaps(folder)
 	return out
 end
 
-local MAP_NAME, loadedMap = "", nil
+local MAP_NAME, MAP_IMAGE, loadedMap = "", "", nil
 do
 	local folder = findModeFolder(MODE)
 	local maps = folder and listMaps(folder) or {}
@@ -86,6 +86,17 @@ do
 		loadedMap = pick:Clone()
 		loadedMap.Parent = workspace
 		MAP_NAME = string.sub(pick.Name, 1, #pick.Name - #C.MAPS.Suffix):gsub("_", " ")
+		-- v5.8: display name + loading picture (folder attributes DisplayName / LoadingImage win over MatchConfig.MAPS.Info.<key>)
+		local key = string.lower(string.sub(pick.Name, 1, #pick.Name - #C.MAPS.Suffix))
+		local info = (C.MAPS.Info and C.MAPS.Info[key]) or {}
+		local dn = pick:GetAttribute("DisplayName")
+		if type(dn) == "string" and dn ~= "" then MAP_NAME = dn elseif type(info.Name) == "string" and info.Name ~= "" then MAP_NAME = info.Name end
+		local img = pick:GetAttribute("LoadingImage")
+		if type(img) ~= "string" or img == "" then img = info.Image end
+		if type(img) == "string" and img ~= "" then
+			if tonumber(img) then img = "rbxassetid://" .. img end -- a bare number works too
+			if img ~= "rbxassetid://0" then MAP_IMAGE = img end
+		end
 		print(("[MatchServer] mode %s: loaded map '%s' (1 of %d)"):format(MODE, pick.Name, #maps))
 	else
 		warn(("[MatchServer] no maps for mode %s - put folders named like 'test_map' inside ServerStorage > %s. Falling back to a MapBounds part in Workspace."):format(
@@ -159,7 +170,8 @@ remotes.Parent = RS
 local stateFolder = Instance.new("Folder")
 stateFolder.Name = "MatchState"
 stateFolder:SetAttribute("Mode", MODE)
-stateFolder:SetAttribute("MapName", MAP_NAME) -- v5: shown under the clock on the loadout screen
+stateFolder:SetAttribute("MapName", MAP_NAME) -- v5: shown under the clock on the loadout screen (v5.8: + big on the loading screen)
+stateFolder:SetAttribute("MapImage", MAP_IMAGE) -- v5.8: the map's loading picture ("" = none yet), shown full screen by LoadingScreen
 stateFolder:SetAttribute("KillsA", 0)
 stateFolder:SetAttribute("KillsB", 0)
 stateFolder:SetAttribute("KillsToWin", C.V1.KillsToWin)
