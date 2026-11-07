@@ -65,18 +65,18 @@ C.SOUL = {
 C.MAPS = {
 	Folders = { Breakline = "breaklineMaps", ["1v1"] = "1v1Maps" }, -- mode -> folder name (matched ignoring upper / lower case)
 	Suffix = "_map",                                                -- a map folder's name ends with this
-	StudioMode = "Breakline",                                       -- the mode used when you press Play in Studio (live servers get it from the lobby queue)
+	StudioMode = "1v1",                                       -- the mode used when you press Play in Studio (live servers get it from the lobby queue)
 	-- v5.8: per-map LOADING ART + display name. Key = the map folder's name without "_map", lower case (test_map -> test).
 	--   Name  = the name shown big on the loading screen + under the loadout clock (empty = made from the folder name: test_map -> TEST).
 	--   Image = the uploaded loading picture (rbxassetid://<number>). "" or rbxassetid://0 = no picture yet (dark screen with the name).
 	-- A map folder can also carry its own attributes instead: DisplayName (string) and LoadingImage (string). Those win over this table.
 	-- The same map name works in both mode folders (a test_map in breaklineMaps AND in 1v1Maps both use Info.test).
 	Info = {
-		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://121711179092477" }, -- PASTE the uploaded LoadingArt_TestingGrounds image id here
+		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://104422781839537" }, -- PASTE the uploaded LoadingArt_TestingGrounds image id here
 	},
 	-- v5.9: the watercolor wash texture laid over the 3D fly-through of the map during the Warp (tileable, upload WarpWash.png).
 	-- "" = no texture (the fly-through still works: plain translucent washes + ink edges).
-	WashTexture = "",
+	WashTexture = "118362641868482",
 }
 
 -- ===== v4.1 modes =====
