@@ -1,3 +1,4 @@
+-- CardIndex v1.5 (v5.12: the (?) DECK RULES button is just a ring now - no grey fill - with a bigger, centred question mark)
 -- CardIndex v1.4 (v5.9: clear BACK / CLOSE buttons, no filler line under DECK) (v1.3 v4.9b: the collection grid really uses static cards now - it built fresh ANIMATED cards before, which was the lag - and baked sprite-sheet cards when CardArt.SHEETS is filled in) (was v1.2 v4.9: PERFORMANCE - only the cards on screen exist. Collection cells are filled when they scroll into view and emptied when they leave, card art comes from a shared template cache (CardArt) and the deck minis are built the same way, so hundreds of cards stay smooth even on a tablet) (was v1.1 v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
 -- (was v1.0) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.3 (GDD section 4.1).
 -- The CARD INDEX page: your card collection on the left, your 32-card DECK on the right.
@@ -168,11 +169,21 @@ local function autoLbl(text, size, font, color, order)
 end
 autoLbl("/", 34, "HM", C.mute, 2)
 autoLbl("CARD INDEX", 44, "H", C.text, 3)
-local helpBtn = new("TextButton", { Text = "?", TextSize = 22, FontFace = FONTS.H, TextColor3 = C.text, AutoButtonColor = false, BackgroundColor3 = C.panel2,
-	BorderSizePixel = 0, Size = UDim2.fromOffset(38, 38), LayoutOrder = 4 }, header)
+-- v5.12: just the ring (no grey fill behind it) and a bigger question mark, centred on its own label (Oswald's "?" sat high and to one side)
+local helpBtn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.red, BackgroundTransparency = 1,
+	BorderSizePixel = 0, Size = UDim2.fromOffset(40, 40), LayoutOrder = 4 }, header)
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, helpBtn)
-local helpStroke = border(helpBtn, C.line2, 1.5)
-hoverable(helpBtn, C.panel2, C.red, helpStroke, C.line2, C.redHi)
+local helpStroke = new("UIStroke", { Color = C.line2, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, helpBtn)
+new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 1), Size = UDim2.fromScale(1, 1),
+	Text = "?", TextSize = 28, FontFace = FONTS.BB, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center }, helpBtn)
+helpBtn.MouseEnter:Connect(function()
+	tween(helpBtn, FAST, { BackgroundTransparency = 0 })
+	tween(helpStroke, FAST, { Color = C.redHi })
+end)
+helpBtn.MouseLeave:Connect(function()
+	tween(helpBtn, FAST, { BackgroundTransparency = 1 })
+	tween(helpStroke, FAST, { Color = C.line2 })
+end)
 autoLbl("DECK RULES", 11, "MB", C.mute, 5)
 local backBtn = UI.CloseButton(cv, "BACK", { Position = UDim2.fromOffset(RIGHT - 152, 34) }) -- v5.9: clear BACK button
 frame(cv, 56, 98, RIGHT - 56, 1, C.line, 0)
