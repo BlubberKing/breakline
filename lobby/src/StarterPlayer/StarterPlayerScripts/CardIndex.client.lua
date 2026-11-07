@@ -1,4 +1,4 @@
--- CardIndex v1.3 (v4.9b: the collection grid really uses static cards now - it built fresh ANIMATED cards before, which was the lag - and baked sprite-sheet cards when CardArt.SHEETS is filled in) (was v1.2 v4.9: PERFORMANCE - only the cards on screen exist. Collection cells are filled when they scroll into view and emptied when they leave, card art comes from a shared template cache (CardArt) and the deck minis are built the same way, so hundreds of cards stay smooth even on a tablet) (was v1.1 v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
+-- CardIndex v1.4 (v5.9: clear BACK / CLOSE buttons, no filler line under DECK) (v1.3 v4.9b: the collection grid really uses static cards now - it built fresh ANIMATED cards before, which was the lag - and baked sprite-sheet cards when CardArt.SHEETS is filled in) (was v1.2 v4.9: PERFORMANCE - only the cards on screen exist. Collection cells are filled when they scroll into view and emptied when they leave, card art comes from a shared template cache (CardArt) and the deck minis are built the same way, so hundreds of cards stay smooth even on a tablet) (was v1.1 v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
 -- (was v1.0) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.3 (GDD section 4.1).
 -- The CARD INDEX page: your card collection on the left, your 32-card DECK on the right.
 -- Opened by the CARD INDEX buttons in LobbyClient (they set the Player attribute CardIndexOpen = true). ESC / BACK closes it.
@@ -85,13 +85,7 @@ local function button(parent, text, x, y, w, h, kind, size)
 	hoverable(b, bg, bgHot, st, kind == "danger" and C.redDeep or C.line, kind == "danger" and C.red or C.line2)
 	return b
 end
-local function keyHint(parent, key, text, x, y)
-	local kw = math.max(30, #key * 8 + 16)
-	local k = frame(parent, x, y, kw, 24, C.panel2, 0)
-	border(k, C.line2, 1)
-	lbl(k, key, 12, 0, 0, kw, 24, C.text, "MB", Enum.TextXAlignment.Center)
-	return lbl(parent, text, 16, x + kw + 8, y, 160, 24, C.dim, "HM")
-end
+-- (v5.9: the ESC key-cap hint was replaced by UIKit.CloseButton)
 local function diamond(parent, cx, cy, s, col)
 	return new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, cy), Size = UDim2.fromOffset(s, s), Rotation = 45,
 		BackgroundColor3 = col, BorderSizePixel = 0 }, parent)
@@ -180,11 +174,7 @@ new("UICorner", { CornerRadius = UDim.new(1, 0) }, helpBtn)
 local helpStroke = border(helpBtn, C.line2, 1.5)
 hoverable(helpBtn, C.panel2, C.red, helpStroke, C.line2, C.redHi)
 autoLbl("DECK RULES", 11, "MB", C.mute, 5)
-local backBtn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(1752, 40), Size = UDim2.fromOffset(112, 36) }, cv)
-local backLbl = keyHint(backBtn, "ESC", "BACK", 0, 6)
-backBtn.MouseEnter:Connect(function() tween(backLbl, FAST, { TextColor3 = C.text }) end)
-backBtn.MouseLeave:Connect(function() tween(backLbl, FAST, { TextColor3 = C.dim }) end)
-grow(backBtn, 1.05)
+local backBtn = UI.CloseButton(cv, "BACK", { Position = UDim2.fromOffset(RIGHT - 152, 34) }) -- v5.9: clear BACK button
 frame(cv, 56, 98, RIGHT - 56, 1, C.line, 0)
 
 -- toast
@@ -423,7 +413,7 @@ local deckP = frame(cv, DX, DY, DW, DH, C.bg, 0.12)
 border(deckP, C.line, 1)
 frame(deckP, 0, 0, DW, 3, C.red, 0)
 lbl(deckP, "DECK", 24, 20, 12, 200, 32, C.text, "H")
-lbl(deckP, "YOUR CARD POOL  //  3 ROLL OUT AT THE START OF EVERY MATCH", 11, 20, 46, DW - 40, 14, C.dim, "M")
+-- v5.9: the explainer line under DECK is gone
 local countBig = lbl(deckP, "32", 72, 18, 66, 110, 80, C.text, "H")
 local countOf = lbl(deckP, "/ 32", 30, 120, 96, 90, 40, C.mute, "HM")
 local status = frame(deckP, DW - 230, 88, 210, 34, C.panel2, 0)
@@ -577,8 +567,7 @@ lbl(ip, "RIGHT CLICK A CARD IN THE COLLECTION TO TAKE ONE OUT QUICKLY", 11, 560,
 local ipPrev = button(ip, "<", 560, 600, 58, 48, "ghost", 26)
 local ipNext = button(ip, ">", 630, 600, 58, 48, "ghost", 26)
 lbl(ip, "BROWSE", 11, 700, 617, 200, 14, C.mute, "MB")
-local ipClose = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(1110, 24), Size = UDim2.fromOffset(130, 30) }, ip)
-keyHint(ipClose, "ESC", "CLOSE", 0, 3)
+local ipClose = UI.CloseButton(ip, "CLOSE", { Position = UDim2.fromOffset(1088, 22) }) -- v5.9
 local ipCard, ipId, ipToken = nil, nil, 0
 local ipBlock = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, ip) -- clicks on the panel do not close it
 
@@ -652,9 +641,7 @@ border(rp, C.line2, 1)
 frame(rp, 0, 0, 920, 3, C.red, 0)
 new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, rp)
 lbl(rp, "DECK RULES", 40, 36, 24, 500, 50, C.text, "H")
-lbl(rp, "HOW THE CARD SYSTEM WORKS", 11, 38, 76, 500, 14, C.dim, "M")
-local rClose = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(770, 30), Size = UDim2.fromOffset(130, 30) }, rp)
-keyHint(rClose, "ESC", "CLOSE", 0, 3)
+local rClose = UI.CloseButton(rp, "CLOSE", { Position = UDim2.fromOffset(920 - 36 - 152, 28) }) -- v5.9
 frame(rp, 36, 104, 848, 1, C.line, 0)
 for i, text in Cards.RULES do
 	local y = 124 + (i - 1) * 54
