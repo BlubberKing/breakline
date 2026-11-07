@@ -1,15 +1,18 @@
--- UIKit (ModuleScript in ReplicatedStorage) - BOTH games (v3.7). Keep the two copies identical (Breakline is the master).
+-- UIKit v5.10 (ModuleScript in ReplicatedStorage) - BOTH games. Keep the two copies identical (Breakline is the master).
+-- v5.10: NEW SoulIcon (a little ghost / soul with a glow + a glimmer - it used to be a plain diamond), NEW EssenceIcon (a faceted purple gem with a glimmer),
+--        UIKit.LoadImage (loads a picture and falls back to a thumbnail link when the direct asset does not show - the black loading picture bug).
 -- Breakline: LoadingScreen (ReplicatedFirst) + MatchFlow. Lobby: LobbyLoading (ReplicatedFirst) + LobbyClient (logo).
 -- Shared look (same colors + fonts as the lobby "CLEAN" UI) and a few small builders.
 --   UIKit.C / UIKit.F                      colors / fonts
 --   UIKit.new(class, props, parent)        make an Instance
 --   UIKit.tween(inst, tweenInfo, goal)     play a tween, returns it
---   UIKit.SoulIcon(parent, size)           the faceted blue soul crystal
+--   UIKit.SoulIcon(parent, size)           v5.10: the soul = a small glowing ghost with a scalloped hem, eyes and a glimmer
+--   UIKit.LoadImage(label, url, timeout)   v5.10: sets label.Image, waits until it really loaded, tries a thumbnail link next. Yields. Returns the url that worked or nil.
 --   UIKit.Logo(parent, size, props, mode)  v3.7 logo: slim spaced BREAK / LINE, red slash with light flowing through it.
 --                                          mode "left" (corner logos) or "center" (loading screens: intro / outro). Returns holder, api
 --   UIKit.FitViewport(vp, cam, root, dir, opts)  v5.9: frames a model in a ViewportFrame so it fills the frame without being cropped,
 --                                          centred on what you actually SEE (visible parts only) and re-fitted when the frame changes size.
---   UIKit.EssenceIcon(parent, size)        v5.9: the purple Essence glimmers (three small four-point sparkles)
+--   UIKit.EssenceIcon(parent, size)        v5.10: the purple Essence = a faceted gem (crown + pavilion) with a glimmer
 --   UIKit.CloseButton(parent, text, props) v5.9: the top-right BACK / CLOSE button of every menu: framed, an X mark, the word, an ESC cap.
 --                                          props = Position / AnchorPoint / ZIndex ... Returns the TextButton (connect MouseButton1Click).
 local TweenService = game:GetService("TweenService")
@@ -52,18 +55,84 @@ function K.tween(inst, info, goal)
 	return t
 end
 
--- ===== soul crystal =====
+-- ===== soul (v5.10): a little ghost =====
+-- A glowing soul with a rounded head, a body that ends in a scalloped hem, two eyes, a soft halo and a small glimmer. Built from circles + rectangles only,
+-- so it stays crisp at any size. Colours go from pale at the head to the soul blue at the hem.
+local function circle(parent, cx, cy, d, color, transp, z)
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.Position = UDim2.fromScale(cx, cy)
+	f.Size = UDim2.fromScale(d, d)
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = transp or 0
+	f.BorderSizePixel = 0
+	f.ZIndex = z or 1
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(1, 0)
+	c.Parent = f
+	f.Parent = parent
+	return f
+end
 function K.SoulIcon(parent, size)
 	local C = K.C
 	local h = new("Frame", { Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1 }, parent)
-	local d = math.floor(size * 0.68)
-	local outer = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(d, d),
-		Rotation = 45, BackgroundColor3 = C.soul, BackgroundTransparency = 0.82, BorderSizePixel = 0 }, h)
-	new("UIStroke", { Color = C.soul, Thickness = math.max(1.5, size * 0.07), ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, outer)
-	local inner = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(math.floor(d * 0.46), math.floor(d * 0.46)), Rotation = 45, BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, h)
-	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(C.soulPale, C.soul) }, inner)
+	circle(h, 0.5, 0.52, 1.0, C.soul, 0.9, 1)                                   -- outer halo
+	circle(h, 0.5, 0.5, 0.78, C.soul, 0.8, 1)                                   -- inner halo
+	local g = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Rotation = -7, ZIndex = 2 }, h) -- the ghost leans a little
+	local top, mid, low = C.soulPale, C.soulPale:Lerp(C.soul, 0.35), C.soulPale:Lerp(C.soul, 0.7)
+	local head = circle(g, 0.5, 0.34, 0.56, top, 0, 2)
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(top, mid) }, head)
+	local body = new("Frame", { Position = UDim2.fromScale(0.22, 0.34), Size = UDim2.fromScale(0.56, 0.4), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 2 }, g)
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(mid, low) }, body)
+	for _, x in { 0.3, 0.5, 0.7 } do circle(g, x, 0.74, 0.19, low, 0, 2) end   -- scalloped hem
+	local eye = Color3.fromRGB(18, 42, 78)
+	for _, sx in { -1, 1 } do
+		local e = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5 + sx * 0.1, 0.37), Size = UDim2.fromScale(0.095, 0.14),
+			BackgroundColor3 = eye, BorderSizePixel = 0, ZIndex = 3 }, g)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, e)
+		circle(g, 0.5 + sx * 0.1 + 0.014, 0.335, 0.035, Color3.new(1, 1, 1), 0, 4) -- eye highlight
+	end
+	local mouth = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(0.08, 0.1),
+		BackgroundColor3 = eye, BackgroundTransparency = 0.25, BorderSizePixel = 0, ZIndex = 3 }, g)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, mouth)
+	-- a small four-point glimmer at the top right
+	for _, rot in { 0, 90 } do
+		local arm = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.86, 0.14), Size = UDim2.fromScale(0.06, 0.26),
+			Rotation = rot, BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 4 }, h)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, arm)
+		new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.8), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 0.8) }) }, arm)
+	end
 	return h
+end
+
+-- ===== v5.10: robust picture loading =====
+-- Some uploads show black in an ImageLabel (the asset has not finished, the experience may not use that asset, a decal id instead of the image id ...).
+-- LoadImage sets the Image, waits until the label really reports IsLoaded, and if it does not, tries a thumbnail link of the same asset id (works for any
+-- public, moderated asset). Yields up to `timeout` seconds PER source. Returns the url that worked (so other screens can reuse it), or nil.
+function K.LoadImage(label, url, timeout)
+	local CP = game:GetService("ContentProvider")
+	timeout = timeout or 5
+	url = tostring(url or "")
+	if url == "" then return nil end
+	if tonumber(url) then url = "rbxassetid://" .. url end
+	local list = { url }
+	local id = url:match("(%d%d%d%d%d+)")
+	if id then
+		table.insert(list, ("rbxthumb://type=Asset&id=%s&w=768&h=432"):format(id))
+		table.insert(list, ("rbxthumb://type=Asset&id=%s&w=420&h=420"):format(id))
+	end
+	for i, src in list do
+		label.Image = src
+		task.spawn(function() pcall(function() CP:PreloadAsync({ label }) end) end)
+		local t0 = os.clock()
+		while not label.IsLoaded and os.clock() - t0 < timeout do task.wait(0.05) end
+		if label.IsLoaded then
+			if i > 1 then warn(("[Breakline] picture %s did not load directly - using the thumbnail link %s instead"):format(url, src)) end
+			return src
+		end
+		warn(("[Breakline] picture %s did not load within %.0f s"):format(src, timeout))
+	end
+	return nil
 end
 
 -- ===== v5.9: fit a model into a ViewportFrame =====
@@ -126,29 +195,40 @@ function K.FitViewport(vp, cam, root, dir, opts)
 	vp:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
 end
 
--- ===== v5.9: Essence icon (premium currency): three purple four-point glimmers, one big + two small =====
+-- ===== Essence icon (premium currency, v5.10): a faceted purple gem =====
+-- Crown (the flat top, lighter) + pavilion (the point, darker) are two big diamonds clipped to a band each, with a girdle line, a table highlight, one centre
+-- facet line and a glimmer. Diamonds are rotated squares; their gradients are turned 45 degrees so they still run top to bottom.
 K.C.essence = rgb(176, 108, 255)
 K.C.essencePale = rgb(232, 210, 255)
 function K.EssenceIcon(parent, size)
 	local C = K.C
 	local h = new("Frame", { Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1 }, parent)
-	-- one glimmer = two thin rounded arms crossing (vertical + horizontal), bright in the middle and fading to the tips, with a pale core
-	local function glimmer(cx, cy, s)
-		local kp = ColorSequenceKeypoint.new
-		local tp = NumberSequenceKeypoint.new
-		for _, rot in { 0, 90 } do
-			local arm = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(cx, cy), Size = UDim2.fromOffset(math.max(2, math.floor(s * 0.2)), math.floor(s)),
-				Rotation = rot, BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, h)
-			new("UICorner", { CornerRadius = UDim.new(1, 0) }, arm)
-			new("UIGradient", { Rotation = 90, Color = ColorSequence.new({ kp(0, C.essence), kp(0.5, C.essencePale), kp(1, C.essence) }),
-				Transparency = NumberSequence.new({ tp(0, 0.75), tp(0.3, 0.15), tp(0.5, 0), tp(0.7, 0.15), tp(1, 0.75) }) }, arm)
-		end
-		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(cx, cy), Size = UDim2.fromOffset(math.max(2, math.floor(s * 0.26)), math.max(2, math.floor(s * 0.26))),
-			Rotation = 45, BackgroundColor3 = C.essencePale, BorderSizePixel = 0 }, h)
+	circle(h, 0.5, 0.5, 1.0, C.essence, 0.88, 1)                                  -- soft glow
+	local R = 0.4 * size                                                          -- half diagonal of the gem
+	local side = R * 1.4142
+	local function diamond(clip, cy, sideLen, c1, c2, transp)
+		local d = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(size * 0.5, cy), Size = UDim2.fromOffset(sideLen, sideLen),
+			Rotation = 45, BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = transp or 0, BorderSizePixel = 0, ZIndex = 2 }, clip)
+		new("UIGradient", { Rotation = 45, Color = ColorSequence.new(c1, c2) }, d)
+		return d
 	end
-	glimmer(0.42, 0.56, size * 0.78)
-	glimmer(0.8, 0.24, size * 0.4)
-	glimmer(0.16, 0.18, size * 0.3)
+	local crownTop = 0.17 * size
+	local girdle = 0.42 * size
+	local crown = new("Frame", { Position = UDim2.fromOffset(0, crownTop), Size = UDim2.fromOffset(size, girdle - crownTop), BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 2 }, h)
+	diamond(crown, girdle - crownTop, side, C.essencePale, C.essence)             -- crown: pale at the top
+	diamond(crown, girdle - crownTop, side * 0.5, Color3.new(1, 1, 1), C.essencePale, 0.45) -- table highlight
+	local pav = new("Frame", { Position = UDim2.fromOffset(0, girdle), Size = UDim2.fromOffset(size, size * 0.5), BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 2 }, h)
+	diamond(pav, 0, side, C.essence, rgb(84, 40, 168))                            -- pavilion: violet down to deep purple
+	new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(size * 0.5, girdle), Size = UDim2.fromOffset(math.max(1, size * 0.03), R * 0.95), -- centre facet line
+		BackgroundColor3 = C.essencePale, BackgroundTransparency = 0.55, BorderSizePixel = 0, ZIndex = 3 }, h)
+	new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(size * 0.5, girdle), Size = UDim2.fromOffset(size * 0.8, math.max(1, size * 0.035)), -- girdle
+		BackgroundColor3 = C.essencePale, BackgroundTransparency = 0.25, BorderSizePixel = 0, ZIndex = 3 }, h)
+	for _, rot in { 0, 90 } do                                                    -- glimmer, top right
+		local arm = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.84, 0.16), Size = UDim2.fromScale(0.06, 0.26), Rotation = rot,
+			BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 4 }, h)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, arm)
+		new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.8), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 0.8) }) }, arm)
+	end
 	return h
 end
 
