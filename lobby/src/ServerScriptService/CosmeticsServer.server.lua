@@ -1,4 +1,7 @@
--- CosmeticsServer v1 (Script in ServerScriptService) - LOBBY place only. NEW in v5.10.
+-- CosmeticsServer v2 (Script in ServerScriptService) - LOBBY place only. NEW in v5.10.
+-- v5.11: player card BANNERS can be bought (Buy("banner", id)) and the PLAYER CARD is saved here:
+--     Equip("card", bannerId)              background of your lobby player card (must be free or owned)
+--     Equip("show", slot 1..3, value)      a showcase slot: "skin:<Skins id>" / "gun:<GunSkins id>" / "card:<Cards id>" (must be owned) or "" = empty
 -- BUYING + EQUIPPING for the cosmetics shop / locker. The client only ASKS; everything is checked here.
 --   Remotes (made here, folder ReplicatedStorage.CosmeticsRemotes, both RemoteFunctions):
 --     Buy(kind, id)            kind = "skin" (a player skin edition) | "gun" (a gun skin).  -> ok, message
@@ -15,6 +18,8 @@ local Cat = require(RS:WaitForChild("CosmeticsCatalog"))
 local Skins = require(RS:WaitForChild("Skins"))
 local GunSkins = require(RS:WaitForChild("GunSkins"))
 local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
+local PlayerCards = require(RS:WaitForChild("PlayerCards")) -- v5.11
+local Cards = require(RS:WaitForChild("Cards"))
 
 local folder = RS:FindFirstChild("CosmeticsRemotes") or Instance.new("Folder")
 folder.Name = "CosmeticsRemotes"
@@ -40,11 +45,12 @@ BuyR.OnServerInvoke = function(player, kind, id)
 	if busy[player] then return false, "One moment." end
 	if os.clock() - (lastCall[player] or 0) < 0.4 then return false, "Slow down." end
 	lastCall[player] = os.clock()
-	if (kind ~= "skin" and kind ~= "gun") or type(id) ~= "string" then return false, "Unknown item." end
+	if (kind ~= "skin" and kind ~= "gun" and kind ~= "banner") or type(id) ~= "string" then return false, "Unknown item." end
 	local item = Cat.Find(kind, id)
 	if not item or not item.currency then return false, "That item is not for sale." end
 	if not loaded(player) then return false, "Your data is still loading." end
-	local owned = (kind == "skin") and Cat.OwnsSkin(player, id) or Cat.OwnsGunSkin(player, id)
+	local owned
+	if kind == "skin" then owned = Cat.OwnsSkin(player, id) elseif kind == "gun" then owned = Cat.OwnsGunSkin(player, id) else owned = Cat.OwnsBanner(player, id) end
 	if owned then return false, "You already own this." end
 
 	busy[player] = true
@@ -58,9 +64,9 @@ BuyR.OnServerInvoke = function(player, kind, id)
 			if (player:GetAttribute("Essence") or 0) < item.amount then ok, msg = false, "Not enough essence." return end
 			if not Profiles.SpendEssence(player, item.amount) then ok, msg = false, "Not enough essence." return end -- saved to the DataStore before it returns true
 		end
-		appendOwned(player, kind == "skin" and "SkinsOwned" or "GunSkinsOwned", id)
+		appendOwned(player, (kind == "skin" and "SkinsOwned") or (kind == "gun" and "GunSkinsOwned") or "BannersOwned", id)
 		task.spawn(Profiles.Save, player) -- written right away, so a crash or a teleport can never lose a purchase
-		ok, msg = true, "Bought " .. item.name .. (item.sub and ("  -  " .. item.sub) or "") .. "."
+		ok, msg = true, "Bought " .. item.name .. "."
 	end)
 	busy[player] = nil
 	if not done then warn("[CosmeticsServer] purchase error:", err) return false, "Could not complete the purchase." end
@@ -94,6 +100,38 @@ EquipR.OnServerInvoke = function(player, kind, id, gunId)
 		Profiles.Set(player, "GunSkinEquipped", map)
 		task.spawn(Profiles.Save, player)
 		return true, s.name .. " is on your " .. s.gunName .. "."
+	elseif kind == "card" then -- v5.11: player card background
+		if not PlayerCards.Is(id) then return false, "Unknown background." end
+		if not Cat.OwnsBanner(player, id) then return false, "You do not own this background." end
+		local pc = table.clone(Profiles.Get(player, "PlayerCard") or {})
+		pc.bg = id
+		Profiles.Set(player, "PlayerCard", pc)
+		task.spawn(Profiles.Save, player)
+		return true, "Background set."
+	elseif kind == "show" then -- v5.11: showcase slot. id = slot number, gunId = the value
+		local slot, value = tonumber(id), gunId
+		if not slot or slot < 1 or slot > 3 or slot % 1 ~= 0 then return false, "Unknown slot." end
+		if type(value) ~= "string" then return false, "Unknown item." end
+		if value ~= "" then
+			local k, iid = PlayerCards.Parse(value)
+			local okOwn = false
+			if k == "skin" then okOwn = Cat.OwnsSkin(player, iid)
+			elseif k == "gun" then okOwn = Cat.OwnsGunSkin(player, iid)
+			elseif k == "card" then
+				local col = Cards.Collection(Profiles.Get(player, "Cards"))
+				okOwn = Cards.Is(iid) and (col[iid] or 0) > 0
+			end
+			if not okOwn then return false, "You do not own that." end
+		end
+		local pc = table.clone(Profiles.Get(player, "PlayerCard") or {})
+		local show = type(pc.show) == "table" and table.clone(pc.show) or {}
+		for i = 1, 3 do if type(show[i]) ~= "string" then show[i] = "" end end
+		if value ~= "" then for i = 1, 3 do if show[i] == value then show[i] = "" end end end -- the same item never shows twice
+		show[slot] = value
+		pc.show = show
+		Profiles.Set(player, "PlayerCard", pc)
+		task.spawn(Profiles.Save, player)
+		return true, "Showcase updated."
 	end
 	return false, "Unknown request."
 end
@@ -112,6 +150,12 @@ Players.PlayerAdded:Connect(function(p)
 		if changed then Profiles.Set(p, "GunSkinEquipped", clean) end
 		local worn = Profiles.Get(p, "Skin")
 		if type(worn) == "string" and not Cat.OwnsSkin(p, worn) then Profiles.Set(p, "Skin", Skins.Default) end -- (an edition that is not owned falls back to OPERATOR)
+		-- v5.11: make sure everybody has a PlayerCard table (mirrored as PlayerCardJson) and the background is still theirs
+		local pc = Profiles.Get(p, "PlayerCard")
+		pc = type(pc) == "table" and table.clone(pc) or {}
+		if not Cat.OwnsBanner(p, pc.bg) then pc.bg = PlayerCards.Default end
+		if type(pc.show) ~= "table" then pc.show = { "", "", "" } end
+		Profiles.Set(p, "PlayerCard", pc)
 	end)
 end)
 
