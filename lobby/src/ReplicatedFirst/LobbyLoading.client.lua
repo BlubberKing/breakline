@@ -1,3 +1,5 @@
+-- LobbyLoading v1.2 (v5.10: the progress bar is CENTRED under the logo - it grows from the middle outwards and has a visible track (it used to fill from the left over an almost
+--   invisible track, so it looked shifted left), and the logo is nudged so the middle of the words BREAK / LINE (not the slash) sits on the screen centre, right above the bar)
 -- LobbyLoading v1.1 (v3.9: smooth, fully faded exit - no black sliver) (LocalScript in ReplicatedFirst) - LOBBY place only. NEW in GDD v3.7.
 -- Loading screen shown when you join the lobby (first join or coming back from a match):
 --   * black screen; BREAK flies in from the left, LINE from the right, they meet in the middle and the red slash draws in
@@ -86,9 +88,10 @@ local function door(side) -- side = -1 left half, 1 right half
 	g.Parent = f
 	return f
 end
+local seam, placeDoors -- the door seam (nudged together with the logo) + the function that places the doors
 local doorL, doorR = door(-1), door(1)
-local seam = Vector2.new(0, logoY) -- seam centre, offset from the screen centre (moved onto the slash once the logo has a layout)
-local function placeDoors(extra)
+seam = Vector2.new(0, logoY) -- seam centre, offset from the screen centre (moved onto the slash once the logo has a layout)
+function placeDoors(extra)
 	extra = extra or 0
 	local cL = seam - N * (PW / 2 + extra)
 	local cR = seam + N * (PW / 2 + extra)
@@ -105,17 +108,33 @@ local label = UI.new("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position 
 	FontFace = F.M, TextColor3 = C.dim, TextTransparency = 1, ZIndex = 6 }, root)
 local barW = math.clamp(math.floor(vh * 0.32), 180, 380)
 local bar = UI.new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, logoY + math.floor(logoSize * 0.95) + 40),
-	Size = UDim2.fromOffset(barW, 2), BackgroundColor3 = C.line, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 6 }, root)
-local fill = UI.new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = C.red, BorderSizePixel = 0, ZIndex = 7 }, bar)
+	Size = UDim2.fromOffset(barW, 3), BackgroundColor3 = C.line2, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 6 }, root)
+-- the fill grows from the MIDDLE of the track (anchored at its centre), so the lit part is always centred under the logo
+local fill = UI.new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0), Size = UDim2.fromScale(0, 1), BackgroundColor3 = C.red, BorderSizePixel = 0, ZIndex = 7 }, bar)
 local step = UI.new("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, logoY + math.floor(logoSize * 0.95) + 50),
 	Size = UDim2.fromOffset(400, 18), BackgroundTransparency = 1, Text = "", TextSize = math.clamp(math.floor(vh * 0.012), 10, 14),
 	FontFace = F.M, TextColor3 = C.mute, TextTransparency = 1, ZIndex = 6 }, root)
 
 task.spawn(function()
+	TweenService:Create(bar, TweenInfo.new(0.5), { BackgroundTransparency = 0.35 }):Play() -- the track is there from the start
 	logoApi.intro(1.3)
 	TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
-	TweenService:Create(bar, TweenInfo.new(0.3), { BackgroundTransparency = 0 }):Play()
 	TweenService:Create(step, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
+	-- v5.10: the words are done flying in. BREAK is longer than LINE, so the slash sits left of the middle of the whole logo: move the logo so the
+	-- middle of the WORDS is on the screen centre (exactly above the bar + the text), and take the door seam along with it.
+	local l, r = logoApi.left, logoApi.right
+	if l.Parent and r.Parent and root.AbsoluteSize.X > 0 then
+		local words = ((l.AbsolutePosition.X) + (r.AbsolutePosition.X + r.AbsoluteSize.X)) / 2 - root.AbsolutePosition.X
+		local shift = math.floor(root.AbsoluteSize.X / 2 - words + 0.5)
+		if math.abs(shift) > 1 then
+			local h0 = logo.Position
+			TweenService:Create(logo, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.new(h0.X.Scale, h0.X.Offset + shift, h0.Y.Scale, h0.Y.Offset) }):Play()
+			if seam and placeDoors then
+				seam = Vector2.new(seam.X + shift, seam.Y)
+				placeDoors(0)
+			end
+		end
+	end
 end)
 -- keep the door seam on the slash (the logo is laid out a frame after it is created)
 task.delay(0.1, function()
