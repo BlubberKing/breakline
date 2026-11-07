@@ -73,7 +73,10 @@ C.MAPS = {
 	-- A map folder can also carry its own attributes instead: DisplayName (string) and LoadingImage (string). Those win over this table.
 	-- The same map name works in both mode folders (a test_map in breaklineMaps AND in 1v1Maps both use Info.test).
 	Info = {
-		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://127021225822492" }, -- PASTE the uploaded LoadingArt_TestingGrounds image id here
+		-- v5.11: keys are matched loosely (case / spaces / _ ignored, and an entry whose Name equals the map name counts too), so the
+		-- folder "testing grounds_map" uses this entry. A new map: add a line like  ["my map"] = { Name = "MY MAP", Image = "rbxassetid://..." },
+		["testing grounds"] = { Name = "TESTING GROUNDS", Image = "rbxassetid://102949066481332" }, -- the uploaded LoadingArt_TestingGrounds image
+		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://102949066481332" },
 	},
 	-- v5.9: the watercolor wash texture laid over the 3D fly-through of the map during the Warp (tileable, upload WarpWash.png).
 	-- "" = no texture (the fly-through still works: plain translucent washes + ink edges).
