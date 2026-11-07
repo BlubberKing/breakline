@@ -1,4 +1,4 @@
--- ProfileStore v2.2 (v5.10: Streak = wins in a row, SkinsOwned / GunSkinsOwned / GunSkinEquipped mirrored as JSON attributes for the cosmetics shop) (v2.1 v5.9: ESSENCE premium currency - GrantEssence / SpendEssence) (v2 v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
+-- ProfileStore v2.3 (v5.11: PlayerCard (lobby player card background + showcase) + BannersOwned, mirrored as PlayerCardJson / BannersOwnedJson) (v2.2 v5.10: Streak = wins in a row, SkinsOwned / GunSkinsOwned / GunSkinEquipped mirrored as JSON attributes for the cosmetics shop) (v2.1 v5.9: ESSENCE premium currency - GrantEssence / SpendEssence) (v2 v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
 -- One DataStore record per player, shared by both places. Only the keys you CHANGED are written (so the two places never overwrite each other).
 --   Profiles.WaitFor(player)            -> waits until the profile is loaded, returns the data table (or nil)
 --   Profiles.Get(player, key)           -> value
@@ -13,6 +13,7 @@
 --   Profiles.SpendEssence(player, amount)          -> true when the player had enough and the new balance is saved, false otherwise.
 -- Number/string keys are mirrored to Player attributes (Souls, Essence, Wins, Losses, Streak, XP, Level, Skin) so UI + AvatarService can read them.
 -- v5.10 table keys mirrored as JSON attributes: Owned -> OwnedJson, SkinsOwned -> SkinsOwnedJson, GunSkinsOwned -> GunSkinsOwnedJson, GunSkinEquipped -> GunSkinsJson.
+-- v5.11: PlayerCard -> PlayerCardJson, BannersOwned -> BannersOwnedJson.
 -- Needs: Game Settings > Security > "Enable Studio Access to API Services" ON to save from Studio.
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
@@ -42,6 +43,8 @@ local DEFAULTS = {
 	StarterDone = false,       -- v4.7: true once the new-player pick (1 weapon + 1 movement) was made
 	Essence = 0,               -- v5.9: premium currency (Robux purchases). Only GrantEssence / SpendEssence change it.
 	EssenceReceipts = {},      -- v5.9: the last purchase ids already paid out (stops a repeated ProcessReceipt from granting twice)
+	PlayerCard = {},           -- v5.11: the lobby PLAYER CARD { bg = banner id, show = { 3 x "skin:ID" / "gun:ID" / "card:ID" / "" } } (PlayerCards module). Mirrored as PlayerCardJson.
+	BannersOwned = {},         -- v5.11: player card backgrounds bought in the cosmetics shop (the free ones belong to everybody). Mirrored as BannersOwnedJson.
 }
 local RECEIPTS_KEPT = 50
 
@@ -73,6 +76,8 @@ local function mirror(player, k, v)
 	if k == "SkinsOwned" and type(v) == "table" then player:SetAttribute("SkinsOwnedJson", HttpService:JSONEncode(v)) end -- v5.10
 	if k == "GunSkinsOwned" and type(v) == "table" then player:SetAttribute("GunSkinsOwnedJson", HttpService:JSONEncode(v)) end
 	if k == "GunSkinEquipped" and type(v) == "table" then player:SetAttribute("GunSkinsJson", HttpService:JSONEncode(v)) end
+	if k == "PlayerCard" and type(v) == "table" then player:SetAttribute("PlayerCardJson", HttpService:JSONEncode(v)) end -- v5.11
+	if k == "BannersOwned" and type(v) == "table" then player:SetAttribute("BannersOwnedJson", HttpService:JSONEncode(v)) end
 	if type(v) == "number" or type(v) == "string" or type(v) == "boolean" then player:SetAttribute(k, v) end
 	if k == "XP" and Levels and type(v) == "number" then player:SetAttribute("Level", (Levels.FromXp(v))) end
 end
