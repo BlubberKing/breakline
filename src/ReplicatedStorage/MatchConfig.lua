@@ -6,6 +6,7 @@ local C = {}
 C.MIN_PLAYERS  = 1   -- players needed to start a round (raise to 2-6 for live games; 1 lets you test alone)
 -- Flow: Waiting (loading screen) -> Pregame -> Warp (cutscene) -> Cards (v4.3: roll + pick a power-up card) -> Countdown -> Playing -> SlowMo -> Result (winner cutscene) -> Summary (souls screen)
 C.READY_TIMEOUT  = 40  -- seconds to wait for slow clients to finish loading before starting without them
+C.LOAD_HOLD      = 15  -- v5.10: the map loading screen stays up this many seconds AFTER everybody has loaded (so people can enjoy the picture). Clients also keep it at least this long since they joined.
 C.PREGAME_TIME   = 20  -- pre-game screen (loadout + clock)
 C.WARP_TIME      = 5.6 -- v5.9: soul flies through the map's watercolor painting + white flash (MatchFlow is timed to this: keep it at 5.6)
 C.COUNTDOWN_TIME = 3   -- 3-2-1 on the map, everybody frozen
