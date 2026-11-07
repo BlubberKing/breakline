@@ -1,4 +1,4 @@
--- LoadoutPicker (ModuleScript in ReplicatedStorage, named "LoadoutPicker") - BREAKLINE place only. NEW in v5.7.
+-- LoadoutPicker (ModuleScript in ReplicatedStorage, named "LoadoutPicker") - BREAKLINE place only. NEW in v5.7. v5.9: bold dock captions, fitted pictures, CloseButton.
 -- The loadout dock + item pickers that are shared by the pre-game loadout screen (MatchFlow) and the dead-screen RESERVE screen (DeathScreen).
 --   LoadoutPicker.Dock(cv, spec)  -> dock     the row of tiles (MOVE, PRIMARY, 3 GADGETS, 3 RESERVE) with captions
 --        spec = { y = 962, z = 8, itemAt = function(kind, idx) -> id, onClick = function(tile), enabled = function(tile) -> bool (optional) }
@@ -48,12 +48,9 @@ function P.GunPicture(parent, weaponId)
 			minV, maxV = minV:Min(d.CF.Position - half), maxV:Max(d.CF.Position + half)
 		end
 	end
-	local center = (minV + maxV) / 2
-	local len = math.max(maxV.Z - minV.Z, (maxV.Y - minV.Y) * 2.2)
 	local cam = new("Camera", { FieldOfView = 16 }, vp)
-	local dist = (len / 2) / math.tan(math.rad(8)) / 2.2 + 1
-	cam.CFrame = CFrame.lookAt(center + Vector3.new(dist, dist * 0.08, 0), center)
-	vp.CurrentCamera = cam
+	-- v5.9: fitted to the real silhouette and the frame's shape (long guns were cropped, short ones off centre)
+	UI.FitViewport(vp, cam, model, Vector3.new(1, 0.08, 0), { pad = 0.1, fov = 16 })
 	return vp
 end
 
@@ -111,15 +108,15 @@ function P.Dock(cv, spec)
 		if it and it.kind == "weapon" then
 			P.GunPicture(t.content, it.id)
 		elseif it and it.kind == "move" then
-			local ic = UI.AbilityIcon(t.content, it.icon or it.id, 46, it.color)
-			ic.AnchorPoint, ic.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.4)
+			local ic = UI.AbilityIcon(t.content, it.icon or it.id, 44, it.color)
+			ic.AnchorPoint, ic.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5)
 		elseif it and it.kind == "gadget" and GM then
-			local h = new("Frame", { Size = UDim2.new(1, 0, 0.72, 0), BackgroundTransparency = 1 }, t.content)
+			local h = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, t.content) -- v5.9: the whole picture area (was the top 72 %: off centre)
 			GM.Picture(h, it.id)
 		elseif it then
-			label(t.content, it.glyph or "?", 30, F.H, it.color, { Size = UDim2.new(1, 0, 0.7, 0) })
+			label(t.content, it.glyph or "?", 30, F.H, it.color, { Size = UDim2.fromScale(1, 1) })
 		else
-			label(t.content, "+", 34, F.H, K.mute, { Size = UDim2.new(1, 0, 0.7, 0) })
+			label(t.content, "+", 34, F.H, K.mute, { Size = UDim2.fromScale(1, 1) })
 		end
 		t.name.Text = it and string.upper(it.name) or "EMPTY"
 		t.name.TextColor3 = it and K.text or K.mute
@@ -143,7 +140,7 @@ function P.Dock(cv, spec)
 		local btn = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(SQ, SQ),
 			BackgroundColor3 = K.panel, BackgroundTransparency = 0.05, BorderSizePixel = 0, ZIndex = z }, holder)
 		local stroke = new("UIStroke", { Color = K.line2, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, btn)
-		local content = new("Frame", { Position = UDim2.fromOffset(4, 2), Size = UDim2.new(1, -8, 1, -22), BackgroundTransparency = 1, ZIndex = z + 1 }, btn)
+		local content = new("Frame", { Position = UDim2.fromOffset(6, 16), Size = UDim2.new(1, -12, 1, -38), BackgroundTransparency = 1, ZIndex = z + 1 }, btn) -- v5.9: below the tag, above the name
 		local nameL = label(btn, "", 12, F.M, K.text, { Position = UDim2.new(0, 2, 1, -20), Size = UDim2.new(1, -4, 0, 18), ZIndex = z + 1 })
 		label(btn, d.tag, 12, F.MB, K.dim, { Position = UDim2.fromOffset(6, 3), Size = UDim2.fromOffset(40, 14), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = z + 2 })
 		local t = { kind = d.kind, idx = d.idx, btn = btn, stroke = stroke, content = content, name = nameL }
@@ -156,7 +153,9 @@ function P.Dock(cv, spec)
 		x += SQ
 	end
 	for g, r in groupX do
-		label(holder, CAPTIONS[g], 13, F.MB, K.mute, { Position = UDim2.fromOffset(r[1], y - 24), Size = UDim2.fromOffset(r[2] - r[1], 18), ZIndex = z })
+		-- v5.9: bold + bright (was 13 px grey mono and hard to read)
+		local cap = label(holder, CAPTIONS[g], 18, F.H, K.text, { Position = UDim2.fromOffset(r[1], y - 30), Size = UDim2.fromOffset(r[2] - r[1], 24), ZIndex = z })
+		new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.45 }, cap)
 	end
 	dock:Paint()
 	return dock
@@ -217,11 +216,10 @@ function P.Big(cv, spec)
 	new("UIStroke", { Color = K.line2, Thickness = 1 }, panel)
 	new("Frame", { Size = UDim2.fromOffset(4, PH), BackgroundColor3 = K.red, BorderSizePixel = 0, ZIndex = z + 2 }, panel)
 	label(panel, spec.title or "", 40, F.H, K.text, { Position = UDim2.fromOffset(32, 16), Size = UDim2.fromOffset(900, 50), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = z + 2 })
-	label(panel, spec.sub or "", 12, F.M, K.dim, { Position = UDim2.fromOffset(34, 68), Size = UDim2.fromOffset(1000, 16), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = z + 2 })
-	local closeBtn = new("TextButton", { Text = "ESC  CLOSE", TextSize = 14, FontFace = F.MB, TextColor3 = K.dim, AutoButtonColor = false, BackgroundTransparency = 1,
-		AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(PW - 28, 24), Size = UDim2.fromOffset(150, 30), ZIndex = z + 3 }, panel)
-	closeBtn.MouseEnter:Connect(function() tween(closeBtn, QUICK, { TextColor3 = K.text }) end)
-	closeBtn.MouseLeave:Connect(function() tween(closeBtn, QUICK, { TextColor3 = K.dim }) end)
+	if spec.sub and spec.sub ~= "" then
+		label(panel, spec.sub, 12, F.M, K.dim, { Position = UDim2.fromOffset(34, 68), Size = UDim2.fromOffset(1000, 16), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = z + 2 })
+	end
+	local closeBtn = UI.CloseButton(panel, "CLOSE", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(PW - 28, 24), ZIndex = z + 3 }) -- v5.9: clear close button
 	new("Frame", { Position = UDim2.fromOffset(32, 98), Size = UDim2.fromOffset(PW - 64, 1), BackgroundColor3 = K.line, BorderSizePixel = 0, ZIndex = z + 2 }, panel)
 
 	local wide = false
