@@ -2,6 +2,7 @@
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local GunModels = require(RS:WaitForChild("GunModels"))
+local GunSkins = RS:FindFirstChild("GunSkins") and require(RS.GunSkins) or nil -- v5.10: other players see your equipped gun skin
 local Weapons = require(RS:WaitForChild("WeaponConfig"))
 local Skins = require(RS:WaitForChild("Skins"))
 
@@ -43,7 +44,7 @@ local function attachGun(player, char)
 	local cfg = Weapons.Get(player:GetAttribute("Weapon"))
 	local sight = player:GetAttribute("Sight")
 	if not Weapons.HasSight(cfg, sight) then sight = cfg.DefaultSight end
-	local gun = GunModels.BuildWorld(cfg.Model, sight, GUN_SCALE, accentFor(player), "TPGun")
+	local gun = GunModels.BuildWorld(cfg.Model, sight, GUN_SCALE, accentFor(player), "TPGun", GunSkins and GunSkins.Equipped(player, cfg.Id) or nil)
 	gun:SetAttribute("Weapon", cfg.Id)
 	local k = torso.Size.Y / 1.6
 	local c0 = CFrame.new(0.42 * k, 0.05 * k, -1.2 * k)
