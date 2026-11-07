@@ -1,4 +1,6 @@
--- MatchFlow v1.2 (v5.9: watercolor fly-through warp, no run-in; loadout picker texts trimmed) (v1.1 v3.8: cursor fix on menu screens, XP bar on the summary) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
+-- MatchFlow v1.3 (v5.10: the Warp camera trails the soul (further behind + above, the soul stays in view instead of filling the screen), the painting reuses the picture link the loading
+--   screen verified (MapImageSrc), and the RESULT cutscene is a LINE-UP: the winning team stands side by side holding their guns in a pose, a crown floating over each head (with their
+--   win streak xN), instead of sitting on thrones) (v1.2 v5.9: watercolor fly-through warp, no run-in; loadout picker texts trimmed) (v1.1 v3.8: cursor fix on menu screens, XP bar on the summary) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
 -- Everything that happens around the match, driven by ReplicatedStorage.MatchState.Phase (set by MatchServer):
 --   Pregame   (20 s)  you + teammates stand side by side, loadout dock at the bottom (changeable), clock on top, big numbers flash for 5..1
 --   Warp      (5.6 s) v5.9: the map's watercolor painting -> your soul lights up and flies INTO it, through a 3D watercolor version of
@@ -23,6 +25,8 @@ local C = require(RS:WaitForChild("MatchConfig"))
 local TimeScale = require(RS:WaitForChild("TimeScale"))
 local Levels = require(RS:WaitForChild("Levels")) -- v3.8: XP bar on the summary screen
 local Sfx = require(RS:WaitForChild("Sfx"))
+local Crown = require(RS:WaitForChild("Crown")) -- v5.10: the crown over the winners
+local GunSkins = RS:FindFirstChild("GunSkins") and require(RS.GunSkins) or nil -- v5.10: winners hold their equipped gun skin
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
 local LoadoutPicker = require(RS:WaitForChild("LoadoutPicker")) -- v5.7: shared dock + big picker
 local GM = RS:FindFirstChild("GadgetModels") and require(RS.GadgetModels) or nil -- v4.1: real gadget pictures
@@ -637,12 +641,14 @@ local function runWarp(token)
 	mapVP.LightDirection = SUN
 	mapCam.FieldOfView = 70
 	local lo, hi = buildWatercolorMap(mapScene.world, loadedMapFolder())
-	local img = State:GetAttribute("MapImage")
+	local verified = player:GetAttribute("MapImageSrc") -- v5.10: the link the loading screen saw really load (direct asset or thumbnail)
+	local img = verified or State:GetAttribute("MapImage")
 	local painting, paintScale
 	if type(img) == "string" and img ~= "" then
 		painting = new("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
 			Image = img, ScaleType = Enum.ScaleType.Crop, ZIndex = 3 }, root)
 		paintScale = new("UIScale", { Scale = 1 }, painting)
+		if not verified then task.spawn(UI.LoadImage, painting, img, 3) end -- never saw it load: try the thumbnail link too
 	end
 	mapVP.ImageTransparency = painting and 1 or 0
 	-- warm paper vignette over everything (painted edges)
@@ -734,18 +740,22 @@ local function runWarp(token)
 		local t = T()
 		local u = math.clamp((t - FLY0) / (FLY1 - FLY0), 0, 1)
 		local s = ease(u)
-		-- camera rides the path a little behind + above the soul
-		local camPos = bez(s)
-		local ahead = bez(math.min(1, s + 0.12))
-		local look = (u >= 1) and (endPos + fwd * 30) or ahead:Lerp(endPos + fwd * 30, s ^ 2)
+		-- v5.10: the camera TRAILS the soul. It rides the same path but a good way behind (up to ~16% of the flight + a few studs back along the path and up),
+		-- looks at the soul, and only turns toward the spawn at the very end. Before, it sat right on top of the soul and the soul filled the screen.
+		local pos = soulPos(u, t)
+		local lagS = math.max(0, s - 0.16 * math.min(1, s * 5))
+		local here = bez(lagS)
+		local tan = bez(math.min(1, lagS + 0.03)) - bez(math.max(0, lagS - 0.03))
+		tan = tan.Magnitude > 0.01 and tan.Unit or fwd
+		local camPos = here - tan * 6 + Vector3.new(0, 3.4, 0)
+		local look = (pos + Vector3.new(0, 0.9, 0)):Lerp(endPos + fwd * 30, (s ^ 3) * 0.85)
 		if (look - camPos).Magnitude < 0.5 then look = camPos + fwd end
-		local camCF = CFrame.lookAt(camPos + Vector3.new(0, 2.2 * (1 - s) + 0.6, 0) - fwd * 5 * (1 - s), look)
+		local camCF = CFrame.lookAt(camPos, look)
 		mapCam.CFrame, soulCam.CFrame = camCF, camCF
-		mapCam.FieldOfView = 62 + 14 * math.sin(math.pi * s)
+		mapCam.FieldOfView = 60 + 8 * math.sin(math.pi * s)
 		soulCam.FieldOfView = mapCam.FieldOfView
 		-- soul
 		local light = math.clamp((t - 0.75) / 0.7, 0, 1)
-		local pos = soulPos(u, t)
 		local pulse = 1 + 0.1 * math.sin(t * 13)
 		local sz = (0.18 + 0.32 * light) * pulse
 		core.Size, halo1.Size, halo2.Size = Vector3.one * sz, Vector3.one * sz * 2.1, Vector3.one * sz * 3.6
@@ -890,40 +900,9 @@ local function runSlowMo(token)
 end
 
 -- ======================================================================================
--- RESULT: the winning team sits on thrones (5 s, no confetti)
+-- RESULT (v5.10): the winning team stands in a line, side by side, each in a pose with their gun, a crown floating over every head (5 s)
+-- Up to 3 winners: the first (lowest user id) in the middle, a little forward. The crown shows the player's win streak (xN from 2 up); its gems follow the streak tier.
 -- ======================================================================================
-local function buildThrone(world, pos, col, big)
-	local stone, dark = rgb(34, 36, 44), rgb(18, 19, 24)
-	local w = big and 1.12 or 1
-	local top = big and 1.0 or 0 -- the middle throne sits on a higher step
-	local function P(size, cf, color, neon, transp) return part(world, size, cf, color, neon, transp) end
-	-- dais
-	P(Vector3.new(9.6 * w, 0.6, 9.6), CFrame.new(pos + Vector3.new(0, 0.3 - 0.6, 0.6)), dark)
-	P(Vector3.new(9.8 * w, 0.12, 9.8), CFrame.new(pos + Vector3.new(0, -0.3, 0.6)), col, true, 0.15)
-	if top > 0 then
-		P(Vector3.new(8.2 * w, top, 8.4), CFrame.new(pos + Vector3.new(0, top / 2, 0.6)), stone)
-		P(Vector3.new(8.4 * w, 0.1, 8.6), CFrame.new(pos + Vector3.new(0, top, 0.6)), col, true, 0.2)
-	end
-	local y0 = pos.Y + top -- top of the dais
-	-- seat block (top of the seat = y0 + 1.9)
-	P(Vector3.new(5.2, 1.9, 3.6), CFrame.new(pos + Vector3.new(0, y0 + 0.95 - pos.Y, -0.2)), stone)
-	P(Vector3.new(5.3, 0.14, 3.7), CFrame.new(pos + Vector3.new(0, y0 + 1.9 - pos.Y, -0.2)), col, true, 0.25)
-	-- tall back + crest
-	P(Vector3.new(5.4, 8.2, 0.9), CFrame.new(pos + Vector3.new(0, y0 + 1.9 + 4.1 - pos.Y, -2.2)), stone)
-	P(Vector3.new(6.0, 0.5, 1.2), CFrame.new(pos + Vector3.new(0, y0 + 1.9 + 8.4 - pos.Y, -2.2)), col, true, 0.05)
-	P(Vector3.new(0.5, 6.2, 0.2), CFrame.new(pos + Vector3.new(0, y0 + 1.9 + 4.4 - pos.Y, -1.7)), col, true, 0.1)
-	P(Vector3.new(3.4, 0.25, 0.2), CFrame.new(pos + Vector3.new(0, y0 + 1.9 + 7.2 - pos.Y, -1.7)), col, true, 0.1)
-	-- wings: two slanted panels flanking the back
-	for _, sx in { -1, 1 } do
-		P(Vector3.new(0.45, 7.2, 3.2), CFrame.new(pos + Vector3.new(3.5 * sx, y0 + 1.9 + 3.4 - pos.Y, -1.2)) * CFrame.Angles(0, math.rad(-24 * sx), 0), stone)
-		P(Vector3.new(0.15, 7.0, 0.3), CFrame.new(pos + Vector3.new(3.75 * sx, y0 + 1.9 + 3.4 - pos.Y, 0.05)) * CFrame.Angles(0, math.rad(-24 * sx), 0), col, true, 0.1)
-		-- arm rests
-		P(Vector3.new(0.9, 1.1, 3.2), CFrame.new(pos + Vector3.new(2.85 * sx, y0 + 1.9 + 0.55 - pos.Y, -0.2)), stone)
-		P(Vector3.new(0.92, 0.1, 3.22), CFrame.new(pos + Vector3.new(2.85 * sx, y0 + 1.9 + 1.12 - pos.Y, -0.2)), col, true, 0.2)
-	end
-	return y0 + 1.9 -- seat height
-end
-
 local function runResultCut(token)
 	killScreens()
 	setModal(false)
@@ -949,31 +928,41 @@ local function runResultCut(token)
 	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(col:Lerp(BLACK, 0.8), rgb(3, 4, 6)) }, root)
 	local scene = newScene(root, 3, true)
 	local cam = scene.cam
-	cam.FieldOfView = 38
+	cam.FieldOfView = 36
 	addStars(scene.world, 140, 70, Vector3.new(0, 8, -40), 30)
+	-- the stage: one wide dark floor with a glowing team rim, and a soft light column behind every winner
+	local up = CFrame.Angles(0, 0, math.rad(90))
+	part(scene.world, Vector3.new(0.3, 30, 30), CFrame.new(0, -0.45, 0) * up, col, true, 0.2, Enum.PartType.Cylinder)
+	part(scene.world, Vector3.new(0.5, 29, 29), CFrame.new(0, -0.2, 0) * up, rgb(14, 15, 19), false, 0, Enum.PartType.Cylinder)
 
-	-- thrones: the player list is ordered so the middle throne is the first winner (the tallest dais)
 	local n = math.max(1, #winners)
-	local TX = { [1] = { 0 }, [2] = { -6.6, 6.6 }, [3] = { 0, -11.6, 11.6 } }
-	local xs = TX[n]
+	local XS = { [1] = { 0 }, [2] = { -2.9, 2.9 }, [3] = { 0, -5.4, 5.4 } }
+	local ZS = { [1] = { 0 }, [2] = { 0, 0 }, [3] = { 1.1, -0.2, -0.2 } } -- the middle winner steps a little forward
+	local YAW = { [1] = { 0 }, [2] = { 12, -12 }, [3] = { 0, 14, -14 } }
+	local xs, zs, yaws = XS[n], ZS[n], YAW[n]
 	local figs = {}
 	for i = 1, n do
-		local big = (n == 1) or (n == 3 and i == 1) -- single winner or the middle of three: raised
-		local pos = Vector3.new(xs[i], 0, 0)
-		local seatY = buildThrone(scene.world, pos, col, big)
-		-- light column behind each throne
-		part(scene.world, Vector3.new(4.4, 70, 4.4), CFrame.new(pos + Vector3.new(0, 35, -5)), col, true, 0.86)
+		local pos = Vector3.new(xs[i], 0, zs[i])
+		discUnder(scene.world, pos, col, 2.5)
+		part(scene.world, Vector3.new(4.2, 70, 4.2), CFrame.new(pos + Vector3.new(0, 35, -6)), col, true, 0.88)
 		local p = winners[i]
 		if p then
-			local fig = Skins.NewFigure(scene.world, skinOf(p), { weapon = weaponOf(p), still = true })
-			fig.sit = 1
-			-- hips (2.7 * body height up the leg) sit on the cushion; the thighs are about half a stud thick
-			local rootY = seatY + 0.45 - 2.7 * Skins.Proportions.Height
-			table.insert(figs, { fig = fig, base = CFrame.new(xs[i], rootY, -0.15), phase = (i - 1) * 0.7 })
+			local w = weaponOf(p)
+			local fig = Skins.NewFigure(scene.world, skinOf(p), { weapon = w, gunSkin = GunSkins and GunSkins.Equipped(p, w) or nil, still = true, stance = "aim" })
+			local streak = math.max(1, math.floor(tonumber(p:GetAttribute("Streak")) or 1))
+			local crown = Crown.Build(scene.world, { tier = Crown.TierFor(streak), anchored = true, scale = 1.25 })
+			table.insert(figs, { fig = fig, base = CFrame.new(pos) * CFrame.Angles(0, math.rad(yaws[i]), 0), pos = pos, phase = (i - 1) * 0.7, crown = crown, streak = streak })
 		end
 	end
 
 	local cv = makeCanvas(root, 6)
+	for _, f in figs do -- the streak number beside each crown (2D, placed every frame from the crown's 3D position)
+		if f.streak >= 2 then
+			f.tag = label(cv, "x" .. f.streak, 46, F.H, rgb(255, 214, 96), { AnchorPoint = Vector2.new(0, 0.5), Size = UDim2.fromOffset(120, 54), ZIndex = 8, Rotation = -12,
+				TextXAlignment = Enum.TextXAlignment.Left })
+			new("UIStroke", { Color = rgb(70, 40, 6), Thickness = 3, Transparency = 0.1 }, f.tag)
+		end
+	end
 	local title = label(cv, winTeam and (winner:upper() .. " TEAM WINS") or "ROUND OVER", 120, F.H, col, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 70),
 		Size = UDim2.fromOffset(1600, 130), ZIndex = 8 })
 	new("UIStroke", { Color = BLACK, Thickness = 4, Transparency = 0.4 }, title)
@@ -982,8 +971,10 @@ local function runResultCut(token)
 	tween(ts, POP, { Scale = 1 })
 	tween(title, TweenInfo.new(0.2), { TextTransparency = 0 })
 	if winTeam then
-		local sub = label(cv, iWon and "VICTORY" or "DEFEAT", 44, F.HM, iWon and K.gold or K.dim, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 200),
-			Size = UDim2.fromOffset(600, 50), ZIndex = 8, TextTransparency = 1 })
+		local streakMe = math.floor(tonumber(player:GetAttribute("Streak")) or 0)
+		local subText = iWon and (streakMe >= 2 and ("VICTORY   //   " .. streakMe .. " WINS IN A ROW") or "VICTORY") or "DEFEAT"
+		local sub = label(cv, subText, 44, F.HM, iWon and K.gold or K.dim, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 200),
+			Size = UDim2.fromOffset(1100, 50), ZIndex = 8, TextTransparency = 1 })
 		task.delay(0.35, function() tween(sub, TweenInfo.new(0.3), { TextTransparency = 0 }) end)
 	end
 	sfx(iWon and "RoundWin" or "RoundLose")
@@ -994,11 +985,23 @@ local function runResultCut(token)
 	renderFns.result = function(dt)
 		local t = os.clock() - t0
 		local k = math.clamp(t / total, 0, 1)
-		-- slow push-in on the thrones
-		cam.CFrame = CFrame.lookAt(Vector3.new(0, 5.2 - 0.6 * k, 33 - 4 * k), Vector3.new(0, 6.6, 0))
+		-- slow push-in on the line-up (the group is framed a little low so the title has the top of the screen to itself)
+		cam.CFrame = CFrame.lookAt(Vector3.new(0, 4.6 - 0.3 * k, 31 - 3.5 * k), Vector3.new(0, 5.9, 0))
+		local vs = scene.vp.AbsoluteSize
 		for _, f in figs do
 			f.fig:SetRoot(f.base)
 			f.fig:Update(t + f.phase, dt)
+			-- the crown floats over the head: bobs, turns slowly
+			local bob = math.sin(t * 2.2 + f.phase * 3) * 0.14
+			local cpos = f.pos + Vector3.new(0, f.fig.HeadTop + 1.25 + bob, 0)
+			f.crown:PivotTo(CFrame.new(cpos) * CFrame.Angles(0, t * 0.9 + f.phase, 0))
+			if f.tag then
+				local sp = project(cam, vs, cpos + cam.CFrame.RightVector * 1.3 + Vector3.new(0, 0.7, 0))
+				if sp then
+					local c = (sp - cv.AbsolutePosition) / cv.UIScale.Scale
+					f.tag.Position = UDim2.fromOffset(c.X, c.Y)
+				end
+			end
 		end
 	end
 end
