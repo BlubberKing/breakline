@@ -60,6 +60,25 @@ local function aliveChar(p)
 	if h and r and h.Health > 0 then return c, h, r end
 	return nil
 end
+-- v5.11: every living enemy of `owner` as { root, hum, char, player? } - players AND bots (bot models carry IsBot + OwnerTeam)
+local function enemyTargets(owner)
+	local out = {}
+	for _, p in Players:GetPlayers() do
+		if isEnemy(owner, p) then
+			local c, h, r = aliveChar(p)
+			if c then table.insert(out, { root = r, hum = h, char = c, player = p }) end
+		end
+	end
+	local ot = teamName(owner)
+	for _, m in workspace:GetChildren() do
+		if m:IsA("Model") and m:GetAttribute("IsBot") and (not ot or m:GetAttribute("OwnerTeam") ~= ot) then
+			local h = m:FindFirstChildOfClass("Humanoid")
+			local r = m:FindFirstChild("HumanoidRootPart")
+			if h and r and h.Health > 0 then table.insert(out, { root = r, hum = h, char = m }) end
+		end
+	end
+	return out
+end
 local function teamColor(p)
 	if p and p.Team and not p.Neutral then return p.TeamColor.Color end
 	return Color3.fromRGB(110, 220, 255)
@@ -202,6 +221,15 @@ local function explode(pos, owner, radius, dmg, boxDmg, selfMult, shieldDmg)
 					if p == owner then dealt *= selfMult end
 					hurt(owner, p, hum, dealt, root.Position)
 				end
+			end
+		end
+	end
+	-- v5.11: enemy BOTS are hurt too (before, frags / mines went straight through them)
+	for _, t in enemyTargets(owner) do
+		if not t.player then
+			local d = (t.root.Position - pos).Magnitude
+			if d <= radius and not workspace:Raycast(origin, t.root.Position - origin, newParams({ t.char })) then
+				hurt(owner, nil, t.hum, dmg * (0.25 + 0.75 * math.clamp(1 - d / radius, 0, 1)), t.root.Position)
 			end
 		end
 	end
@@ -522,17 +550,15 @@ game:GetService("RunService").Heartbeat:Connect(function()
 			end
 			if not m.trig and now >= m.nextCheck then
 				m.nextCheck = now + 0.1
-				for _, p in Players:GetPlayers() do
-					if isEnemy(m.owner, p) then
-						local char, _, root = aliveChar(p)
-						if char then
-							local d = root.Position - m.pos
-							if Vector3.new(d.X, 0, d.Z).Magnitude <= mc.trigger and math.abs(d.Y - m.pos.Y) < 6 then
-								m.trig = now + mc.delay
-								FxR:FireAllClients("MineTrigger", m.pos) -- v5.7: sound hook
-								break
-							end
-						end
+				-- v5.11 FIX: the height test used to be `d.Y - m.pos.Y` (d is ALREADY relative to the mine), so on any map that is not
+				-- sitting at Y = 0 an enemy was never "close enough" and the mine never went off. Now: a sphere-ish check round the mine
+				-- (flat distance <= trigger, height -2 .. +6 studs over it) against every enemy player AND every enemy bot.
+				for _, t in enemyTargets(m.owner) do
+					local d = t.root.Position - m.pos
+					if Vector3.new(d.X, 0, d.Z).Magnitude <= mc.trigger and d.Y > -2 and d.Y < 6 then
+						m.trig = now + mc.delay
+						FxR:FireAllClients("MineTrigger", m.pos) -- v5.7: sound hook
+						break
 					end
 				end
 			end
