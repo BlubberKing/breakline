@@ -95,7 +95,7 @@ local CFG = {
 }
 
 local NAMES = { DASH = "DASH", DJUMP = "DOUBLE JUMP", MJUMP = "MEGA JUMP", WRUN = "WALL RUN", WCLIMB = "WALL CLIMB" }
-local HINTS = { DASH = "F  TO DASH", DJUMP = "SPACE IN AIR", MJUMP = "HOLD SPACE", WRUN = "SPRINT INTO A WALL", WCLIMB = "WALK INTO A WALL" }
+local HINTS = { DASH = "F  TO DASH", DJUMP = "SPACE IN AIR", MJUMP = "HOLD SPACE", WRUN = "HOLD SPACE BY A WALL", WCLIMB = "WALK INTO A WALL" }
 local ICON_COL = { DASH = Color3.fromRGB(150, 235, 255), DJUMP = Color3.fromRGB(90, 210, 255), MJUMP = Color3.fromRGB(255, 200, 60), WRUN = Color3.fromRGB(255, 120, 90), WCLIMB = Color3.fromRGB(120, 230, 150) }
 local clamp, rad, cos, sin = math.clamp, math.rad, math.cos, math.sin
 local function approach(a, b, speed, dt) return a + (b - a) * (1 - math.exp(-speed * dt)) end
@@ -118,6 +118,14 @@ local attachLock, uprightUntil = 0, 0
 local charging, chargeStart = false, 0
 local canClimb, climbProbeT, autoT = false, 0, 0
 local lastPress = 0
+-- v5.11: the wall run only starts while SPACE (gamepad A / the touch jump button) is HELD next to a wall. Before it latched on by itself, so
+-- in a tight space it fired all the time. Let go of SPACE while running = wall jump (or just drop if you only just grabbed the wall).
+local lastTouchJump = -1
+local function spaceHeld()
+	if UIS:IsKeyDown(Enum.KeyCode.Space) then return true end
+	if UIS:IsGamepadButtonDown(Enum.UserInputType.Gamepad1, Enum.KeyCode.ButtonA) then return true end
+	return os.clock() - lastTouchJump < 0.2 -- touch: JumpRequest keeps firing while the jump button is held
+end
 local filterT = 0
 local alive = true
 local dashCharges, dashNext, dashing = CFG.DASH_CHARGES, 0, false
@@ -629,7 +637,7 @@ local function onJumpPress()
 	if now - lastPress < 0.1 then return end
 	lastPress = now
 	if blocked() then return end
-	if mode == "wallrun" then wallJump() return end
+	if mode == "wallrun" then return end -- v5.11: releasing SPACE does the wall jump now (see updateWallRun)
 	if mode == "climb" then climbJumpOff() return end
 	local g = hum.FloorMaterial ~= Enum.Material.Air
 	if move == "WCLIMB" then
@@ -649,7 +657,10 @@ UIS.InputBegan:Connect(function(input, gpe)
 	if input.KeyCode == Enum.KeyCode.F or input.KeyCode == Enum.KeyCode.ButtonY then doDash() end
 end)
 UIS.JumpRequest:Connect(function()
-	if UIS.TouchEnabled and not UIS.KeyboardEnabled then onJumpPress() end
+	if UIS.TouchEnabled and not UIS.KeyboardEnabled then
+		lastTouchJump = os.clock()
+		onJumpPress()
+	end
 end)
 
 -- Mega jump: SPACE is taken (sunk) only while you can start a charge; everything else behaves normally
@@ -720,6 +731,11 @@ end
 -- ================= per-frame =================
 local function updateWallRun(dt)
 	modeT += dt
+	-- v5.11: hold SPACE to keep running; let go = wall jump (a very short touch just drops you off)
+	if not spaceHeld() then
+		if modeT >= 0.15 then wallJump() else exitMode(normal * 4) end
+		return
+	end
 	local upRun = runDir.Y > 0.55
 	stamina -= dt / CFG.WR_SECONDS * (1 + (CFG.WR_UP_COST - 1) * math.max(0, runDir.Y)) -- v5.8: cost scales with how steep you run
 	if stamina <= 0 then
@@ -845,7 +861,7 @@ local function update(dt)
 		if move == "WRUN" then
 			stamina = math.min(1, stamina + dt / CFG.WR_REGEN * (g and 1 or 0.15))
 			if exhausted and stamina >= CFG.WR_MIN_START then exhausted = false end
-			if not exhausted and now >= attachLock and not blocked() and not busy() and moveInput().Magnitude > 0.1 then
+			if not exhausted and now >= attachLock and not blocked() and not busy() and moveInput().Magnitude > 0.1 and spaceHeld() then
 				local hit, dir, spd = probeWallRun(g)
 				if hit then enterMode("wallrun", hit, dir, spd) end
 			end
@@ -1008,7 +1024,7 @@ RunService.RenderStepped:Connect(function()
 	local h = HINTS[move]
 	if move == "WCLIMB" then
 		if mode == "climb" then h = "SPACE: JUMP OFF   C: LET GO" elseif canClimb then h = "HOLD FORWARD AT THE WALL  /  [ SPACE ]" end
-	elseif move == "WRUN" and mode == "wallrun" then h = "SPACE: WALL JUMP"
+	elseif move == "WRUN" and mode == "wallrun" then h = "RELEASE SPACE: WALL JUMP"
 	end
 	hint.Text = h
 	hint.TextColor3 = ((move == "WCLIMB" and (canClimb or mode == "climb")) or mode == "wallrun") and K.text or K.dim
