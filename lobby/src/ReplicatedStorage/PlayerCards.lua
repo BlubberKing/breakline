@@ -1,18 +1,27 @@
--- PlayerCards v1 (ModuleScript in ReplicatedStorage, named "PlayerCards") - LOBBY place only. NEW in v5.11.
--- The PLAYER CARD every player shows in the lobby play screen (yours on top, your party under it):
---   left  = a background picture (a BANNER), your avatar picture, name, level, PARTY LEADER / READY tags
---   right = 3 SHOWCASE slots, each holds a tiny version of something you own (a player skin, a gun skin or a power-up card) to flex.
+-- PlayerCards v2 (ModuleScript in ReplicatedStorage, named "PlayerCards") - LOBBY place only. NEW in v5.11, v2 in v5.12.
+-- v5.12 (owner Nov 7): the card layout changed and the 3 showcase items are FREE: the player moves, resizes and turns each one on the card
+--   (cosmetics locker, PLAYER CARD tab). No more dark boxes behind the items. The INFO always sits on top of the items:
+--     top right  = a small avatar picture (half the old size)
+--     left of it = DISPLAY NAME with a small LV n right next to it, the real Roblox @username right under the name
+--     top left   = PARTY LEADER / READY tags
+--   Each item has a placement { x, y, s, r }: x / y = its centre on the 840 x 236 card, s = size (1 = the old slot size 112 x 196), r = turn in degrees
+--   (clockwise). Default = the three old slot spots. Saved inside PlayerCard.pos (3 entries), checked + clamped by CosmeticsServer.
+--   Item pictures are built ONCE per item and cloned after that (PC.MakeView), so re-drawing a card never makes the models blink.
+-- The PLAYER CARD every player shows in the lobby play screen (yours on top, your party under it).
 -- Everything is drawn from GUI frames in code (no image uploads). Some banners move a little (tweens that loop, no per-frame code).
--- Saved in the profile as PlayerCard = { bg = <banner id>, show = { "skin:OPERATOR_NIGHTFALL", "gun:VX9_GILT", "card:SUN_EATER" } }, mirrored to the
+-- Saved in the profile as PlayerCard = { bg = <banner id>, show = { 3 x "skin:ID" / "gun:ID" / "card:ID" / "" }, pos = { 3 x { x, y, s, r } } }, mirrored to the
 -- Player attribute PlayerCardJson (everybody's client reads it). Bought banners: profile BannersOwned (attribute BannersOwnedJson).
 --   PC.Banners / PC.ById[id] / PC.Order          banner list: { id, name, price = nil | { souls = n } | { essence = n }, anim }
 --   PC.IsFree(id)                                 free banners belong to everybody
---   PC.Read(player) -> { bg, show = {3} }         the card a player shows (defaults filled in)
+--   PC.Read(player) -> { bg, show = {3}, pos = {3} }  the card a player shows (defaults filled in)
 --   PC.Parse(value) -> kind, id                   "skin:ID" -> "skin", "ID"  (kinds: skin / gun / card)
+--   PC.DefaultPlace(i) / PC.CleanPlace(t, i)      placement of showcase item i (defaults / a checked copy)
 --   PC.DrawBanner(parent, id, animate)            fills `parent` (any size) with the banner
---   PC.Render(parent, data, width)                a whole card. data = { userId, name, username, level, leader, ready, card = {bg, show}, empty }
---                                                 returns the card holder (its native size is 840 x 236, scaled to `width`)
---   PC.ShowcaseItem(slot, value, w, h)            draws one showcase item into a frame (w / h = the slot size in its own, unscaled pixels)
+--   PC.Render(parent, data, width) -> holder, card, items
+--                                                 a whole card. data = { userId, name, username, level, leader, ready, card = {bg, show, pos}, empty }
+--                                                 holder = native 840 x 236 scaled to `width`; items[i] = { holder, apply(place), kind } for the editor
+--   PC.BuildItem(parent, value, place, z)         one free showcase item on a card (native coordinates)
+--   PC.ShowcaseItem(slot, value, w, h)            draws one showcase item fitted into a frame (w / h = the frame size in its own, unscaled pixels)
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
@@ -225,8 +234,31 @@ function PC.Parse(v)
 	if kind == "skin" or kind == "gun" or kind == "card" then return kind, id end
 	return nil
 end
+
+-- v5.12: free placement of the 3 showcase items. The default = the three old slot spots (right side of the card).
+PC.SW, PC.SH = 112, 196                 -- the item box at size 1 (the old slot size)
+PC.SCALE_MIN, PC.SCALE_MAX = 0.35, 2.5
+local SLOT_GAP = 10
+function PC.DefaultPlace(i)
+	local x0 = PC.W - 20 - 3 * PC.SW - 2 * SLOT_GAP
+	return { x = x0 + (i - 1) * (PC.SW + SLOT_GAP) + PC.SW / 2, y = PC.H / 2, s = 1, r = 0 }
+end
+local function num(v) return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge end
+-- a checked copy of a placement (anything odd falls back to the default spot). The server uses the same function.
+function PC.CleanPlace(t, i)
+	if type(t) ~= "table" or not (num(t.x) and num(t.y) and num(t.s) and num(t.r)) then return PC.DefaultPlace(i) end
+	local r = t.r % 360
+	if r > 180 then r -= 360 end
+	return {
+		x = math.floor(math.clamp(t.x, 0, PC.W) * 10 + 0.5) / 10,
+		y = math.floor(math.clamp(t.y, 0, PC.H) * 10 + 0.5) / 10,
+		s = math.floor(math.clamp(t.s, PC.SCALE_MIN, PC.SCALE_MAX) * 100 + 0.5) / 100,
+		r = math.floor(r * 10 + 0.5) / 10,
+	}
+end
+
 function PC.Read(player)
-	local out = { bg = PC.Default, show = { "", "", "" } }
+	local out = { bg = PC.Default, show = { "", "", "" }, pos = { PC.DefaultPlace(1), PC.DefaultPlace(2), PC.DefaultPlace(3) } }
 	local raw = player and player:GetAttribute("PlayerCardJson")
 	if type(raw) == "string" and raw ~= "" then
 		local ok, t = pcall(HttpService.JSONDecode, HttpService, raw)
@@ -234,6 +266,9 @@ function PC.Read(player)
 			if PC.Is(t.bg) then out.bg = t.bg end
 			if type(t.show) == "table" then
 				for i = 1, 3 do if PC.Parse(t.show[i]) then out.show[i] = t.show[i] end end
+			end
+			if type(t.pos) == "table" then
+				for i = 1, 3 do out.pos[i] = PC.CleanPlace(t.pos[i], i) end
 			end
 		end
 	end
@@ -270,32 +305,27 @@ function PC.ItemName(v)
 	return ""
 end
 
-function PC.ShowcaseItem(slot, v, sw, sh)
+-- v5.12: 3D item pictures are built ONCE (a template ViewportFrame) and cloned after that: cloning is instant, so a card that is re-drawn
+-- (a new background, an equip somewhere else, a party change) shows its models in the same frame - nothing blinks out and back in.
+local TPL_MAX = 60
+local tpl, tplOrder = {}, {}
+local function buildTemplate(value)
 	mods()
-	local kind, id = PC.Parse(v)
-	if not kind then return nil end
-	if kind == "card" then
-		if not CardArt then return nil end
-		local w = sw or slot.AbsoluteSize.X
-		local hgt = sh or slot.AbsoluteSize.Y
-		-- the card is 250 x 350: fit it inside the slot with a small margin
-		local cw = math.floor(math.min(w * 0.82, hgt * 0.86 * 250 / 350))
-		local ok, holder = pcall(CardArt.Build, slot, id, { width = math.max(40, cw), anim = false })
-		if ok and holder then
-			holder.AnchorPoint = Vector2.new(0.5, 0.5)
-			holder.Position = UDim2.fromScale(0.5, 0.5)
-		end
-		return holder
-	end
-	local vp = new("ViewportFrame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Ambient = rgb(150, 152, 160), LightColor = rgb(255, 250, 244),
-		LightDirection = Vector3.new(-0.5, -0.9, -0.4) }, slot)
+	local kind, id = PC.Parse(value)
+	if kind ~= "skin" and kind ~= "gun" then return nil end
+	local vp = new("ViewportFrame", { BackgroundTransparency = 1, Ambient = rgb(150, 152, 160), LightColor = rgb(255, 250, 244),
+		LightDirection = Vector3.new(-0.5, -0.9, -0.4) })
 	local cam = new("Camera", { FieldOfView = 20 }, vp)
+	vp.CurrentCamera = cam
 	local model = new("Model", {}, vp)
-	if kind == "skin" and Skins.Is(id) then
+	local dir, fov, pad
+	if kind == "skin" then
+		if not Skins.Is(id) then vp:Destroy() return nil end
 		local ok, fig = pcall(Skins.NewFigure, model, id, { static = true })
 		if ok and fig then pcall(fig.Update, fig, 0, 0) end
-		UI.FitViewport(vp, cam, model, Vector3.new(0.28, 0.1, 1), { pad = 0.06, fov = 22 })
-	elseif kind == "gun" and GunSkins.ById[id] then
+		dir, fov, pad = Vector3.new(0.28, 0.1, 1), 22, 0.06
+	else
+		if not GunSkins.ById[id] then vp:Destroy() return nil end
 		local ok, desc = pcall(GunModels.Describe, GunSkins.ById[id].gun, "Iron", id)
 		if ok and desc then
 			for _, d in desc.Parts do
@@ -306,10 +336,155 @@ function PC.ShowcaseItem(slot, v, sw, sh)
 				end
 			end
 		end
-		-- a gun is long and the slot is tall: look at it from the side, turned 60 degrees so it fills the slot
-		UI.FitViewport(vp, cam, model, Vector3.new(1, 0.25, 0.55), { pad = 0.08, fov = 18 })
+		-- a gun is long and the box is tall: seen from the side, turned so it fills the box
+		dir, fov, pad = Vector3.new(1, 0.25, 0.55), 18, 0.08
 	end
+	local pts = {}
+	for _, p in model:GetDescendants() do
+		if p:IsA("BasePart") and p.Transparency < 1 then
+			local h, cf = p.Size / 2, p.CFrame
+			for _, sx in { -1, 1 } do for _, sy in { -1, 1 } do for _, sz in { -1, 1 } do
+				table.insert(pts, cf:PointToWorldSpace(Vector3.new(sx * h.X, sy * h.Y, sz * h.Z)))
+			end end end
+		end
+	end
+	if #pts == 0 then vp:Destroy() return nil end
+	local center = Vector3.zero
+	for _, q in pts do center += q end
+	center /= #pts
+	dir = dir.Unit
+	local rot = CFrame.lookAt(Vector3.zero, -dir, Vector3.yAxis)
+	local loc = {}
+	for i, q in pts do loc[i] = rot:PointToObjectSpace(q - center) end
+	return { vp = vp, loc = loc, center = center, rot = rot, fov = fov, pad = pad }
+end
+local function template(value)
+	local e = tpl[value]
+	if e then
+		local i = table.find(tplOrder, value)
+		if i then table.remove(tplOrder, i) end
+		table.insert(tplOrder, value)
+		return e
+	end
+	e = buildTemplate(value)
+	if not e then return nil end
+	tpl[value] = e
+	table.insert(tplOrder, value)
+	while #tplOrder > TPL_MAX do
+		local k = table.remove(tplOrder, 1)
+		local old = tpl[k]
+		tpl[k] = nil
+		if old then old.vp:Destroy() end
+	end
+	return e
+end
+-- camera that fits the model into a boxW x boxH box in the middle of a vpW x vpH viewport (never cropped)
+local function fitCam(e, boxW, boxH, vpW, vpH, pad)
+	local tv = math.tan(math.rad(e.fov / 2))
+	local tvb = tv * (boxH / vpH) * (1 - pad)
+	local thb = tv * (vpW / vpH) * (boxW / vpW) * (1 - pad)
+	local ox, oy, dist = 0, 0, 1
+	for _ = 1, 3 do
+		dist = 0
+		for _, q in e.loc do
+			local need = math.max(math.abs(q.X - ox) / thb, math.abs(q.Y - oy) / tvb) + q.Z
+			if need > dist then dist = need end
+		end
+		dist += 0.05
+		local minX, maxX, minY, maxY = math.huge, -math.huge, math.huge, -math.huge
+		for _, q in e.loc do
+			local d = dist - q.Z
+			local sx, sy = (q.X - ox) / d, (q.Y - oy) / d
+			minX, maxX, minY, maxY = math.min(minX, sx), math.max(maxX, sx), math.min(minY, sy), math.max(maxY, sy)
+		end
+		ox += (minX + maxX) / 2 * dist
+		oy += (minY + maxY) / 2 * dist
+	end
+	return CFrame.new(e.center) * e.rot * CFrame.new(ox, oy, dist)
+end
+-- a ViewportFrame (vpW x vpH) showing a skin / gun skin fitted into a boxW x boxH box in its middle. Returns vp, camera, base camera CFrame.
+function PC.MakeView(value, boxW, boxH, vpW, vpH)
+	local e = template(value)
+	if not e then return nil end
+	local vp = e.vp:Clone()
+	local cam = vp:FindFirstChildOfClass("Camera")
+	vp.CurrentCamera = cam
+	cam.FieldOfView = e.fov
+	local base = fitCam(e, boxW, boxH, vpW, vpH, e.pad)
+	cam.CFrame = base
+	vp.Size = UDim2.fromOffset(vpW, vpH)
+	return vp, cam, base
+end
+
+-- one item fitted into a frame (shop / locker thumbnails)
+function PC.ShowcaseItem(slot, v, sw, sh)
+	mods()
+	local kind, id = PC.Parse(v)
+	if not kind then return nil end
+	local w = sw or slot.AbsoluteSize.X
+	local hgt = sh or slot.AbsoluteSize.Y
+	if kind == "card" then
+		if not CardArt then return nil end
+		-- the card is 250 x 350: fit it inside the slot with a small margin
+		local cw = math.floor(math.min(w * 0.82, hgt * 0.86 * 250 / 350))
+		local ok, holder = pcall(CardArt.Build, slot, id, { width = math.max(40, cw), anim = false })
+		if ok and holder then
+			holder.AnchorPoint = Vector2.new(0.5, 0.5)
+			holder.Position = UDim2.fromScale(0.5, 0.5)
+		end
+		return holder
+	end
+	local vp = PC.MakeView(v, w, hgt, w, hgt)
+	if not vp then return nil end
+	vp.AnchorPoint = Vector2.new(0.5, 0.5)
+	vp.Position = UDim2.fromScale(0.5, 0.5)
+	vp.Parent = slot
 	return vp
+end
+
+-- v5.12: one FREE showcase item on a card. parent = the card frame (native 840 x 236 pixels). place = { x, y, s, r }.
+-- Cards turn with the GUI Rotation. A ViewportFrame cannot be rotated, so a 3D item sits in a square viewport big enough for any turn
+-- (the diagonal of its box) and the CAMERA rolls instead - it looks exactly the same.
+-- Returns { holder, kind, apply(place), place } or nil.
+function PC.BuildItem(parent, v, place, z)
+	mods()
+	local kind, id = PC.Parse(v)
+	if not kind then return nil end
+	local SW, SH = PC.SW, PC.SH
+	local holder = new("Frame", { Name = "Item", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(SW, SH), BackgroundTransparency = 1, ZIndex = z or 3 }, parent)
+	local scale = new("UIScale", { Scale = 1 }, holder)
+	local it = { holder = holder, kind = kind }
+	local cam, base
+	if kind == "card" then
+		if not CardArt then holder:Destroy() return nil end
+		local cw = math.floor(math.min(SW * 0.96, SH * 0.98 * 250 / 350))
+		local ok, c = pcall(CardArt.Build, holder, id, { width = math.max(40, cw), anim = false })
+		if ok and c then
+			c.AnchorPoint = Vector2.new(0.5, 0.5)
+			c.Position = UDim2.fromScale(0.5, 0.5)
+		end
+	else
+		local D = math.ceil(math.sqrt(SW * SW + SH * SH)) + 4
+		local vp
+		vp, cam, base = PC.MakeView(v, SW, SH, D, D)
+		if not vp then holder:Destroy() return nil end
+		vp.AnchorPoint = Vector2.new(0.5, 0.5)
+		vp.Position = UDim2.fromScale(0.5, 0.5)
+		vp.Parent = holder
+	end
+	function it.apply(p)
+		it.place = p
+		holder.Position = UDim2.fromOffset(p.x, p.y)
+		scale.Scale = p.s
+		if cam then
+			holder.Rotation = 0
+			cam.CFrame = base * CFrame.Angles(0, 0, math.rad(p.r)) -- camera roll = the picture turns clockwise by r
+		else
+			holder.Rotation = p.r
+		end
+	end
+	it.apply(place or PC.DefaultPlace(1))
+	return it
 end
 
 -- ================= the whole card =================
@@ -320,12 +495,14 @@ local function chipLbl(parent, x, y, text, bg, fg)
 	return c, w
 end
 
--- data = { userId, name, username, level, leader, ready (string/true), card = { bg, show }, empty, animate }
+-- data = { userId, name, username, level, leader, ready (string/true), card = { bg, show, pos }, empty, animate }
+-- returns holder, card, items ({ [slot] = item from PC.BuildItem })
 function PC.Render(parent, data, width)
 	local W, H = PC.W, PC.H
 	local holder = new("Frame", { Name = "PlayerCard", Size = UDim2.fromOffset(width or W, (width or W) * H / W), BackgroundTransparency = 1 }, parent)
 	local card = new("Frame", { Name = "Card", Size = UDim2.fromOffset(W, H), BackgroundColor3 = K.panel, BorderSizePixel = 0, ClipsDescendants = true }, holder)
 	new("UIScale", { Scale = (width or W) / W }, card)
+	local items = {}
 	if data.empty then
 		card.BackgroundTransparency = 0.45
 		new("UIStroke", { Color = K.line2, Thickness = 1.5, Transparency = 0.3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
@@ -334,59 +511,64 @@ function PC.Render(parent, data, width)
 		end
 		new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, H / 2 + 6), Size = UDim2.fromOffset(W, 34), Text = "INVITE", TextSize = 28,
 			FontFace = F.H, TextColor3 = K.dim }, card)
-		return holder, card
+		return holder, card, items
 	end
 	local cd = data.card or { bg = PC.Default, show = { "", "", "" } }
-	PC.DrawBanner(card, cd.bg, data.animate ~= false)
-	-- readability shade behind the text on the left
-	local shade = new("Frame", { Size = UDim2.fromOffset(W * 0.62, H), BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, ZIndex = 2 }, card)
-	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(0.75, 0.6), NumberSequenceKeypoint.new(1, 1) }) }, shade)
+	PC.DrawBanner(card, cd.bg, data.animate ~= false).ZIndex = 1
+	-- a soft shade in the top right corner, BEHIND the items, so the name reads on bright backgrounds
+	local shade = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(W, 0), Size = UDim2.fromOffset(W * 0.62, H * 0.6),
+		BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0, ZIndex = 2 }, card)
+	new("UIGradient", { Rotation = 200, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.45), NumberSequenceKeypoint.new(0.6, 0.85), NumberSequenceKeypoint.new(1, 1) }) }, shade)
 	new("UIStroke", { Color = data.leader and K.red or K.line2, Thickness = data.leader and 2 or 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
-	-- avatar
-	local av = new("ImageLabel", { Position = UDim2.fromOffset(22, 33), Size = UDim2.fromOffset(170, 170), BackgroundColor3 = K.panel3, BorderSizePixel = 0, ZIndex = 3,
-		Image = data.userId and ("rbxthumb://type=AvatarHeadShot&id=%d&w=420&h=420"):format(data.userId) or "" }, card)
-	new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2, Transparency = 0.6 }, av)
-	-- name + username + level
-	local nm = new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(212, 58), Size = UDim2.fromOffset(250, 52), Text = string.upper(data.name or ""),
-		TextSize = 44, FontFace = F.H, TextColor3 = K.text, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 3 }, card)
-	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.5 }, nm)
-	if data.username then
-		new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(214, 108), Size = UDim2.fromOffset(250, 18), Text = "@" .. data.username, TextSize = 13,
-			FontFace = F.M, TextColor3 = K.dim, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 3 }, card)
+
+	-- the 3 showcase items: free on the card, UNDER the info (slot 3 on top of slot 2 on top of slot 1)
+	for i = 1, 3 do
+		local v = cd.show and cd.show[i] or ""
+		if PC.Parse(v) then
+			local place = (cd.pos and cd.pos[i]) or PC.DefaultPlace(i)
+			local ok, it = pcall(PC.BuildItem, card, v, place, 2 + i)
+			if ok and it then items[i] = it elseif not ok then warn("[PlayerCards] item", v, it) end
+		end
 	end
-	local lv = new("Frame", { Position = UDim2.fromOffset(214, 146), Size = UDim2.fromOffset(86, 40), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.35, BorderSizePixel = 0, ZIndex = 3 }, card)
-	new("UIStroke", { Color = K.line2, Thickness = 1 }, lv)
-	new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(8, 0), Size = UDim2.fromOffset(26, 40), Text = "LV", TextSize = 13, FontFace = F.MB, TextColor3 = K.dim,
-		TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4 }, lv)
-	new("TextLabel", { BackgroundTransparency = 1, Position = UDim2.fromOffset(32, 0), Size = UDim2.fromOffset(50, 40), Text = data.level and tostring(data.level) or "-", TextSize = 26,
-		FontFace = F.H, TextColor3 = K.text, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4 }, lv)
-	-- tags: PARTY LEADER / READY
-	local tx = 214
+
+	-- INFO (always on top of the items): small avatar top right, NAME + LV left of it, @username under the name
+	local AV = 85
+	local avX = W - 20 - AV
+	local av = new("ImageLabel", { Position = UDim2.fromOffset(avX, 20), Size = UDim2.fromOffset(AV, AV), BackgroundColor3 = K.panel3, BorderSizePixel = 0, ZIndex = 10,
+		Image = data.userId and ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(data.userId) or "" }, card)
+	new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2, Transparency = 0.55 }, av)
+	local right = avX - 14
+	local row = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 20), Size = UDim2.fromOffset(460, 46), BackgroundTransparency = 1, ZIndex = 10 }, card)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 10) }, row)
+	local nm = new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 46), Text = string.upper(data.name or ""),
+		TextSize = 38, FontFace = F.H, TextColor3 = K.text, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11, LayoutOrder = 1 }, row)
+	new("UISizeConstraint", { MaxSize = Vector2.new(360, 46) }, nm)
+	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.35 }, nm)
+	local lvT = new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 30), RichText = true,
+		Text = ('<font color="#9499A4" size="14">LV</font> %s'):format(data.level and tostring(data.level) or "-"),
+		TextSize = 20, FontFace = F.H, TextColor3 = K.text, ZIndex = 11, LayoutOrder = 2 }, row)
+	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.4 }, lvT)
+	if data.username then
+		local un = new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 66), Size = UDim2.fromOffset(460, 20),
+			Text = "@" .. data.username, TextSize = 15, FontFace = F.MB, TextColor3 = K.dim, TextXAlignment = Enum.TextXAlignment.Right,
+			TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11 }, card)
+		new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Transparency = 0.45 }, un)
+	end
+	-- tags: PARTY LEADER / READY (top left)
+	local tx = 20
 	if data.leader then
-		local c, w = chipLbl(card, tx, 22, "PARTY LEADER", K.red, K.text)
-		c.ZIndex = 4
-		for _, ch in c:GetChildren() do ch.ZIndex = 5 end
+		local c, w = chipLbl(card, tx, 20, "PARTY LEADER", K.red, K.text)
+		c.ZIndex = 12
+		for _, ch in c:GetChildren() do ch.ZIndex = 13 end
 		tx += w + 8
 	end
 	if data.ready then
-		local c = chipLbl(card, tx, 22, "READY", rgb(24, 90, 52), K.green)
-		c.ZIndex = 4
-		for _, ch in c:GetChildren() do ch.ZIndex = 5 end
+		local c = chipLbl(card, tx, 20, "READY", rgb(24, 90, 52), K.green)
+		c.ZIndex = 12
+		for _, ch in c:GetChildren() do ch.ZIndex = 13 end
 	end
-	-- showcase slots on the right
-	local SW, SH, SG = 112, 196, 10
-	local x0 = W - 20 - 3 * SW - 2 * SG
-	for i = 1, 3 do
-		local v = cd.show and cd.show[i] or ""
-		local slot = new("Frame", { Name = "Show" .. i, Position = UDim2.fromOffset(x0 + (i - 1) * (SW + SG), (H - SH) / 2), Size = UDim2.fromOffset(SW, SH),
-			BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = PC.Parse(v) and 0.45 or 0.75, BorderSizePixel = 0, ZIndex = 3 }, card)
-		new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 1, Transparency = PC.Parse(v) and 0.7 or 0.88 }, slot)
-		if PC.Parse(v) then
-			local inner = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 4 }, slot)
-			task.defer(function() if inner.Parent then pcall(PC.ShowcaseItem, inner, v, SW, SH) end end)
-		end
-	end
-	return holder, card
+	return holder, card, items
 end
 
 return PC
