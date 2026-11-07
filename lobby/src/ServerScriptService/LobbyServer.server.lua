@@ -305,7 +305,7 @@ local function teleportGroup(code, list)
 	end
 	if #go == 0 then return end
 	local opts = Instance.new("TeleportOptions")
-	opts.ReservedServerAccessCode = code
+	opts.ReservedServerId = code
 	-- v4.9: every player's party member ids ride along, so Breakline can outline your party (TeamOutline). Cosmetic only, never trusted for gameplay.
 	local partyMap = {}
 	for _, p in go do
