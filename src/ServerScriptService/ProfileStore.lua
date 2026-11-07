@@ -1,4 +1,4 @@
--- ProfileStore v2.1 (v5.9: ESSENCE premium currency - GrantEssence / SpendEssence) (v2 v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
+-- ProfileStore v2.2 (v5.10: Streak = wins in a row, SkinsOwned / GunSkinsOwned / GunSkinEquipped mirrored as JSON attributes for the cosmetics shop) (v2.1 v5.9: ESSENCE premium currency - GrantEssence / SpendEssence) (v2 v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
 -- One DataStore record per player, shared by both places. Only the keys you CHANGED are written (so the two places never overwrite each other).
 --   Profiles.WaitFor(player)            -> waits until the profile is loaded, returns the data table (or nil)
 --   Profiles.Get(player, key)           -> value
@@ -11,7 +11,8 @@
 --                                                       receiptId = the Developer Product PurchaseId: ProcessReceipt returns PurchaseGranted
 --                                                       only when this returns true, so a purchase is never lost and never paid out twice.
 --   Profiles.SpendEssence(player, amount)          -> true when the player had enough and the new balance is saved, false otherwise.
--- Number/string keys are mirrored to Player attributes (Souls, Essence, Wins, Losses, XP, Level, Skin) so UI + AvatarService can read them.
+-- Number/string keys are mirrored to Player attributes (Souls, Essence, Wins, Losses, Streak, XP, Level, Skin) so UI + AvatarService can read them.
+-- v5.10 table keys mirrored as JSON attributes: Owned -> OwnedJson, SkinsOwned -> SkinsOwnedJson, GunSkinsOwned -> GunSkinsOwnedJson, GunSkinEquipped -> GunSkinsJson.
 -- Needs: Game Settings > Security > "Enable Studio Access to API Services" ON to save from Studio.
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
@@ -29,10 +30,13 @@ end
 
 local DEFAULTS = {
 	Souls = 0, Wins = 0, Losses = 0, XP = 0, -- XP: player level (v3.8)
+	Streak = 0,                -- v5.10: wins in a row (any mode). A loss sets it back to 0; a draw leaves it. Shown as the crown + xN above the player in the lobby.
 	Weapon = "", Sight = "",   -- last equipped loadout (to be wired into GunServer later)
 	Loadout = {},              -- lobby loadout: { Move, Weapon, Gadgets = {3}, Reserve = {3} } (item ids)
 	Skin = "OPERATOR",         -- equipped skin (ReplicatedStorage.Skins). New players start with the default skin.
-	SkinsOwned = {},           -- reserved: skins bought in the shop later (all 3 starter skins are free for now)
+	SkinsOwned = {},           -- v5.10: ids of the skin EDITIONS bought in the cosmetics shop (the 3 base skins are free for everybody)
+	GunSkinsOwned = {},        -- v5.10: GunSkins ids bought in the cosmetics shop
+	GunSkinEquipped = {},      -- v5.10: { [gunId] = GunSkins id } what is painted on each gun (mirrored as GunSkinsJson, read by GunClient / ThirdPersonServer)
 	Cards = {}, Deck = {},     -- reserved for the card system
 	Owned = {},                -- v4.7 SHOP: ids of every gun / gadget / movement ability you own (LobbyCatalog ids). Mirrored as the attribute OwnedJson.
 	StarterDone = false,       -- v4.7: true once the new-player pick (1 weapon + 1 movement) was made
@@ -66,6 +70,9 @@ local function mirror(player, k, v)
 	-- Weapon / Sight are NOT mirrored: GunServer owns those attributes in the match (mirroring "" used to wipe your gun = no damage)
 	if k == "Weapon" or k == "Sight" then return end
 	if k == "Owned" and type(v) == "table" then player:SetAttribute("OwnedJson", HttpService:JSONEncode(v)) end -- v4.7
+	if k == "SkinsOwned" and type(v) == "table" then player:SetAttribute("SkinsOwnedJson", HttpService:JSONEncode(v)) end -- v5.10
+	if k == "GunSkinsOwned" and type(v) == "table" then player:SetAttribute("GunSkinsOwnedJson", HttpService:JSONEncode(v)) end
+	if k == "GunSkinEquipped" and type(v) == "table" then player:SetAttribute("GunSkinsJson", HttpService:JSONEncode(v)) end
 	if type(v) == "number" or type(v) == "string" or type(v) == "boolean" then player:SetAttribute(k, v) end
 	if k == "XP" and Levels and type(v) == "number" then player:SetAttribute("Level", (Levels.FromXp(v))) end
 end
