@@ -27,8 +27,11 @@ function V.Damage(hum, dmg)
 	local char = hum.Parent
 	local before = hum.Health
 	hum:TakeDamage(dmg)
-	if char then stamp(char) end
-	return math.min(dmg, before), 0
+	-- v5.8: report what REALLY came off. Humanoid:TakeDamage silently does nothing while the target has a ForceField (spawn / reveal
+	-- protection), and the old code still reported the full hit, so the shooter saw damage numbers on a target that took none.
+	local dealt = math.max(0, before - hum.Health)
+	if char and dealt > 0 then stamp(char) end
+	return dealt, 0
 end
 
 local function setup(char)
