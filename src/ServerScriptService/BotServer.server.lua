@@ -183,6 +183,13 @@ function spawnBot(b, freezeFor)
 	if b.model then removeModel(b) end
 	b.token += 1
 	local token = b.token
+	-- v5.8 DAMAGE BUG FIX: the protection + freeze end times are fixed NOW, before Skins.Dress yields. Before, the ForceField was only
+	-- added after dressing (up to ~1.5 s later) and lasted 1.6 s + the freeze on top of that, so in a 1v1 round reset the bot stayed
+	-- unkillable for ~3 s after the player could already move and shoot (hundreds of damage that never came off).
+	local startedAt = os.clock()
+	local freezeEnd = startedAt + (freezeFor or 0)
+	local shieldEnd = freezeFor and math.min(freezeEnd, startedAt + (C.REVEAL_TIME or 2)) -- same moment the player's reveal protection ends
+		or (startedAt + (B.SpawnShield or 1))
 	local model = buildModel("BOT " .. b.team .. " " .. b.index)
 	if not model then return end
 	local cf = API.SpawnCF(b.team, b.slot)
@@ -212,23 +219,29 @@ function spawnBot(b, freezeFor)
 	model.DescendantAdded:Connect(function(d)
 		if d:IsA("BasePart") then pcall(function() d.CollisionGroup = "WPPlayer" end) end
 	end)
-	local ff = Instance.new("ForceField") -- a short grace period after (re)spawning
-	ff.Visible = false
-	ff.Parent = model
-	b.spawnShield = true
-	Debris:AddItem(ff, 1.6 + (freezeFor or 0))
-	task.delay(1.6 + (freezeFor or 0), function() if b.token == token then b.spawnShield = nil end end)
+	local shieldLeft = shieldEnd - os.clock()
+	if shieldLeft > 0.05 then -- a short grace period after (re)spawning, ends together with the freeze (1v1 reset) or B.SpawnShield later
+		local ff = Instance.new("ForceField")
+		ff.Visible = false
+		ff.Parent = model
+		b.spawnShield = true
+		Debris:AddItem(ff, shieldLeft)
+		task.delay(shieldLeft, function() if b.token == token then b.spawnShield = nil end end)
+	else
+		b.spawnShield = nil
+	end
 	b.ammo, b.reloadUntil, b.nextShot, b.burstUntil, b.pauseUntil = b.cfg.MagSize, 0, 0, 0, 0
 	b.target, b.visible, b.lastSeen, b.lastSeenPos, b.seenAt = nil, false, 0, nil, 0
 	b.wps, b.wpi, b.goal, b.planAt, b.stuckAt, b.stuckPos = nil, 1, nil, 0, os.clock(), root.Position
 	b.alive = true
-	b.frozenUntil = os.clock() + (freezeFor or 0)
+	b.frozenUntil = freezeEnd
 	hum.Died:Connect(function() onDied(b) end)
 	local ph = API.Phase()
-	if ph == "Playing" and not freezeFor then
+	local freezeLeft = freezeEnd - os.clock()
+	if ph == "Playing" and (not freezeFor or freezeLeft <= 0) then
 		root.Anchored = false
 	elseif freezeFor then
-		task.delay(freezeFor, function() if b.token == token and root.Parent and API.Phase() == "Playing" then root.Anchored = false end end)
+		task.delay(freezeLeft, function() if b.token == token and root.Parent and API.Phase() == "Playing" then root.Anchored = false end end)
 	end
 	pcall(function() root:SetNetworkOwner(nil) end) -- the server drives the bot (no client can claim it)
 end
