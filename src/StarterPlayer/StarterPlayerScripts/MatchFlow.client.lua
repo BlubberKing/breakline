@@ -347,8 +347,17 @@ local function runPregame(token)
 	local function applyItem(kind, idx, id)
 		if kind == "weapon" then loadout.Weapon = id
 		elseif kind == "move" then loadout.Move = id
-		elseif kind == "gadget" then loadout.Gadgets[idx] = id
-		else loadout.Reserve[idx] = id end
+		else
+			-- v5.11: same rule as the lobby - picking an item that already sits in another slot of the same row SWAPS the two slots,
+			-- so a row can never hold the same gadget / reserve item twice
+			local arr = (kind == "gadget") and loadout.Gadgets or loadout.Reserve
+			if id ~= "" then
+				for j = 1, 3 do
+					if j ~= idx and arr[j] == id then arr[j] = arr[idx] break end
+				end
+			end
+			arr[idx] = id
+		end
 		LoadoutR:FireServer({ Weapon = loadout.Weapon, Move = loadout.Move, Gadgets = table.clone(loadout.Gadgets), Reserve = table.clone(loadout.Reserve) })
 		if dock then dock:Paint() end
 	end
