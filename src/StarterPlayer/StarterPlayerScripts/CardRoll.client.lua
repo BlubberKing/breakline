@@ -36,6 +36,7 @@ local ROLL = 1.5                     -- each reel spins this long -> lands at 1.
 local WIND = 0.14                    -- the little wind-back before a reel launches
 local CW, CH = 300, 420              -- card size on this screen
 local HM = 4                         -- v7: margin between a card and its outline (was 14: the card looked too small for its frame)
+local CARD_R = math.floor(9 * CW / (CardArt.W or 250) + 0.5) -- v5.8: the card's own corner radius on this screen (CardArt draws 9 px at 250 wide)
 local GAP = 70                       -- space between reels
 local STEP = CH + 26                 -- card spacing on a spinning strip
 local N = 6                          -- cards per strip (holder 0 = the card it lands on, holder 1 = the one shown just before it)
@@ -267,8 +268,11 @@ local function runRoll(my)
 	local function buildReel(i)
 		local cx = 960 + (i - 2) * (CW + GAP)
 		local r = { i = i, cx = cx, id = offer.cards[i], R = Cards.Rarity(offer.cards[i]), landed = false, started = false, lastTick = 0 }
+		-- v5.8: the housing has NO fill any more (its dark square showed in the card's rounded corners while rolling, behind the landed
+		-- card, and stayed behind as grey boxes after a pick). Only a thin rounded outline + the red tab + the notches are left.
 		local housing = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, CY), Size = UDim2.fromOffset(CW + HM * 2, CH + HM * 2),
-			BackgroundColor3 = K.panel, BorderSizePixel = 0, Visible = false }, cv)
+			BackgroundColor3 = K.panel, BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false }, cv)
+		new("UICorner", { CornerRadius = UDim.new(0, CARD_R + HM) }, housing)
 		new("UIStroke", { Color = K.line2, Thickness = 1 }, housing)
 		new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.fromOffset(60, 3), BackgroundColor3 = K.red, BorderSizePixel = 0 }, housing)
 		for _, side in { 0, 1 } do -- pay-line notches
@@ -278,8 +282,11 @@ local function runRoll(my)
 		end
 		r.housing = housing
 		r.hscale = new("UIScale", { Scale = 0.7 }, housing)
-		local win = new("Frame", { Position = UDim2.fromOffset(HM, HM), Size = UDim2.fromOffset(CW, CH), BackgroundColor3 = K.void, BorderSizePixel = 0,
+		-- v5.8: the reel window is a CanvasGroup with the card's corner radius: no black fill, and everything inside (cards, shading, flash)
+		-- is clipped to the rounded card shape, so no black corners show while the cards spin.
+		local win = new("CanvasGroup", { Position = UDim2.fromOffset(HM, HM), Size = UDim2.fromOffset(CW, CH), BackgroundTransparency = 1, BorderSizePixel = 0,
 			ClipsDescendants = true }, housing)
+		new("UICorner", { CornerRadius = UDim.new(0, CARD_R) }, win)
 		r.win = win
 		r.holders = {}
 		for k = 0, N - 1 do
@@ -288,9 +295,12 @@ local function runRoll(my)
 			r.holders[k] = h
 		end
 		-- depth: dark at the top + bottom of the window, and speed streaks
+		r.shade = {}
 		for _, cfg in { { 0, 90 }, { 1, 270 } } do
-			local g = new("Frame", { AnchorPoint = Vector2.new(0, cfg[1]), Position = UDim2.fromScale(0, cfg[1]), Size = UDim2.new(1, 0, 0, 90), BackgroundColor3 = BLACK, BorderSizePixel = 0 }, win)
+			local g = new("Frame", { AnchorPoint = Vector2.new(0, cfg[1]), Position = UDim2.fromScale(0, cfg[1]), Size = UDim2.new(1, 0, 0, 90), BackgroundColor3 = BLACK,
+				BackgroundTransparency = 0.25, BorderSizePixel = 0 }, win) -- v5.8: softer (was a near-black band)
 			new("UIGradient", { Rotation = cfg[2], Transparency = NumberSequence.new(0.1, 1) }, g)
+			table.insert(r.shade, g)
 		end
 		local streaks = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, win)
 		for _ = 1, 16 do
@@ -343,7 +353,7 @@ local function runRoll(my)
 		r.api = api
 		r.cardHolder = holder
 		r.dim = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BackgroundTransparency = 1, BorderSizePixel = 0 }, slot)
-		new("UICorner", { CornerRadius = UDim.new(0, 10) }, r.dim)
+		new("UICorner", { CornerRadius = UDim.new(0, CARD_R) }, r.dim) -- v5.8: same radius as the card (was 10: a sliver of dim showed at the corners)
 		slot.Activated:Connect(function()
 			if not s.picked and T() >= REVEAL - 0.5 and s.lockIn then s.lockIn(r.i, false) end
 		end)
@@ -373,6 +383,7 @@ local function runRoll(my)
 		r.hscale.Scale = 1.07
 		tween(r.hscale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
 		r.streaks.Visible = false
+		for _, g in r.shade do tween(g, TweenInfo.new(0.25), { BackgroundTransparency = 1 }) end -- v5.8: the landed card shows clean
 		burst(cv, r.cx, CY, r.R, rank)
 		sfx("land", 0.9 + rank * 0.05, 1)
 		-- v4.9: ranks moved up one (EPIC = 4 was added), so the old thresholds are +1: rare sound from Legendary, shake from Mythic
@@ -416,6 +427,19 @@ local function runRoll(my)
 		end
 	end
 
+	-- v5.8: fade a reel's frame (outline, red tab, notches) out and hide it
+	local function fadeHousing(h)
+		if not h or not h.Parent then return end
+		local ti = TweenInfo.new(0.25)
+		for _, d in h:GetDescendants() do
+			if d:IsA("UIStroke") then tween(d, ti, { Transparency = 1 })
+			elseif d:IsA("Frame") and not d:IsA("CanvasGroup") and d.BackgroundTransparency < 1 then tween(d, ti, { BackgroundTransparency = 1 }) end
+		end
+		local st = h:FindFirstChildOfClass("UIStroke")
+		if st then tween(st, ti, { Transparency = 1 }) end
+		task.delay(0.26, function() if h.Parent then h.Visible = false end end)
+	end
+
 	local function lockIn(i, auto)
 		if s.picked == i then return end
 		local first = s.picked == nil
@@ -431,7 +455,7 @@ local function runRoll(my)
 				tween(r.sscale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = on and 1.1 or 0.9 })
 				tween(r.slot, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.fromOffset(r.cx, CY + (on and -10 or 60)) })
 				tween(r.dim, TweenInfo.new(0.3), { BackgroundTransparency = on and 1 or 0.35 })
-				tween(r.housing, TweenInfo.new(0.3), { BackgroundTransparency = on and 0 or 0.6 })
+				fadeHousing(r.housing) -- v5.8: the frame goes away for every reel (it used to turn into an opaque / grey box behind each card)
 				r.key.Visible = false
 				r.rarityLbl.TextTransparency = on and 0 or 0.6
 			end
