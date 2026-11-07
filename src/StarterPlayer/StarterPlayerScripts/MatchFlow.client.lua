@@ -294,10 +294,11 @@ local function runPregame(token)
 		edges[i] = e
 	end
 
+	local PREGAME_LOOK_Y = 4.2 -- v5.8: camera look height on the squad (about 70 px higher on a 1080p screen than v5.7)
 	local scene = newScene(root, 3, true)
 	scene.cam.FieldOfView = 34
 	local cam = scene.cam
-	local baseCam = Vector3.new(0, 4.9, 28) -- v5.7: look point is higher + camera a bit higher, so the squad sits lower on the screen
+	local baseCam = Vector3.new(0, 4.2, 28) -- v5.8: squad raised again (v5.7 4.9 / look 5.3 put the feet into the loadout dock); LOOK_Y below
 	addStars(scene.world, 160, 60, Vector3.new(0, 4, -30), 40)
 	local figs, figKey = {}, ""
 
@@ -438,7 +439,7 @@ local function runPregame(token)
 	renderFns.pregame = function(dt)
 		local t = os.clock() - t0
 		-- camera drift
-		cam.CFrame = CFrame.lookAt(baseCam + Vector3.new(math.sin(t * 0.35) * 0.9, math.sin(t * 0.5) * 0.15, 0), Vector3.new(0, 5.3, 0)) -- (was 3.6)
+		cam.CFrame = CFrame.lookAt(baseCam + Vector3.new(math.sin(t * 0.35) * 0.9, math.sin(t * 0.5) * 0.15, 0), Vector3.new(0, PREGAME_LOOK_Y, 0)) -- v5.8: 4.2 (v5.7: 5.3, first: 3.6). Lower = squad higher on screen
 		for _, f in figs do f.fig:Update(t, dt) end
 		local vs = scene.vp.AbsoluteSize
 		for i, f in figs do
