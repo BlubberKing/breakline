@@ -1,11 +1,17 @@
--- ProfileStore v2 (v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
+-- ProfileStore v2.1 (v5.9: ESSENCE premium currency - GrantEssence / SpendEssence) (v2 v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
 -- One DataStore record per player, shared by both places. Only the keys you CHANGED are written (so the two places never overwrite each other).
 --   Profiles.WaitFor(player)            -> waits until the profile is loaded, returns the data table (or nil)
 --   Profiles.Get(player, key)           -> value
 --   Profiles.Set(player, key, value)    -> marks the key to be saved
 --   Profiles.Increment(player, key, n)  -> number keys
 --   Profiles.Save(player)               -> save now (call before teleporting a player away)
--- Number/string keys are mirrored to Player attributes (Souls, Wins, Losses, XP, Level, Skin) so UI + AvatarService can read them.
+--   v5.9 ESSENCE (premium currency, bought with Robux). Never change it with Set / Increment - use these two. Both write to the DataStore
+--   right away (UpdateAsync on the saved value, so nothing is lost or doubled even if the other place saved in between) and yield:
+--   Profiles.GrantEssence(player, amount, receiptId) -> true when the Essence is safely saved (or this receiptId was already granted).
+--                                                       receiptId = the Developer Product PurchaseId: ProcessReceipt returns PurchaseGranted
+--                                                       only when this returns true, so a purchase is never lost and never paid out twice.
+--   Profiles.SpendEssence(player, amount)          -> true when the player had enough and the new balance is saved, false otherwise.
+-- Number/string keys are mirrored to Player attributes (Souls, Essence, Wins, Losses, XP, Level, Skin) so UI + AvatarService can read them.
 -- Needs: Game Settings > Security > "Enable Studio Access to API Services" ON to save from Studio.
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
@@ -30,7 +36,10 @@ local DEFAULTS = {
 	Cards = {}, Deck = {},     -- reserved for the card system
 	Owned = {},                -- v4.7 SHOP: ids of every gun / gadget / movement ability you own (LobbyCatalog ids). Mirrored as the attribute OwnedJson.
 	StarterDone = false,       -- v4.7: true once the new-player pick (1 weapon + 1 movement) was made
+	Essence = 0,               -- v5.9: premium currency (Robux purchases). Only GrantEssence / SpendEssence change it.
+	EssenceReceipts = {},      -- v5.9: the last purchase ids already paid out (stops a repeated ProcessReceipt from granting twice)
 }
+local RECEIPTS_KEPT = 50
 
 local M = {}
 local cache, dirty, loading = {}, {}, {}
@@ -130,6 +139,73 @@ function M.Save(player)
 		warn("[ProfileStore] could not save", player.Name)
 		for k in snapshot do if dirty[player] then dirty[player][k] = true end end
 	end
+end
+
+-- ===== v5.9: Essence (premium) - written straight to the DataStore =====
+local function essenceUpdate(player, fn)
+	local d = cache[player]
+	if not d then return false end
+	local result
+	local ok = retry(function()
+		store:UpdateAsync("P_" .. player.UserId, function(old)
+			old = type(old) == "table" and old or {}
+			if type(old.Essence) ~= "number" then old.Essence = 0 end
+			if type(old.EssenceReceipts) ~= "table" then old.EssenceReceipts = {} end
+			result = fn(old)
+			if result == "nochange" then return nil end -- nothing to write (cancels the update)
+			return old
+		end)
+	end)
+	if not ok then return false end
+	return result
+end
+
+function M.GrantEssence(player, amount, receiptId)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 or not cache[player] then return false end
+	local newBalance, receipts
+	local res = essenceUpdate(player, function(old)
+		if receiptId ~= nil and table.find(old.EssenceReceipts, tostring(receiptId)) then
+			newBalance, receipts = old.Essence, old.EssenceReceipts
+			return "nochange" -- already paid out
+		end
+		old.Essence += amount
+		if receiptId ~= nil then
+			table.insert(old.EssenceReceipts, tostring(receiptId))
+			while #old.EssenceReceipts > RECEIPTS_KEPT do table.remove(old.EssenceReceipts, 1) end
+		end
+		newBalance, receipts = old.Essence, old.EssenceReceipts
+		return "ok"
+	end)
+	if res == false or newBalance == nil then return false end
+	local d = cache[player]
+	if d then
+		d.Essence, d.EssenceReceipts = newBalance, receipts
+		mirror(player, "Essence", newBalance)
+	end
+	return true
+end
+
+function M.SpendEssence(player, amount)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 or not cache[player] then return false end
+	if (cache[player].Essence or 0) < amount then return false end
+	local newBalance
+	local res = essenceUpdate(player, function(old)
+		if old.Essence < amount then
+			newBalance = old.Essence
+			return "nochange"
+		end
+		old.Essence -= amount
+		newBalance = old.Essence
+		return "ok"
+	end)
+	local d = cache[player]
+	if d and newBalance ~= nil then
+		d.Essence = newBalance
+		mirror(player, "Essence", newBalance)
+	end
+	return res == "ok"
 end
 
 Players.PlayerAdded:Connect(function(p) task.spawn(M.Load, p) end)
