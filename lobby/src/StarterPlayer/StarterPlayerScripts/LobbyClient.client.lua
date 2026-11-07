@@ -1,3 +1,8 @@
+-- LobbyClient v6.1 (v5.12, owner Nov 7): the player cards have the new PlayerCards v2 layout (no EDIT CARD button, LEAVE PARTY bottom left, the cards are
+--   swapped in the same frame so the showcase models never blink); the home-screen currency plate is styled (gradient, double frame, red accent,
+--   divider); COSMETICS / INVITE labels under the home round buttons; the small line under PLAY is back (home: the last mode, e.g. BREAKLINE // 3V3;
+--   play screen: SELECT GAMEMODE); READY UP text centred + bigger and READY UP closes the game modes screen; CARD INDEX moved from the play screen's
+--   top bar to the bottom row, right of the RESERVE tiles (left of COSMETICS | PLAY | INVITE).
 -- LobbyClient v6 (v5.11, owner Nov 7): PLAY SCREEN REBUILT -
 --   * left half: PLAYER CARDS (PlayerCards module) - yours always on top, two party slots under it (empty = INVITE). Each card: background banner,
 --     avatar picture, name, level, PARTY LEADER / READY tags, 3 showcase slots on the right. EDIT CARD opens the PLAYER CARD tab of the cosmetics locker.
@@ -290,17 +295,38 @@ local function currencyWidget(parent, right, y, big)
 	local H = big and 60 or 40
 	local w = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, y), Size = UDim2.fromOffset(640, H),
 		BackgroundTransparency = 1 }, parent)
-	if big then -- v5.11: a slight dark plate behind the currencies on the home screen (they sat straight on the 3D world)
-		w.AutomaticSize = Enum.AutomaticSize.X
-		w.Size = UDim2.fromOffset(0, H)
-		w.BackgroundColor3, w.BackgroundTransparency = C.void, 0.38
-		border(w, C.line, 1, 0.2)
-		new("UIPadding", { PaddingLeft = UDim.new(0, 18), PaddingRight = UDim.new(0, 20), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, w)
+	local row = w
+	if big then
+		-- v5.12: a styled plate (was a plain black box): dark gradient body, a light outer frame + a fine inner frame, a red accent bar on the left,
+		-- a hairline highlight on top and a divider between SOULS and ESSENCE. The plate sizes itself to what is inside.
+		local PAD_L, PAD_R, PAD_Y = 26, 24, 8
+		w.Size = UDim2.fromOffset(420, H + PAD_Y * 2)
+		w.BackgroundColor3, w.BackgroundTransparency = WHITE, 0.1
+		grad(w, rgb(28, 30, 38), rgb(8, 9, 12), 90)
+		border(w, C.line2, 1.5, 0.1)
+		local inner = new("Frame", { Position = UDim2.fromOffset(4, 4), Size = UDim2.new(1, -8, 1, -8), BackgroundTransparency = 1 }, w)
+		border(inner, C.line, 1, 0.3)
+		new("Frame", { Size = UDim2.new(0, 4, 1, 0), BackgroundColor3 = C.red, BorderSizePixel = 0 }, w)
+		local hi = new("Frame", { Position = UDim2.fromOffset(4, 0), Size = UDim2.new(1, -4, 0, 1), BackgroundColor3 = WHITE, BackgroundTransparency = 0.7, BorderSizePixel = 0 }, w)
+		fade(hi, 0, 0, 1)
+		row = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -PAD_R, 0.5, 0), AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.fromOffset(0, H), BackgroundTransparency = 1 }, w)
+		local function fit()
+			local k = row.AbsoluteSize.Y / H -- the UIScale of the canvas
+			if k > 0 then w.Size = UDim2.fromOffset(math.ceil(row.AbsoluteSize.X / k) + PAD_L + PAD_R, H + PAD_Y * 2) end
+		end
+		row:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+		task.defer(fit)
 	end
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right,
-		VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, big and 40 or 26) }, w)
+		VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, big and 24 or 26) }, row)
+	if big then
+		local div = new("Frame", { Size = UDim2.fromOffset(1, H - 10), BackgroundColor3 = C.line2, BackgroundTransparency = 0.2, BorderSizePixel = 0, LayoutOrder = 2 }, row)
+		new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0),
+			NumberSequenceKeypoint.new(1, 1) }) }, div)
+	end
 	local function block(order, name, attr, color, makeIcon)
-		local b = new("Frame", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, H), BackgroundTransparency = 1, LayoutOrder = order }, w)
+		local b = new("Frame", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, H), BackgroundTransparency = 1, LayoutOrder = order }, row)
 		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center,
 			SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, big and 12 or 9) }, b)
 		makeIcon(b, big and 42 or 28).LayoutOrder = 1
@@ -321,7 +347,7 @@ local function currencyWidget(parent, right, y, big)
 		upd()
 	end
 	block(1, "SOULS", "Souls", C.soul, soulIcon)
-	block(2, "ESSENCE", "Essence", UI.C.essence, function(p, sz) return UI.EssenceIcon(p, sz) end)
+	block(3, "ESSENCE", "Essence", UI.C.essence, function(p, sz) return UI.EssenceIcon(p, sz) end)
 	return w
 end
 
@@ -386,6 +412,7 @@ local MODES = {
 		facts = { "Red vs Blue, one player each", "First to 5 kills wins the round", "Pure gunfights: aim, gadgets, positioning", "Solo only: leave your party to queue" },
 	},
 }
+local lastMode = "breakline" -- v5.12: the mode last readied up for (the home PLAY block shows it)
 local function modeById(id) for _, m in MODES do if m.id == id then return m end end return MODES[1] end
 
 local loadout = { Weapon = Catalog.DefaultWeapon, Move = "", Gadgets = { "", "", "" }, Reserve = { "", "", "" } }
@@ -531,6 +558,11 @@ plusIcon(homePlus, 24, C.text)
 -- v5.9: CARD INDEX moved down, closer to PLAY + the two round buttons; the searching text now sits above the CARD INDEX button
 local hudStatus = lbl(hudC, "", 16, PLAY_X - 60, BY - 116, PLAY_W + 120, 24, C.text, "HM", Enum.TextXAlignment.Center)
 cardIndexButton(hudC, CL_X, BY - 78, CL_W, 58) -- v4.3: CARD INDEX (above PLAY)
+-- v5.12: COSMETICS / INVITE under the two round buttons on the home screen too (same look as the play screen)
+for _, spec in { { "COSMETICS", CL_X - 14 }, { "INVITE", RIGHT - CIRCLE - 14 } } do
+	local l = lbl(hudC, spec[1], 15, spec[2], BY + BH + 4, CIRCLE + 28, 20, C.text, "H", Enum.TextXAlignment.Center)
+	new("UIStroke", { Color = BLACK, Thickness = 1.5, Transparency = 0.5 }, l)
+end
 
 -- ================= play screen =================
 local screen = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.void, BorderSizePixel = 0, Visible = false,
@@ -767,7 +799,7 @@ end
 -- ----- top bar -----
 makeLogo(stage, 56, 34, 44).ZIndex = 5
 currencyWidget(stage, RIGHT - 152 - 24, 38, false).ZIndex = 5 -- v5.9: compact (icons + balances) while the menu is open
-cardIndexButton(stage, 1100, 32, 250, 52).ZIndex = 5 -- v4.3: CARD INDEX in the top bar (left of the currencies)
+-- (v5.12: the CARD INDEX button moved from the top bar into the bottom row, right of the RESERVE tiles - see the loadout dock)
 local closeBtn = UI.CloseButton(stage, "BACK", { Position = UDim2.fromOffset(RIGHT - 152, 34), ZIndex = 5 }) -- v5.9: clear BACK button
 do
 	local rule = frame(stage, 56, 98, RIGHT - 56, 1, C.line, 0)
@@ -932,6 +964,12 @@ do -- dock geometry: group labels sit above the tiles, a slim line splits active
 	x += 2 + RES_GAP
 	groupLabel("RESERVE", x, SQ * 3)
 	for i = 1, 3 do makeSlot("reserve", i, x + (i - 1) * (SQ + SQ_GAP), y, SQ, SQ, "tile", "R" .. i) end
+end
+-- v5.12: CARD INDEX sits right of the RESERVE tiles, between the loadout and the COSMETICS | PLAY | INVITE buttons (was in the top bar)
+do
+	local x0 = DOCK_X + DOCK_W + 26
+	local x1 = CL_X - 30
+	cardIndexButton(stage, x0, BY + 8, x1 - x0, BH - 16).ZIndex = 5
 end
 
 -- ================= overlay (loadout picker) over the stage =================
@@ -1382,7 +1420,7 @@ local function renderCards()
 				leader = n > 1 and m.id == leader, ready = rm[tostring(m.id)] ~= nil, card = PlayerCards.Read(p), me = m.me,
 			}
 			datas[i] = d
-			table.insert(key, ("%d:%s:%s:%s:%s:%s"):format(m.id, tostring(d.level), tostring(d.leader), tostring(d.ready), d.card.bg, table.concat(d.card.show, ",")))
+			table.insert(key, ("%d:%s:%s:%s:%s:%s"):format(m.id, tostring(d.level), tostring(d.leader), tostring(d.ready), tostring(d.name), HttpService:JSONEncode(d.card)))
 		else
 			table.insert(key, "-")
 		end
@@ -1390,23 +1428,18 @@ local function renderCards()
 	local k = table.concat(key, "|") .. tostring(n)
 	if k == cardKey then return end
 	cardKey = k
-	cardLayer:ClearAllChildren()
+	-- v5.12: the new cards are built first and the old ones removed after, in the same frame (the showcase models are cloned, not rebuilt), so nothing blinks
+	local oldCards = cardLayer:GetChildren()
 	for i = 1, 3 do
 		local y = (i - 1) * (CARD_H + CARD_GAP)
 		local d = datas[i]
 		if d then
 			local holder = PlayerCards.Render(cardLayer, d, CARD_W)
 			holder.Position = UDim2.fromOffset(0, y)
-			if d.me then
-				local edit = button(holder, "EDIT CARD", 312, 146, 132, 40, "ghost", 16)
-				edit.ZIndex = 8
-				grow(edit, 1.05)
-				edit.MouseButton1Click:Connect(function() player:SetAttribute("CosmeticsOpen", "card") end)
-				if n > 1 then
-					local lv = button(holder, "LEAVE PARTY", 214, 196, 132, 28, "danger", 13)
-					lv.ZIndex = 8
-					lv.MouseButton1Click:Connect(function() LeaveR:FireServer() end)
-				end
+			if d.me and n > 1 then -- (v5.12: the EDIT CARD button is gone; the card is edited in the cosmetics, PLAYER CARD tab)
+				local lv = button(holder, "LEAVE PARTY", 20, 190, 132, 28, "danger", 13)
+				lv.ZIndex = 8
+				lv.MouseButton1Click:Connect(function() LeaveR:FireServer() end)
 			end
 		else
 			local holder = PlayerCards.Render(cardLayer, { empty = true }, CARD_W)
@@ -1418,6 +1451,7 @@ local function renderCards()
 			b.MouseButton1Click:Connect(openInvite)
 		end
 	end
+	for _, o in oldCards do o:Destroy() end
 end
 
 -- PROMOTE / KICK on the front of every teammate's podium (only the party leader sees them)
@@ -1484,6 +1518,9 @@ do
 			lbl(card, fact, 15, fx + 18, fy, 430, 24, C.text, "B").TextTruncate = Enum.TextTruncate.AtEnd
 		end
 		local btn, main, sub, paint = actionBlock(card, MW - 28 - 360, MH - 24 - 76, 360, 76, "READY UP", "")
+		-- v5.12: the READY UP text is centred in the button and bigger (it sat in the top left corner)
+		main.TextXAlignment, sub.TextXAlignment = Enum.TextXAlignment.Center, Enum.TextXAlignment.Center
+		main.TextSize = 36
 		modeCards[m.id] = { card = card, st = st, btn = btn, main = main, sub = sub, paint = paint, m = m }
 	end
 	-- locked placeholder modes (TBD names), small, under the live ones
@@ -1536,15 +1573,27 @@ paintModes = function()
 		local style, main, sub = modeState(id)
 		c.paint(style)
 		c.main.Text, c.sub.Text = main, sub
+		-- v5.12: centred: one line = in the middle of the button, two lines = stacked around the middle (the chevron keeps its spot on the right)
+		if sub == "" then
+			c.main.Position, c.main.Size = UDim2.fromOffset(16, 0), UDim2.fromOffset(328, 76)
+		else
+			c.main.Position, c.main.Size = UDim2.fromOffset(16, 6), UDim2.fromOffset(328, 42)
+			c.sub.Position, c.sub.Size = UDim2.fromOffset(16, 48), UDim2.fromOffset(328, 18)
+		end
 		c.st.Color = (style == "cancel") and C.red or C.line
 		c.st.Thickness = (style == "cancel") and 2 or 1
 	end
 end
+local closeModes -- forward (v5.12: READY UP closes the screen)
 for id, c in modeCards do
 	c.btn.MouseButton1Click:Connect(function()
 		local _, _, _, act = modeState(id)
 		if act == "cancel" or act == "unready" then ReadyR:FireServer(nil)
-		elseif act == "ready" then ReadyR:FireServer(id) end
+		elseif act == "ready" then
+			ReadyR:FireServer(id)
+			lastMode = id
+			closeModes() -- v5.12: READY UP closes the game modes screen (the PLAY block shows the search / ready state)
+		end
 	end)
 end
 local function openModes()
@@ -1553,7 +1602,7 @@ local function openModes()
 	setView("home")
 	paintModes()
 end
-local function closeModes()
+closeModes = function()
 	modesOpen = false
 	modesRoot.Visible = false
 end
@@ -1597,7 +1646,7 @@ refreshQueue = function()
 		startMain.Text, startSub.Text = "READY", ("%s  //  %d / %d READY"):format(modeById(mine).name, readyN, #list)
 		startPaint("go")
 	else
-		startMain.Text, startSub.Text = "PLAY", ""
+		startMain.Text, startSub.Text = "PLAY", "SELECT GAMEMODE" -- v5.12: the small line under PLAY is back
 		startPaint("go")
 	end
 	hudStatus.Text = tp and "JOINING MATCH..." or (q and ("SEARCHING FOR PLAYERS  " .. qTime) or "")
@@ -1611,7 +1660,8 @@ refreshQueue = function()
 		homePaint("cancel")
 		homeQueueBar.Visible, homeQueueEdge.Transparency = true, 0
 	else
-		homeMain.Text, homeSub.Text = "PLAY", ""
+		local lm = modeById(lastMode)
+		homeMain.Text, homeSub.Text = "PLAY", lm.name .. "  //  " .. ((lm.id == "1v1") and "1V1" or "3V3") -- v5.12: the small line under PLAY is back
 		homePaint("go")
 		homeQueueBar.Visible, homeQueueEdge.Transparency = false, 1
 	end
