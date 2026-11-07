@@ -23,6 +23,7 @@ local Weapons = require(RS:WaitForChild("WeaponConfig"))
 local GunMath = require(RS:WaitForChild("GunMath"))
 local Spring = require(RS:WaitForChild("Spring"))
 local GunModels = require(RS:WaitForChild("GunModels"))
+local GunSkins = RS:FindFirstChild("GunSkins") and require(RS.GunSkins) or nil -- v5.10: the skin you painted on this gun in the lobby
 local Sfx = require(RS:WaitForChild("Sfx"))
 local TimeScale = require(RS:WaitForChild("TimeScale"))
 local HitFX = require(RS:WaitForChild("HitFX"))
@@ -410,7 +411,7 @@ local function equip(id, sightId)
 	if not Weapons.HasSight(cfg, sightId) then sightId = cfg.DefaultSight end
 	INTERVAL = 60 / cfg.RPM
 
-	built = GunModels.BuildViewmodel(cfg.Model, sightId, VM_SCALE)
+	built = GunModels.BuildViewmodel(cfg.Model, sightId, VM_SCALE, nil, GunSkins and GunSkins.Equipped(player, cfg.Id) or nil) -- v5.10: + equipped gun skin
 	sight = built.Sight
 	local ownerTag = Instance.new("ObjectValue") -- lets MatchClient tell whose viewmodel this is (and remove leftovers after a respawn)
 	ownerTag.Name = "Owner"
