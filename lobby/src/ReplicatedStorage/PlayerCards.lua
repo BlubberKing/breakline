@@ -1,4 +1,9 @@
--- PlayerCards v2 (ModuleScript in ReplicatedStorage, named "PlayerCards") - LOBBY place only. NEW in v5.11, v2 in v5.12.
+-- PlayerCards v3 (ModuleScript in ReplicatedStorage, named "PlayerCards") - LOBBY place only. NEW in v5.11, v2 in v5.12, v3 in v5.13.
+-- v5.13 (owner Nov 7): (1) every showcase item also keeps the ANGLE the player gave it in the REPOSITION view: placement fields yaw / pitch (degrees).
+--   A skin / gun skin is turned any way (yaw all round, pitch up to PC.PITCH_MAX), exactly like the drag-to-turn in the cosmetics shop, and re-fitted
+--   into its box at that angle. A power-up card can only lean a little (PC.CARD_TILT degrees left / right / up / down): it is drawn as a real
+--   perspective picture cut from the baked card sheet (PC.TiltCard, an 8 x 8 grid of image pieces + the live text placed on top), no image upload.
+--   Old saves have no yaw / pitch = 0 = the old look. (2) the LV and the level number next to the name are a bit bigger (LV 14 -> 17 px, number 20 -> 25 px).
 -- v5.12 (owner Nov 7): the card layout changed and the 3 showcase items are FREE: the player moves, resizes and turns each one on the card
 --   (cosmetics locker, PLAYER CARD tab). No more dark boxes behind the items. The INFO always sits on top of the items:
 --     top right  = a small avatar picture (half the old size)
@@ -15,7 +20,9 @@
 --   PC.IsFree(id)                                 free banners belong to everybody
 --   PC.Read(player) -> { bg, show = {3}, pos = {3} }  the card a player shows (defaults filled in)
 --   PC.Parse(value) -> kind, id                   "skin:ID" -> "skin", "ID"  (kinds: skin / gun / card)
---   PC.DefaultPlace(i) / PC.CleanPlace(t, i)      placement of showcase item i (defaults / a checked copy)
+--   PC.DefaultPlace(i) / PC.CleanPlace(t, i, kind) placement of showcase item i (defaults / a checked copy). v5.13: { x, y, s, r, yaw, pitch }
+--   PC.MakeView(value, boxW, boxH, vpW, vpH, yaw, pitch) / PC.ViewCam(...)   3D picture of a skin / gun skin (v5.13: at any angle)
+--   PC.TiltCard(parent, cardId, width) -> { holder, set(yaw, pitch) }        v5.13: a power-up card leaning in 3D (baked cards only, else nil)
 --   PC.DrawBanner(parent, id, animate)            fills `parent` (any size) with the banner
 --   PC.Render(parent, data, width) -> holder, card, items
 --                                                 a whole card. data = { userId, name, username, level, leader, ready, card = {bg, show, pos}, empty }
@@ -238,22 +245,38 @@ end
 -- v5.12: free placement of the 3 showcase items. The default = the three old slot spots (right side of the card).
 PC.SW, PC.SH = 112, 196                 -- the item box at size 1 (the old slot size)
 PC.SCALE_MIN, PC.SCALE_MAX = 0.35, 2.5
+PC.CARD_TILT = 15  -- v5.13: a power-up card leans at most this many degrees each way (REPOSITION view)
+PC.PITCH_MAX = 72  -- v5.13: how far a skin / gun skin can be tipped toward / away from you (the same limit as the shop preview)
 local SLOT_GAP = 10
 function PC.DefaultPlace(i)
 	local x0 = PC.W - 20 - 3 * PC.SW - 2 * SLOT_GAP
-	return { x = x0 + (i - 1) * (PC.SW + SLOT_GAP) + PC.SW / 2, y = PC.H / 2, s = 1, r = 0 }
+	return { x = x0 + (i - 1) * (PC.SW + SLOT_GAP) + PC.SW / 2, y = PC.H / 2, s = 1, r = 0, yaw = 0, pitch = 0 }
 end
 local function num(v) return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge end
+local function wrap180(a)
+	a = a % 360
+	if a > 180 then a -= 360 end
+	return a
+end
 -- a checked copy of a placement (anything odd falls back to the default spot). The server uses the same function.
-function PC.CleanPlace(t, i)
+-- v5.13: yaw / pitch (the REPOSITION angle) are optional (missing = 0, so old saves keep their look); kind = "card" limits them to PC.CARD_TILT.
+function PC.CleanPlace(t, i, kind)
 	if type(t) ~= "table" or not (num(t.x) and num(t.y) and num(t.s) and num(t.r)) then return PC.DefaultPlace(i) end
-	local r = t.r % 360
-	if r > 180 then r -= 360 end
+	local yaw = num(t.yaw) and wrap180(t.yaw) or 0
+	local pitch = num(t.pitch) and t.pitch or 0
+	if kind == "card" then
+		yaw = math.clamp(yaw, -PC.CARD_TILT, PC.CARD_TILT)
+		pitch = math.clamp(pitch, -PC.CARD_TILT, PC.CARD_TILT)
+	else
+		pitch = math.clamp(pitch, -PC.PITCH_MAX, PC.PITCH_MAX)
+	end
 	return {
 		x = math.floor(math.clamp(t.x, 0, PC.W) * 10 + 0.5) / 10,
 		y = math.floor(math.clamp(t.y, 0, PC.H) * 10 + 0.5) / 10,
 		s = math.floor(math.clamp(t.s, PC.SCALE_MIN, PC.SCALE_MAX) * 100 + 0.5) / 100,
-		r = math.floor(r * 10 + 0.5) / 10,
+		r = math.floor(wrap180(t.r) * 10 + 0.5) / 10,
+		yaw = math.floor(yaw * 10 + 0.5) / 10,
+		pitch = math.floor(pitch * 10 + 0.5) / 10,
 	}
 end
 
@@ -268,7 +291,7 @@ function PC.Read(player)
 				for i = 1, 3 do if PC.Parse(t.show[i]) then out.show[i] = t.show[i] end end
 			end
 			if type(t.pos) == "table" then
-				for i = 1, 3 do out.pos[i] = PC.CleanPlace(t.pos[i], i) end
+				for i = 1, 3 do out.pos[i] = PC.CleanPlace(t.pos[i], i, (PC.Parse(out.show[i]))) end
 			end
 		end
 	end
@@ -354,9 +377,9 @@ local function buildTemplate(value)
 	center /= #pts
 	dir = dir.Unit
 	local rot = CFrame.lookAt(Vector3.zero, -dir, Vector3.yAxis)
-	local loc = {}
-	for i, q in pts do loc[i] = rot:PointToObjectSpace(q - center) end
-	return { vp = vp, loc = loc, center = center, rot = rot, fov = fov, pad = pad }
+	local rel = {}
+	for i, q in pts do rel[i] = q - center end
+	return { vp = vp, rel = rel, center = center, rot = rot, fov = fov, pad = pad }
 end
 local function template(value)
 	local e = tpl[value]
@@ -378,21 +401,27 @@ local function template(value)
 	end
 	return e
 end
--- camera that fits the model into a boxW x boxH box in the middle of a vpW x vpH viewport (never cropped)
-local function fitCam(e, boxW, boxH, vpW, vpH, pad)
+-- v5.13: the camera turn for a REPOSITION angle. yaw = round the model (same sense as the shop preview), pitch = from above (+) / below (-).
+local function viewRot(e, yaw, pitch)
+	return CFrame.Angles(0, math.rad(yaw or 0), 0) * e.rot * CFrame.Angles(-math.rad(pitch or 0), 0, 0)
+end
+-- camera that fits the model into a boxW x boxH box in the middle of a vpW x vpH viewport (never cropped), looking along `rot`
+local function fitCam(e, rot, boxW, boxH, vpW, vpH, pad)
+	local loc = table.create(#e.rel)
+	for i, q in e.rel do loc[i] = rot:PointToObjectSpace(q) end
 	local tv = math.tan(math.rad(e.fov / 2))
 	local tvb = tv * (boxH / vpH) * (1 - pad)
 	local thb = tv * (vpW / vpH) * (boxW / vpW) * (1 - pad)
 	local ox, oy, dist = 0, 0, 1
 	for _ = 1, 3 do
 		dist = 0
-		for _, q in e.loc do
+		for _, q in loc do
 			local need = math.max(math.abs(q.X - ox) / thb, math.abs(q.Y - oy) / tvb) + q.Z
 			if need > dist then dist = need end
 		end
 		dist += 0.05
 		local minX, maxX, minY, maxY = math.huge, -math.huge, math.huge, -math.huge
-		for _, q in e.loc do
+		for _, q in loc do
 			local d = dist - q.Z
 			local sx, sy = (q.X - ox) / d, (q.Y - oy) / d
 			minX, maxX, minY, maxY = math.min(minX, sx), math.max(maxX, sx), math.min(minY, sy), math.max(maxY, sy)
@@ -400,17 +429,24 @@ local function fitCam(e, boxW, boxH, vpW, vpH, pad)
 		ox += (minX + maxX) / 2 * dist
 		oy += (minY + maxY) / 2 * dist
 	end
-	return CFrame.new(e.center) * e.rot * CFrame.new(ox, oy, dist)
+	return CFrame.new(e.center) * rot * CFrame.new(ox, oy, dist)
+end
+-- v5.13: just the camera for a skin / gun skin at a REPOSITION angle (the REPOSITION view calls it every frame while you turn the model)
+function PC.ViewCam(value, boxW, boxH, vpW, vpH, yaw, pitch)
+	local e = template(value)
+	if not e then return nil end
+	return fitCam(e, viewRot(e, yaw, pitch), boxW, boxH, vpW, vpH, e.pad)
 end
 -- a ViewportFrame (vpW x vpH) showing a skin / gun skin fitted into a boxW x boxH box in its middle. Returns vp, camera, base camera CFrame.
-function PC.MakeView(value, boxW, boxH, vpW, vpH)
+-- v5.13: yaw / pitch = the REPOSITION angle (0, 0 = the old default view)
+function PC.MakeView(value, boxW, boxH, vpW, vpH, yaw, pitch)
 	local e = template(value)
 	if not e then return nil end
 	local vp = e.vp:Clone()
 	local cam = vp:FindFirstChildOfClass("Camera")
 	vp.CurrentCamera = cam
 	cam.FieldOfView = e.fov
-	local base = fitCam(e, boxW, boxH, vpW, vpH, e.pad)
+	local base = fitCam(e, viewRot(e, yaw, pitch), boxW, boxH, vpW, vpH, e.pad)
 	cam.CFrame = base
 	vp.Size = UDim2.fromOffset(vpW, vpH)
 	return vp, cam, base
@@ -442,6 +478,86 @@ function PC.ShowcaseItem(slot, v, sw, sh)
 	return vp
 end
 
+-- ================= v5.13: a power-up card leaning a little in 3D =================
+-- A GUI frame cannot be tilted in 3D and a ViewportFrame cannot show SurfaceGuis (the card text), so the card is drawn from its BAKED sheet picture
+-- (CardArt.SHEETS) cut into an 8 x 8 grid of ImageLabels: every piece is placed where a perspective camera would see it, the far side a touch darker.
+-- The name / description / rarity text is the card's own live text, moved + scaled with the surface under it. Cards that are not baked return nil
+-- (they simply stay flat). yaw > 0 = the right edge leans away, pitch > 0 = the top edge leans away. Both are limited to PC.CARD_TILT.
+local TILT_N = 8      -- grid pieces per side
+local TILT_D = 3.2    -- camera distance in card widths (smaller = stronger perspective)
+local TILT_SHADE = rgb(150, 150, 164)
+function PC.TiltCard(parent, id, width)
+	mods()
+	if not CardArt then return nil end
+	local ok, src = pcall(CardArt.Build, nil, id, { width = 250, anim = false })
+	if not ok or not src then return nil end
+	local card = src:FindFirstChild("Card")
+	local face = card and card:FindFirstChild("Face")
+	if not (face and face:IsA("ImageLabel")) then src:Destroy() return nil end -- not a baked card: stays flat
+	local W0, H0 = 250, 350
+	local hgt = width * H0 / W0
+	local holder = new("Frame", { Name = "TiltCard", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(width, hgt), BackgroundTransparency = 1 }, parent)
+	local cw, ch = W0 / TILT_N, H0 / TILT_N
+	local cells = {}
+	for j = 0, TILT_N - 1 do
+		for i = 0, TILT_N - 1 do
+			local c = new("ImageLabel", { BackgroundTransparency = 1, BorderSizePixel = 0, Image = face.Image, ScaleType = Enum.ScaleType.Stretch,
+				ImageRectOffset = face.ImageRectOffset + Vector2.new(i * cw, j * ch), ImageRectSize = Vector2.new(cw, ch), ZIndex = 1 }, holder)
+			table.insert(cells, { c, i * cw, j * ch })
+		end
+	end
+	local labels = {}
+	for _, l in card:GetChildren() do
+		if l:IsA("TextLabel") then
+			local sz = Vector2.new(l.Size.X.Offset, l.Size.Y.Offset)
+			local ap = l.AnchorPoint
+			local cx = l.Position.X.Offset + sz.X * (0.5 - ap.X)
+			local cy = l.Position.Y.Offset + sz.Y * (0.5 - ap.Y)
+			local box = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(sz.X, sz.Y), BackgroundTransparency = 1, ZIndex = 2 }, holder)
+			local us = new("UIScale", {}, box)
+			local lc = l:Clone()
+			lc.AnchorPoint, lc.Position, lc.Size, lc.ZIndex = Vector2.zero, UDim2.new(), UDim2.fromOffset(sz.X, sz.Y), 3
+			lc.Parent = box
+			table.insert(labels, { box, us, cx, cy })
+		end
+	end
+	src:Destroy()
+	local k = width / W0
+	local o = { holder = holder }
+	function o.set(yaw, pitch)
+		local ya = math.rad(math.clamp(yaw or 0, -PC.CARD_TILT, PC.CARD_TILT))
+		local pa = math.rad(math.clamp(pitch or 0, -PC.CARD_TILT, PC.CARD_TILT))
+		local cyw, syw, cp, sp = math.cos(ya), math.sin(ya), math.cos(pa), math.sin(pa)
+		local function proj(u, v)
+			local x, y = (u - W0 / 2) / W0, (v - H0 / 2) / W0
+			local z = x * syw - y * sp -- > 0 = further away
+			local f = TILT_D / (TILT_D + z)
+			return width / 2 + x * cyw * f * width, hgt / 2 + y * cp * f * width, f, z
+		end
+		for _, e in cells do
+			local u0, v0 = e[2], e[3]
+			local x1, y1 = proj(u0, v0)
+			local x2, y2 = proj(u0 + cw, v0)
+			local x3, y3 = proj(u0, v0 + ch)
+			local x4, y4 = proj(u0 + cw, v0 + ch)
+			local minX, maxX = math.min(x1, x2, x3, x4), math.max(x1, x2, x3, x4)
+			local minY, maxY = math.min(y1, y2, y3, y4), math.max(y1, y2, y3, y4)
+			e[1].Position = UDim2.fromOffset(minX - 0.4, minY - 0.4) -- a hair of overlap so no seams show between the pieces
+			e[1].Size = UDim2.fromOffset(maxX - minX + 0.8, maxY - minY + 0.8)
+			local _, _, _, z = proj(u0 + cw / 2, v0 + ch / 2)
+			e[1].ImageColor3 = WHITE:Lerp(TILT_SHADE, math.clamp(z * 1.6, 0, 0.35))
+		end
+		for _, e in labels do
+			local px, py, f = proj(e[3], e[4])
+			e[1].Position = UDim2.fromOffset(px, py)
+			e[2].Scale = k * f * (cyw + cp) / 2
+		end
+	end
+	o.set(0, 0)
+	return o
+end
+
 -- v5.12: one FREE showcase item on a card. parent = the card frame (native 840 x 236 pixels). place = { x, y, s, r }.
 -- Cards turn with the GUI Rotation. A ViewportFrame cannot be rotated, so a 3D item sits in a square viewport big enough for any turn
 -- (the diagonal of its box) and the CAMERA rolls instead - it looks exactly the same.
@@ -454,20 +570,24 @@ function PC.BuildItem(parent, v, place, z)
 	local holder = new("Frame", { Name = "Item", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(SW, SH), BackgroundTransparency = 1, ZIndex = z or 3 }, parent)
 	local scale = new("UIScale", { Scale = 1 }, holder)
 	local it = { holder = holder, kind = kind }
-	local cam, base
+	local cam, base, baseKey
+	local flatCard, tilt, cw
+	local D = math.ceil(math.sqrt(SW * SW + SH * SH)) + 4
 	if kind == "card" then
 		if not CardArt then holder:Destroy() return nil end
-		local cw = math.floor(math.min(SW * 0.96, SH * 0.98 * 250 / 350))
-		local ok, c = pcall(CardArt.Build, holder, id, { width = math.max(40, cw), anim = false })
+		cw = math.max(40, math.floor(math.min(SW * 0.96, SH * 0.98 * 250 / 350)))
+		local ok, c = pcall(CardArt.Build, holder, id, { width = cw, anim = false })
 		if ok and c then
 			c.AnchorPoint = Vector2.new(0.5, 0.5)
 			c.Position = UDim2.fromScale(0.5, 0.5)
+			flatCard = c
 		end
 	else
-		local D = math.ceil(math.sqrt(SW * SW + SH * SH)) + 4
+		local p0 = place or PC.DefaultPlace(1)
 		local vp
-		vp, cam, base = PC.MakeView(v, SW, SH, D, D)
+		vp, cam, base = PC.MakeView(v, SW, SH, D, D, p0.yaw, p0.pitch)
 		if not vp then holder:Destroy() return nil end
+		baseKey = tostring(p0.yaw or 0) .. ":" .. tostring(p0.pitch or 0)
 		vp.AnchorPoint = Vector2.new(0.5, 0.5)
 		vp.Position = UDim2.fromScale(0.5, 0.5)
 		vp.Parent = holder
@@ -478,9 +598,26 @@ function PC.BuildItem(parent, v, place, z)
 		scale.Scale = p.s
 		if cam then
 			holder.Rotation = 0
+			-- v5.13: a new REPOSITION angle = re-fit the model at that angle (only when it changed)
+			local key = tostring(p.yaw or 0) .. ":" .. tostring(p.pitch or 0)
+			if key ~= baseKey then
+				base = PC.ViewCam(v, SW, SH, D, D, p.yaw, p.pitch) or base
+				baseKey = key
+			end
 			cam.CFrame = base * CFrame.Angles(0, 0, math.rad(p.r)) -- camera roll = the picture turns clockwise by r
 		else
 			holder.Rotation = p.r
+			-- v5.13: a card that leans (REPOSITION) is drawn as a perspective picture; a straight card stays the cheap baked / drawn card
+			local ty, tp = p.yaw or 0, p.pitch or 0
+			if math.abs(ty) > 0.05 or math.abs(tp) > 0.05 then
+				if tilt == nil then tilt = PC.TiltCard(holder, id, cw) or false end
+			end
+			local leaning = tilt and (math.abs(ty) > 0.05 or math.abs(tp) > 0.05)
+			if tilt then
+				tilt.holder.Visible = leaning and true or false
+				if leaning then tilt.set(ty, tp) end
+			end
+			if flatCard then flatCard.Visible = not leaning end
 		end
 	end
 	it.apply(place or PC.DefaultPlace(1))
@@ -545,9 +682,10 @@ function PC.Render(parent, data, width)
 		TextSize = 38, FontFace = F.H, TextColor3 = K.text, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11, LayoutOrder = 1 }, row)
 	new("UISizeConstraint", { MaxSize = Vector2.new(360, 46) }, nm)
 	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.35 }, nm)
-	local lvT = new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 30), RichText = true,
-		Text = ('<font color="#9499A4" size="14">LV</font> %s'):format(data.level and tostring(data.level) or "-"),
-		TextSize = 20, FontFace = F.H, TextColor3 = K.text, ZIndex = 11, LayoutOrder = 2 }, row)
+	-- v5.13: LV + the level number a bit bigger (LV 14 -> 17 px, number 20 -> 25 px)
+	local lvT = new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 36), RichText = true,
+		Text = ('<font color="#9499A4" size="17">LV</font> %s'):format(data.level and tostring(data.level) or "-"),
+		TextSize = 25, FontFace = F.H, TextColor3 = K.text, ZIndex = 11, LayoutOrder = 2 }, row)
 	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.4 }, lvT)
 	if data.username then
 		local un = new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 66), Size = UDim2.fromOffset(460, 20),
