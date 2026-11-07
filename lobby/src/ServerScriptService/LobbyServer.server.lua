@@ -85,6 +85,7 @@ SetSkinR.OnServerEvent:Connect(function(player, id)
 	lastSkin[player] = os.clock()
 	if not Skins.Is(id) then return end
 	if not Profiles.Get(player, "Loadout") then return end -- profile not loaded yet
+	if not require(RS:WaitForChild("CosmeticsCatalog")).OwnsSkin(player, id) then return end -- v5.10: only skins you own (the 3 base skins are always yours; editions come from the cosmetics shop)
 	Profiles.Set(player, "Skin", id)
 end)
 
