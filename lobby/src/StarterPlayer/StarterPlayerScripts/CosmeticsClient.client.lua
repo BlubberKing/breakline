@@ -1,4 +1,12 @@
--- CosmeticsClient v3 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- CosmeticsClient v3.1 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- v5.13 (owner Nov 7):
+--   * BUG FIX - the card editor's corner squares (resize) and round handle (turn) only ever MOVED the item. The handles were found by doing maths
+--     on the mouse position against the card's AbsolutePosition, and those two do not use the same screen origin (Roblox top bar inset), so a press
+--     on a handle landed a few dozen pixels off and counted as a press on the item. Now every handle and every item on the card is a real (invisible)
+--     button, so Roblox itself decides what was pressed, and a drag only uses how far the pointer MOVED (no absolute positions at all).
+--   * REPOSITION button under every showcase slot: opens a big view of that item. Skins + gun skins: drag to turn them ANY way (like the shop
+--     preview, just the model, no disc / pad under a skin). Power-up cards: drag to lean the card a little left / right / up / down
+--     (PlayerCards.CARD_TILT). DONE (bottom middle) saves the angle; the item shows at that angle on your player card. RESET = straight, CANCEL.
 -- v5.12 (owner Nov 7):
 --   * PLAYER CARD tab = a card EDITOR: click a showcase item on your card, drag it to move it, drag a corner to resize, drag the round handle to turn it
 --     (mouse wheel resizes too); RESET SPOT / RESET ALL. Saved with Equip("place", slot, { x, y, s, r }). The info on the card always sits on top.
@@ -1006,20 +1014,55 @@ local function myCard()
 	for i = 1, 3 do if localPos[i] then d.card.pos[i] = localPos[i] end end
 	return d
 end
+-- v5.13: every item has an invisible hit button that follows it, and the selected item gets a red box + 4 corner buttons + a round turn button.
+-- The handle buttons are NOT inside the turned box (their spots are turned here by hand), so what you see is exactly what you can press.
+local function itemPoint(p, lx, ly) -- a point in the item's own (unturned) frame -> card coordinates
+	local a = math.rad(p.r)
+	local cs, sn = math.cos(a), math.sin(a)
+	return Vector2.new(p.x + lx * cs - ly * sn, p.y + lx * sn + ly * cs)
+end
+local CORNERS = { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } }
+local TURN_GAP = 34 -- the round handle sits this far above the top edge of the item (card pixels)
 local function updateHandles()
 	if not editor then return end
+	for i, b in editor.hits do
+		local o = editor.items[i]
+		if o and o.place then
+			b.Position = UDim2.fromOffset(o.place.x, o.place.y)
+			b.Size = UDim2.fromOffset(PlayerCards.SW * o.place.s, PlayerCards.SH * o.place.s)
+			b.Rotation = o.place.r
+		end
+	end
 	local it = editSel and editor.items[editSel]
-	editor.selBox.Visible = it ~= nil
-	if not it then return end
+	local on = it ~= nil and it.place ~= nil
+	editor.selBox.Visible = on
+	editor.stem.Visible = on
+	editor.turn.Visible = on
+	for _, c in editor.corners do c.b.Visible = on end
+	if not on then return end
 	local p = it.place
+	local hw, hh = PlayerCards.SW * p.s / 2, PlayerCards.SH * p.s / 2
 	editor.selBox.Position = UDim2.fromOffset(p.x, p.y)
-	editor.selBox.Size = UDim2.fromOffset(PlayerCards.SW * p.s, PlayerCards.SH * p.s)
+	editor.selBox.Size = UDim2.fromOffset(hw * 2, hh * 2)
 	editor.selBox.Rotation = p.r
+	for _, c in editor.corners do
+		local q = itemPoint(p, c.c[1] * hw, c.c[2] * hh)
+		c.b.Position = UDim2.fromOffset(q.X, q.Y)
+		c.at = q
+	end
+	local sq = itemPoint(p, 0, -hh - TURN_GAP / 2)
+	editor.stem.Position = UDim2.fromOffset(sq.X, sq.Y)
+	editor.stem.Rotation = p.r
+	local tq = itemPoint(p, 0, -hh - TURN_GAP)
+	editor.turn.Position = UDim2.fromOffset(tq.X, tq.Y)
+	editor.turnAt = tq
 end
 local function destroyEditor()
 	if editor then editor.root:Destroy() editor = nil end
 	drag = nil
 end
+local wireEditor -- v5.13: connects the editor's buttons (defined below, next to the drag code)
+local repo = nil -- v5.13: the open REPOSITION view (or nil)
 local function buildEditor()
 	local d = myCard()
 	local key = d.card.bg .. "|" .. table.concat(d.card.show, ",") .. "|" .. tostring(d.level) .. "|" .. tostring(d.name)
@@ -1037,44 +1080,46 @@ local function buildEditor()
 	-- handles live outside the card's clipping, in the same native 840 x 236 coordinates
 	local overlay = new("Frame", { Name = "EditOverlay", Size = UDim2.fromOffset(PlayerCards.W, PlayerCards.H), BackgroundTransparency = 1, ZIndex = 20 }, holder)
 	new("UIScale", { Scale = ED_W / PlayerCards.W }, overlay)
-	local selBox = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Visible = false, ZIndex = 21 }, overlay)
-	stroke(selBox, K.red, 2.5)
-	for _, c in { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } } do
-		local h = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(c[1], c[2]), Size = UDim2.fromOffset(16, 16),
-			BackgroundColor3 = K.text, BorderSizePixel = 0, ZIndex = 22 }, selBox)
-		stroke(h, K.red, 2)
+	local function hitButton(name, z, size)
+		return new("TextButton", { Name = name, Text = "", AutoButtonColor = false, BackgroundTransparency = 1, BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5),
+			Size = size and UDim2.fromOffset(size, size) or UDim2.fromScale(1, 1), ZIndex = z, Selectable = false }, overlay)
 	end
-	new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.fromOffset(2, 22), BackgroundColor3 = K.red, BorderSizePixel = 0, ZIndex = 21 }, selBox)
-	local turn = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0, -30), Size = UDim2.fromOffset(20, 20),
-		BackgroundColor3 = K.text, BorderSizePixel = 0, ZIndex = 22 }, selBox)
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, turn)
-	stroke(turn, K.red, 2)
-	editor = { root = root, holder = holder, card = card, items = items, overlay = overlay, selBox = selBox, key = key }
+	-- v5.13: the whole card is a button (a press on an empty spot = deselect), every item has its own button on top of it (slot 3 on top),
+	-- and the handles are buttons on top of everything. Roblox decides which one was pressed.
+	local bg = hitButton("CardHit", 20)
+	bg.AnchorPoint = Vector2.zero
+	local hits = {}
+	for i = 1, 3 do
+		if items[i] then hits[i] = hitButton("ItemHit" .. i, 21 + i, 10) end
+	end
+	local selBox = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Visible = false, ZIndex = 26 }, overlay)
+	stroke(selBox, K.red, 2.5)
+	local stem = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(2, TURN_GAP - 10), BackgroundColor3 = K.red, BorderSizePixel = 0, ZIndex = 26, Visible = false }, overlay)
+	local corners = {}
+	for ci, c in CORNERS do
+		local b = hitButton("Corner" .. ci, 28, 28) -- 28 card pixels to press, a 16 px square to see
+		local sq = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(16, 16), BackgroundColor3 = K.text,
+			BorderSizePixel = 0, ZIndex = 29 }, b)
+		stroke(sq, K.red, 2)
+		b.Visible = false
+		corners[ci] = { b = b, c = c }
+	end
+	local turn = hitButton("Turn", 28, 32)
+	local ring = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = K.text,
+		BorderSizePixel = 0, ZIndex = 29 }, turn)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, ring)
+	stroke(ring, K.red, 2)
+	turn.Visible = false
+	editor = { root = root, holder = holder, card = card, items = items, overlay = overlay, selBox = selBox, stem = stem, corners = corners, turn = turn,
+		hits = hits, bg = bg, key = key, hover = {} }
 	if old then old.root:Destroy() end
+	wireEditor(editor)
 	updateHandles()
 end
 
--- screen point -> native card point, and native card point -> the item's own (unturned) frame
-local function toCard(pos)
-	local ap, as = editor.card.AbsolutePosition, editor.card.AbsoluteSize
-	local k = as.X / PlayerCards.W
-	if k <= 0 then return nil end
-	return Vector2.new((pos.X - ap.X) / k, (pos.Y - ap.Y) / k)
-end
-local function toItem(p, place)
-	local d = p - Vector2.new(place.x, place.y)
-	local a = math.rad(place.r)
-	return Vector2.new(d.X * math.cos(a) + d.Y * math.sin(a), -d.X * math.sin(a) + d.Y * math.cos(a))
-end
-local function inside(p, place)
-	local q = toItem(p, place)
-	return math.abs(q.X) <= PlayerCards.SW * place.s / 2 and math.abs(q.Y) <= PlayerCards.SH * place.s / 2
-end
-local function editorLive()
-	return editor ~= nil and lockerOpen and lockTab == "card" and stage.Visible and lockerRoot.Visible and not pv.Visible
-end
+local function slotKind(slot) return (PlayerCards.Parse(PlayerCards.Read(player).show[slot])) end
 local function setPlace(slot, p)
-	p = PlayerCards.CleanPlace(p, slot)
+	p = PlayerCards.CleanPlace(p, slot, slotKind(slot)) -- v5.13: the kind limits the REPOSITION angle (cards only lean a little)
 	localPos[slot] = p
 	local it = editor and editor.items[slot]
 	if it then it.apply(p) end
@@ -1084,60 +1129,64 @@ end
 local function commit(slot)
 	if localPos[slot] then pendingPlace[slot] = localPos[slot] end
 end
-local function pointerPos(input)
-	if input.UserInputType == Enum.UserInputType.Touch then
-		return Vector2.new(input.Position.X, input.Position.Y) + GuiService:GetGuiInset()
-	end
+local function editorLive()
+	return editor ~= nil and repo == nil and lockerOpen and lockTab == "card" and stage.Visible and lockerRoot.Visible and not pv.Visible
+end
+local function isPress(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+end
+-- v5.13: only DIFFERENCES of the pointer position are used, so it does not matter which screen origin a number is measured from
+local function screenPos(input)
+	if input.UserInputType == Enum.UserInputType.Touch then return Vector2.new(input.Position.X, input.Position.Y) end
 	return UIS:GetMouseLocation()
 end
+local function startDrag(mode, slot, anchor, input)
+	local it = editor and editor.items[slot]
+	if not it or not it.place then return end
+	-- anchor = the card point that was pressed (the handle / the item centre); from now on: card point = anchor + pointer movement / zoom
+	drag = { mode = mode, slot = slot, anchor = anchor, s0 = screenPos(input), place = table.clone(it.place),
+		touch = input.UserInputType == Enum.UserInputType.Touch }
+end
 
-UIS.InputBegan:Connect(function(input)
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-	if not editorLive() then return end
-	local p = toCard(pointerPos(input))
-	if not p then return end
-	local onCard = p.X >= 0 and p.X <= PlayerCards.W and p.Y >= 0 and p.Y <= PlayerCards.H
-	-- 1) the handles of the selected item (they may stick out of the card)
-	local it = editSel and editor.items[editSel]
-	if it then
-		local q = toItem(p, it.place)
-		local hw, hh = PlayerCards.SW * it.place.s / 2, PlayerCards.SH * it.place.s / 2
-		if (q - Vector2.new(0, -hh - 30)).Magnitude <= 18 then
-			drag = { mode = "turn", slot = editSel, start = p, place = table.clone(it.place) }
-			return
-		end
-		for _, c in { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } } do
-			if (q - Vector2.new(c[1] * hw, c[2] * hh)).Magnitude <= 16 then
-				drag = { mode = "size", slot = editSel, start = p, place = table.clone(it.place) }
-				return
-			end
-		end
-		if inside(p, it.place) then
-			drag = { mode = "move", slot = editSel, start = p, place = table.clone(it.place) }
-			return
-		end
+wireEditor = function(ed)
+	local function hover(o)
+		o.MouseEnter:Connect(function() ed.hover[o] = true end)
+		o.MouseLeave:Connect(function() ed.hover[o] = nil end)
 	end
-	if not onCard then return end
-	-- 2) any item under the pointer (the top one first)
-	for i = 3, 1, -1 do
-		local o = editor.items[i]
-		if o and inside(p, o.place) then
+	hover(ed.bg)
+	ed.bg.InputBegan:Connect(function(input) -- an empty spot of the card: deselect
+		if not isPress(input) or not editorLive() or editor ~= ed then return end
+		editSel = nil
+		updateHandles()
+	end)
+	for i, b in ed.hits do
+		hover(b)
+		b.InputBegan:Connect(function(input) -- an item: select it + move it
+			if not isPress(input) or not editorLive() or editor ~= ed then return end
+			local it = ed.items[i]
+			if not it or not it.place then return end
 			editSel = i
 			updateHandles()
-			drag = { mode = "move", slot = i, start = p, place = table.clone(o.place) }
-			return
-		end
+			startDrag("move", i, Vector2.new(it.place.x, it.place.y), input)
+		end)
 	end
-	-- 3) empty spot on the card = deselect
-	editSel = nil
-	updateHandles()
-end)
+	for _, c in ed.corners do
+		hover(c.b)
+		c.b.InputBegan:Connect(function(input) -- a corner: resize
+			if not isPress(input) or not editorLive() or editor ~= ed or not editSel or not c.at then return end
+			startDrag("size", editSel, c.at, input)
+		end)
+	end
+	hover(ed.turn)
+	ed.turn.InputBegan:Connect(function(input) -- the round handle: turn
+		if not isPress(input) or not editorLive() or editor ~= ed or not editSel or not ed.turnAt then return end
+		startDrag("turn", editSel, ed.turnAt, input)
+	end)
+end
 
 UIS.InputChanged:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseWheel then
-		if not editorLive() or not editSel or not editor.items[editSel] then return end
-		local p = toCard(UIS:GetMouseLocation())
-		if not p or p.X < 0 or p.X > PlayerCards.W or p.Y < 0 or p.Y > PlayerCards.H then return end
+		if not editorLive() or not editSel or not editor.items[editSel] or next(editor.hover) == nil then return end
 		local cur = table.clone(editor.items[editSel].place)
 		cur.s = cur.s * (1 + input.Position.Z * 0.07)
 		setPlace(editSel, cur)
@@ -1145,20 +1194,25 @@ UIS.InputChanged:Connect(function(input)
 		return
 	end
 	if not drag or not editor then return end
-	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
-	local p = toCard(pointerPos(input))
-	if not p then return end
+	if drag.touch then
+		if input.UserInputType ~= Enum.UserInputType.Touch then return end
+	elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then
+		return
+	end
+	local k = editor.card.AbsoluteSize.X / PlayerCards.W -- screen pixels per card pixel (all the UIScales included)
+	if k <= 0 then return end
+	local p = drag.anchor + (screenPos(input) - drag.s0) / k
 	local s0 = drag.place
 	local c = Vector2.new(s0.x, s0.y)
 	local nxt = table.clone(s0)
 	if drag.mode == "move" then
-		local d = p - drag.start
+		local d = p - drag.anchor
 		nxt.x, nxt.y = s0.x + d.X, s0.y + d.Y
 	elseif drag.mode == "size" then
-		local d0 = math.max(8, (drag.start - c).Magnitude)
+		local d0 = math.max(8, (drag.anchor - c).Magnitude)
 		nxt.s = s0.s * (p - c).Magnitude / d0
 	else -- turn
-		local a0 = math.atan2(drag.start.Y - c.Y, drag.start.X - c.X)
+		local a0 = math.atan2(drag.anchor.Y - c.Y, drag.anchor.X - c.X)
 		local a1 = math.atan2(p.Y - c.Y, p.X - c.X)
 		local r = s0.r + math.deg(a1 - a0)
 		local snap = math.floor(r / 45 + 0.5) * 45
@@ -1169,7 +1223,7 @@ UIS.InputChanged:Connect(function(input)
 end)
 
 UIS.InputEnded:Connect(function(input)
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	if not isPress(input) then return end
 	if not drag then return end
 	commit(drag.slot)
 	drag = nil
@@ -1209,6 +1263,128 @@ local function syncLocal()
 	end
 end
 
+-- ===== v5.13 REPOSITION: a big view of one showcase item to set the angle it shows at on your card =====
+-- Skins + gun skins: drag to turn them any way (the same feel as the shop preview; just the model, no disc / pad under a skin). The model is fitted
+-- into a box with the same shape as a showcase slot, so what you see is how it sits on your card. Power-up cards: drag to lean the card a little
+-- (PlayerCards.CARD_TILT each way). DONE (bottom middle) saves it with the spot / size / turn you gave the item on the card.
+local closeRepo
+local function repoButton(parent, text, x, y, w, h, main)
+	local b = new("TextButton", { Text = text, TextSize = main and 26 or 18, FontFace = F.H, TextColor3 = K.text, BackgroundColor3 = main and K.red or K.panel3,
+		AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h) }, parent)
+	if main then hot(b, K.red, K.redHi, nil) else stroke(b, K.line2, 1) hot(b, K.panel3, K.panel2, nil) end
+	return b
+end
+local function openRepo(slot)
+	local data = PlayerCards.Read(player)
+	local value = data.show[slot]
+	local kind, id = PlayerCards.Parse(value)
+	if not kind then return end
+	if closeRepo then closeRepo() end
+	editSel, drag = slot, nil
+	local cur = localPos[slot] or data.pos[slot]
+	local R = { slot = slot, value = value, kind = kind, yaw = cur.yaw or 0, pitch = cur.pitch or 0, conns = {} }
+	local T = PlayerCards.CARD_TILT
+	local root = new("Frame", { Name = "Reposition", Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(6, 7, 9), BackgroundTransparency = 0.02, BorderSizePixel = 0,
+		Active = true, ZIndex = 40 }, stage)
+	R.root = root
+	lbl(root, "REPOSITION", 56, 64, 28, 700, 70, K.text, F.H)
+	lbl(root, ("SLOT %d  //  %s"):format(slot, PlayerCards.ItemName(value)), 18, 68, 96, 1300, 26, K.dim, F.MB)
+	box(root, 64, 130, 1792, 1, K.line)
+	-- the whole middle of the screen is the drag surface
+	local area = new("TextButton", { Name = "DragArea", Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Position = UDim2.fromOffset(64, 146),
+		Size = UDim2.fromOffset(1792, 770), Selectable = false }, root)
+	local CX, CY = 896, 380
+	if kind == "card" then
+		local holder = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(CX, CY), Size = UDim2.fromOffset(520, 728), BackgroundTransparency = 1 }, area)
+		R.tilt = PlayerCards.TiltCard(holder, id, 470)
+		if not R.tilt then -- a card without a baked picture cannot lean: show it flat and say so
+			PlayerCards.ShowcaseItem(holder, value, 520, 728)
+			lbl(root, "THIS CARD HAS NO BAKED PICTURE YET, SO IT STAYS STRAIGHT", 16, 64, 884, 1792, 22, K.redHi, F.MB, Enum.TextXAlignment.Center)
+		end
+	else
+		local BH = 720
+		local BW = math.floor(BH * PlayerCards.SW / PlayerCards.SH)
+		R.BW, R.BH = BW, BH
+		local frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(CX, CY), Size = UDim2.fromOffset(BW, BH), BackgroundTransparency = 1 }, area)
+		stroke(frame, K.line, 1, 0.4) -- the shape of the showcase slot
+		local vp, cam = PlayerCards.MakeView(value, BW, BH, BW, BH, R.yaw, R.pitch)
+		if vp then
+			vp.AnchorPoint = Vector2.new(0.5, 0.5)
+			vp.Position = UDim2.fromOffset(CX, CY)
+			vp.Parent = area
+			R.cam = cam
+		end
+	end
+	local readout = lbl(root, "", 14, 64, 912, 1792, 20, K.mute, F.MB, Enum.TextXAlignment.Center)
+	lbl(root, kind == "card" and ("DRAG TO LEAN THE CARD LEFT / RIGHT / UP / DOWN  (UP TO %d DEGREES)"):format(T) or "DRAG TO TURN IT ANY WAY", 15, 64, 140, 1792, 22,
+		K.dim, F.MB, Enum.TextXAlignment.Center)
+	local function show()
+		if R.tilt then
+			R.tilt.set(R.yaw, R.pitch)
+		elseif R.cam then
+			local cf = PlayerCards.ViewCam(value, R.BW, R.BH, R.BW, R.BH, R.yaw, R.pitch)
+			if cf then R.cam.CFrame = cf end
+		end
+		readout.Text = kind == "card" and ("LEFT / RIGHT %d    UP / DOWN %d"):format(math.floor(R.yaw + 0.5), math.floor(R.pitch + 0.5))
+			or ("TURN %d    TIP %d"):format(math.floor(R.yaw + 0.5), math.floor(R.pitch + 0.5))
+	end
+	show()
+	-- drag (only how far the pointer moved counts)
+	area.InputBegan:Connect(function(input)
+		if not isPress(input) or repo ~= R then return end
+		R.drag, R.last, R.touch = true, screenPos(input), input.UserInputType == Enum.UserInputType.Touch
+	end)
+	table.insert(R.conns, UIS.InputChanged:Connect(function(input)
+		if not R.drag then return end
+		if R.touch then
+			if input.UserInputType ~= Enum.UserInputType.Touch then return end
+		elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then
+			return
+		end
+		local pos = screenPos(input)
+		local d = pos - R.last
+		R.last = pos
+		if d.Magnitude < 0.01 then d = Vector2.new(input.Delta.X, input.Delta.Y) end -- a locked mouse moves the delta, not the position
+		if kind == "card" then
+			R.yaw = math.clamp(R.yaw + d.X * 0.12, -T, T)
+			R.pitch = math.clamp(R.pitch - d.Y * 0.12, -T, T)
+		else
+			R.yaw = (R.yaw - d.X * 0.63 + 180) % 360 - 180
+			R.pitch = math.clamp(R.pitch + d.Y * 0.46, -PlayerCards.PITCH_MAX, PlayerCards.PITCH_MAX)
+		end
+		show()
+	end))
+	table.insert(R.conns, UIS.InputEnded:Connect(function(input)
+		if isPress(input) then R.drag = false end
+	end))
+	-- buttons: DONE bottom middle, RESET left of it, CANCEL right of it
+	local done = repoButton(root, "DONE", 960 - 160, 960, 320, 74, true)
+	local reset = repoButton(root, "RESET ANGLE", 960 - 160 - 24 - 220, 969, 220, 56)
+	local cancel = repoButton(root, "CANCEL", 960 + 160 + 24, 969, 220, 56)
+	done.MouseButton1Click:Connect(function()
+		if repo ~= R then return end
+		local p = table.clone(localPos[slot] or PlayerCards.Read(player).pos[slot])
+		p.yaw, p.pitch = R.yaw, R.pitch
+		setPlace(slot, p)
+		commit(slot)
+		closeRepo()
+	end)
+	reset.MouseButton1Click:Connect(function()
+		R.yaw, R.pitch = 0, 0
+		show()
+	end)
+	cancel.MouseButton1Click:Connect(function() closeRepo() end)
+	repo = R
+end
+closeRepo = function()
+	local R = repo
+	if not R then return end
+	repo = nil
+	for _, c in R.conns do c:Disconnect() end
+	R.root:Destroy()
+	updateHandles()
+end
+
 local FLEX_TABS = { { id = "skin", name = "PLAYER SKINS" }, { id = "gun", name = "GUN SKINS" }, { id = "card", name = "CARDS" } }
 local flexTab = "skin" -- v5.12: the picker under a showcase slot has three tabs instead of one long list
 
@@ -1217,7 +1393,7 @@ local function cardSide()
 	buildEditor()
 	local pcData = PlayerCards.Read(player)
 	-- how to edit + the selected item's buttons
-	lbl(lockInfo, "CLICK AN ITEM ON YOUR CARD:  DRAG = MOVE  //  CORNER = SIZE  //  ROUND HANDLE = TURN  //  WHEEL = SIZE", 11, 4, 226, 690, 16, K.dim, F.MB)
+	lbl(lockInfo, "CLICK AN ITEM ON YOUR CARD:  DRAG = MOVE  //  WHITE CORNER = SIZE  //  ROUND HANDLE = TURN  //  WHEEL = SIZE", 11, 4, 226, 690, 16, K.dim, F.MB)
 	local resetB = new("TextButton", { Text = "RESET SPOT", TextSize = 16, FontFace = F.H, TextColor3 = K.text, BackgroundColor3 = K.panel3, AutoButtonColor = false,
 		BorderSizePixel = 0, Position = UDim2.fromOffset(2, 250), Size = UDim2.fromOffset(160, 36) }, lockInfo)
 	stroke(resetB, K.line2, 1)
@@ -1256,6 +1432,15 @@ local function cardSide()
 		end
 		local nm = lbl(b, PlayerCards.Parse(v) and PlayerCards.ItemName(v) or "EMPTY", 15, 12, 258, 196, 22, PlayerCards.Parse(v) and K.text or K.mute, F.H)
 		nm.TextTruncate = Enum.TextTruncate.AtEnd
+		-- v5.13: REPOSITION under every slot (opens the big view where the item's angle is set)
+		local has = PlayerCards.Parse(v) ~= nil
+		local rb = new("TextButton", { Text = "REPOSITION", TextSize = 17, FontFace = F.H, TextColor3 = has and K.text or K.mute, BackgroundColor3 = K.panel3,
+			AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(2 + (i - 1) * 236, 664), Size = UDim2.fromOffset(218, 40) }, lockInfo)
+		local rst = stroke(rb, has and K.line2 or K.line, 1)
+		if has then hot(rb, K.panel3, K.panel2, rst, K.line2, K.red) end
+		rb.MouseButton1Click:Connect(function()
+			if has then openRepo(i) end
+		end)
 		b.MouseButton1Click:Connect(function()
 			if cardSlot == i then cardSlot = nil else cardSlot = i end
 			editSel = PlayerCards.Parse(v) and i or editSel
@@ -1476,6 +1661,7 @@ end
 closeLocker = function()
 	if not lockerOpen then return end
 	lockerOpen = false
+	closeRepo() -- v5.13
 	destroyEditor()
 	editSel = nil
 	if lockViewer then lockViewer.destroy() lockViewer = nil end
@@ -1512,7 +1698,7 @@ end)
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe or UIS:GetFocusedTextBox() then return end
 	if input.KeyCode == Enum.KeyCode.Escape then
-		if pv.Visible then closePreview() elseif shopOpen then closeShop() elseif lockerOpen then closeLocker() end
+		if repo then closeRepo() elseif pv.Visible then closePreview() elseif shopOpen then closeShop() elseif lockerOpen then closeLocker() end
 	end
 end)
 
