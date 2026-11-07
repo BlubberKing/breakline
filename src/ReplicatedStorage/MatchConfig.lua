@@ -72,7 +72,7 @@ C.MAPS = {
 	-- A map folder can also carry its own attributes instead: DisplayName (string) and LoadingImage (string). Those win over this table.
 	-- The same map name works in both mode folders (a test_map in breaklineMaps AND in 1v1Maps both use Info.test).
 	Info = {
-		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://0" }, -- PASTE the uploaded LoadingArt_TestingGrounds image id here
+		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://121711179092477" }, -- PASTE the uploaded LoadingArt_TestingGrounds image id here
 	},
 }
 
