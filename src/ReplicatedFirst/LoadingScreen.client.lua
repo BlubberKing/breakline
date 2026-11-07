@@ -1,15 +1,18 @@
--- LoadingScreen v2 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
--- v3.7: new slim logo (no explosions): BREAK flies in from the left, LINE from the right, they meet and the red slash draws in with
--- light flowing through it; on exit the slash flares and the words fly apart before the screen fades.
--- Minimal black screen: the big BREAKLINE logo in the middle and one line of text under it that
--- tells the player what is happening ("LOADING", "LOADING MAP", "WAITING FOR PLAYERS  3 / 6", "ALL PLAYERS LOADED").
--- When this client has finished loading it tells the server (MatchRemotes.ClientReady). The server starts the pre-game screen once everyone
--- is ready; this screen then fades out and MatchFlow takes over.
+-- LoadingScreen v3 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- v5.8: MAP LOADING SCREEN. Instead of the black logo screen, the picked map's own picture fills the whole screen (a watercolour +
+--       pencil sketch per map), slowly drifting / zooming. Bottom right: the mode line (BREAKLINE // 3V3 or 1V1 // DUEL) and the MAP NAME
+--       in big letters with a red slash drawing in under it. Bottom left: what is happening (LOADING MAP / WAITING FOR PLAYERS 3 / 6 ...) +
+--       a percentage. The very bottom edge of the screen is the progress line. Small BREAKLINE logo top left.
+--       The picture + name come from MatchState attributes MapImage / MapName (MatchServer, from MatchConfig.MAPS.Info or the map
+--       folder's LoadingImage / DisplayName attributes). No picture yet (MapImage "") = the same layout on a dark background.
+-- (v3.7 logo screen replaced.) When this client has finished loading it tells the server (MatchRemotes.ClientReady). The server starts the
+-- pre-game screen once everyone is ready; this screen then fades out and MatchFlow takes over.
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RF = game:GetService("ReplicatedFirst")
 local ContentProvider = game:GetService("ContentProvider")
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 
 pcall(function() RF:RemoveDefaultLoadingScreen() end)
 
@@ -31,55 +34,171 @@ root.BorderSizePixel = 0
 root.Parent = gui
 
 local UI = require(RS:WaitForChild("UIKit"))
-local C, F = UI.C, UI.F
+local C, F, new = UI.C, UI.F, UI.new
+local function tw(inst, t, goal, style, dir)
+	local x = TweenService:Create(inst, TweenInfo.new(t, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out), goal)
+	x:Play()
+	return x
+end
 
--- sizes from the real screen height
+-- sizes from the real screen height (everything below is in "vh" so it looks the same on a phone and a 1440p monitor)
 local vh = 1080
 for _ = 1, 30 do
 	if root.AbsoluteSize.Y > 0 then vh = root.AbsoluteSize.Y break end
 	task.wait()
 end
-local logoSize = math.clamp(math.floor(vh * 0.2), 64, 230)
+local function px(v) return math.max(1, math.floor(v * vh / 1080 + 0.5)) end
+local MARGIN = px(64)
 
-local logo, logoApi = UI.Logo(root, logoSize, { Position = UDim2.new(0.5, 0, 0.5, -math.floor(logoSize * 0.2)) }, "center")
-task.spawn(logoApi.intro, 1.2)
+-- ===== the map picture (full screen, Crop keeps it filling any aspect ratio) =====
+local artHolder = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 1 }, root)
+local art = new("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1.06, 1.06),
+	BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Crop, ImageTransparency = 1, Image = "", ZIndex = 1 }, artHolder)
+-- shade so the white text reads on a light watercolour: soft dark wash from the bottom + a little from the right
+local shadeB = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.fromScale(1, 0.52),
+	BackgroundColor3 = Color3.fromRGB(8, 9, 13), BorderSizePixel = 0, BackgroundTransparency = 1, ZIndex = 2 }, root)
+new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.55, 0.55), NumberSequenceKeypoint.new(1, 0.08) }) }, shadeB)
+local shadeR = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.fromScale(0.55, 1),
+	BackgroundColor3 = Color3.fromRGB(8, 9, 13), BorderSizePixel = 0, BackgroundTransparency = 1, ZIndex = 2 }, root)
+new("UIGradient", { Rotation = 0, Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0.45) }) }, shadeR)
+local shadeT = new("Frame", { Size = UDim2.fromScale(1, 0.2), BackgroundColor3 = Color3.fromRGB(8, 9, 13), BorderSizePixel = 0,
+	BackgroundTransparency = 1, ZIndex = 2 }, root)
+new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(0.35, 1) }, shadeT)
 
-local label = UI.new("TextLabel", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, math.floor(logoSize * 0.78)),
-	Size = UDim2.fromOffset(900, 36), BackgroundTransparency = 1, Text = "LOADING", TextSize = 22, FontFace = F.M, TextColor3 = C.dim }, root)
-local barW = math.clamp(math.floor(vh * 0.4), 200, 460)
-local bar = UI.new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0.5, math.floor(logoSize * 0.78) + 46),
-	Size = UDim2.fromOffset(barW, 2), BackgroundColor3 = C.line, BorderSizePixel = 0 }, root)
-local fill = UI.new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = C.red, BorderSizePixel = 0 }, bar)
+-- ===== small logo, top left =====
+local logoSize = math.clamp(px(30), 18, 44)
+local logo, logoApi = UI.Logo(root, logoSize, { Position = UDim2.fromOffset(MARGIN, MARGIN - px(10)), ZIndex = 5 }, "left")
+logoApi.setTransparency(1)
+task.spawn(function()
+	local t0 = os.clock()
+	while gui.Parent and os.clock() - t0 < 0.6 do
+		logoApi.setTransparency(1 - math.clamp((os.clock() - t0) / 0.6, 0, 1))
+		task.wait()
+	end
+	if gui.Parent then logoApi.setTransparency(0) end
+end)
+
+-- ===== bottom right: mode line + MAP NAME + red slash =====
+local nameBox = new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -MARGIN, 1, -px(70)), Size = UDim2.fromOffset(px(1100), px(200)),
+	BackgroundTransparency = 1, ZIndex = 5 }, root)
+local nameShift = new("UIPadding", {}, nameBox) -- slides the block in / out
+local nameLbl = new("TextLabel", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, 0, 1, -px(18)), Size = UDim2.new(1, 0, 0, px(138)),
+	BackgroundTransparency = 1, Text = "", TextScaled = true, FontFace = F.H, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Right,
+	TextYAlignment = Enum.TextYAlignment.Bottom, TextTransparency = 1, ZIndex = 6 }, nameBox)
+new("UITextSizeConstraint", { MaxTextSize = px(138), MinTextSize = 14 }, nameLbl)
+local nameStroke = new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = px(2), Transparency = 1 }, nameLbl)
+local slash = new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, 0, 1, 0), Size = UDim2.fromOffset(0, px(4)),
+	BackgroundColor3 = C.red, BorderSizePixel = 0, ZIndex = 6 }, nameBox)
+local modeLbl = new("TextLabel", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, 0, 1, -px(160)), Size = UDim2.new(1, 0, 0, px(24)),
+	BackgroundTransparency = 1, Text = "", TextSize = px(20), FontFace = F.MB, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Right,
+	TextTransparency = 1, ZIndex = 6 }, nameBox)
+new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Transparency = 0.6 }, modeLbl)
+local modeTick = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 1, -px(172)), Size = UDim2.fromOffset(px(26), px(3)),
+	BackgroundColor3 = C.red, BorderSizePixel = 0, BackgroundTransparency = 1, ZIndex = 6 }, nameBox)
+
+-- ===== bottom: status + percent (left), progress line along the bottom edge =====
+local statusLbl = new("TextLabel", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, MARGIN, 1, -px(70)), Size = UDim2.fromOffset(px(760), px(30)),
+	BackgroundTransparency = 1, Text = "LOADING", TextSize = px(22), FontFace = F.M, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 6 }, root)
+new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Transparency = 0.6 }, statusLbl)
+local pctLbl = new("TextLabel", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, MARGIN, 1, -px(104)), Size = UDim2.fromOffset(px(300), px(44)),
+	BackgroundTransparency = 1, Text = "0%", TextSize = px(40), FontFace = F.HM, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
+	ZIndex = 6 }, root)
+new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Transparency = 0.55 }, pctLbl)
+local barH = math.max(3, px(5))
+local bar = new("Frame", { AnchorPoint = Vector2.new(0, 1), Position = UDim2.fromScale(0, 1), Size = UDim2.new(1, 0, 0, barH),
+	BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, BorderSizePixel = 0, ZIndex = 7 }, root)
+local fill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = C.red, BorderSizePixel = 0, ZIndex = 8 }, bar)
+local glint = new("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.fromScale(1, 0.5), Size = UDim2.new(0, px(60), 1, px(2)),
+	BackgroundColor3 = C.redHi, BorderSizePixel = 0, ZIndex = 9 }, fill)
+new("UIGradient", { Transparency = NumberSequence.new(1, 0) }, glint)
 
 local status, dots, progress = "LOADING", true, 0
 local shown = 0
-task.spawn(function() -- animated dots + smooth progress bar
-	local n = 0
-	local acc = 0
+local t0 = os.clock()
+local drift = RunService.RenderStepped:Connect(function()
+	-- slow Ken Burns drift on the picture
+	local t = os.clock() - t0
+	art.Size = UDim2.fromScale(1.06 + t * 0.0025, 1.06 + t * 0.0025)
+	art.Position = UDim2.new(0.5, math.sin(t * 0.07) * px(14), 0.5, math.cos(t * 0.05) * px(6))
+end)
+task.spawn(function() -- animated dots + smooth progress
+	local n, acc = 0, 0
 	while gui.Parent do
 		local dt = task.wait()
 		acc += dt
 		if acc >= 0.35 then acc = 0; n = (n + 1) % 4 end
-		label.Text = status .. (dots and string.rep(".", n) or "")
-		shown += (progress - shown) * math.min(1, dt * 6)
-		fill.Size = UDim2.fromScale(math.clamp(shown, 0, 1), 1)
+		statusLbl.Text = status .. (dots and string.rep(".", n) or "")
+		shown += (progress - shown) * math.min(1, dt * 5)
+		local s = math.clamp(shown, 0, 1)
+		fill.Size = UDim2.fromScale(s, 1)
+		pctLbl.Text = tostring(math.floor(s * 100 + 0.5)) .. "%"
 	end
 end)
 
 local function setStatus(text, withDots)
 	if status == text then return end
 	status, dots = text, withDots ~= false
-	label.TextTransparency = 1
-	TweenService:Create(label, TweenInfo.new(0.25), { TextTransparency = 0 }):Play()
+	statusLbl.TextTransparency = 1
+	tw(statusLbl, 0.25, { TextTransparency = 0 })
 end
 
+-- ===== map name + picture (as soon as MatchState is here) =====
+local mapShown, artShown = false, false
+local function showMap(State)
+	local mode = tostring(State:GetAttribute("Mode") or "")
+	local name = string.upper(tostring(State:GetAttribute("MapName") or ""))
+	if not mapShown and name ~= "" then
+		mapShown = true
+		nameLbl.Text = name
+		modeLbl.Text = (mode == "1v1" and "1V1  //  DUEL" or "BREAKLINE  //  3V3") .. "      "
+		nameShift.PaddingRight = UDim.new(0, -px(60))
+		tw(nameShift, 0.9, { PaddingRight = UDim.new(0, 0) })
+		tw(nameLbl, 0.7, { TextTransparency = 0 })
+		tw(nameStroke, 0.7, { Transparency = 0.55 })
+		task.delay(0.25, function()
+			tw(modeLbl, 0.5, { TextTransparency = 0.1 })
+			tw(modeTick, 0.5, { BackgroundTransparency = 0 })
+			tw(slash, 0.8, { Size = UDim2.fromOffset(math.min(px(1100), math.max(px(260), nameLbl.TextBounds.X * 0.9)), px(4)) })
+		end)
+	end
+	local img = tostring(State:GetAttribute("MapImage") or "")
+	if not artShown and img ~= "" then
+		artShown = true
+		art.Image = img
+		task.spawn(function()
+			local done = false
+			task.spawn(function()
+				pcall(function() ContentProvider:PreloadAsync({ art }) end)
+				done = true
+			end)
+			local w0 = os.clock()
+			while not done and os.clock() - w0 < 6 do task.wait(0.05) end
+			if not gui.Parent then return end
+			tw(art, 1.2, { ImageTransparency = 0 }, Enum.EasingStyle.Quad)
+			tw(shadeB, 1.2, { BackgroundTransparency = 0 }, Enum.EasingStyle.Quad)
+			tw(shadeR, 1.2, { BackgroundTransparency = 0 }, Enum.EasingStyle.Quad)
+			tw(shadeT, 1.2, { BackgroundTransparency = 0 }, Enum.EasingStyle.Quad)
+		end)
+	end
+end
+
+local finishing = false
 local function finish()
-	TweenService:Create(label, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
-	TweenService:Create(bar, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
-	TweenService:Create(fill, TweenInfo.new(0.25), { BackgroundTransparency = 1 }):Play()
-	logoApi.outro(0.6)
-	TweenService:Create(root, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 1 }):Play()
-	task.wait(0.55)
+	if finishing then return end
+	finishing = true
+	tw(statusLbl, 0.3, { TextTransparency = 1 })
+	tw(pctLbl, 0.3, { TextTransparency = 1 })
+	tw(nameShift, 0.6, { PaddingRight = UDim.new(0, -px(80)) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+	tw(nameLbl, 0.5, { TextTransparency = 1 })
+	tw(modeLbl, 0.4, { TextTransparency = 1 })
+	tw(art, 0.9, { Size = UDim2.fromScale(art.Size.X.Scale + 0.05, art.Size.Y.Scale + 0.05) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	task.wait(0.25)
+	tw(root, 0.55, { GroupTransparency = 1 }, Enum.EasingStyle.Quad)
+	task.wait(0.6)
+	drift:Disconnect()
 	logoApi.stop()
 	gui:Destroy()
 end
@@ -96,6 +215,10 @@ if not State or not Remotes then
 	finish()
 	return
 end
+showMap(State)
+local c1 = State:GetAttributeChangedSignal("MapName"):Connect(function() showMap(State) end)
+local c2 = State:GetAttributeChangedSignal("MapImage"):Connect(function() showMap(State) end)
+gui.Destroying:Connect(function() c1:Disconnect() c2:Disconnect() end)
 
 -- ===== 2) preload the map (max 10 s) =====
 setStatus("LOADING MAP")
@@ -106,9 +229,9 @@ do
 		pcall(function() ContentProvider:PreloadAsync({ workspace }) end)
 		done = true
 	end)
-	local t0 = os.clock()
-	while not done and os.clock() - t0 < 10 do
-		progress = 0.3 + 0.4 * math.clamp((os.clock() - t0) / 10, 0, 1)
+	local w0 = os.clock()
+	while not done and os.clock() - w0 < 10 do
+		progress = 0.3 + 0.4 * math.clamp((os.clock() - w0) / 10, 0, 1)
 		task.wait(0.1)
 	end
 end
@@ -117,20 +240,21 @@ end
 setStatus("LOADING PLAYER")
 progress = 0.75
 do
-	local t0 = os.clock()
-	while not player.Character and os.clock() - t0 < 8 do task.wait(0.1) end
+	local w0 = os.clock()
+	while not player.Character and os.clock() - w0 < 8 do task.wait(0.1) end
 end
 Remotes:WaitForChild("ClientReady"):FireServer()
 progress = 0.85
 
 -- ===== 4) show what the server is waiting for until the match starts =====
-local startedAt = os.clock()
+-- v5.8: the picture stays up at least MIN_SHOW seconds, so a fast load still shows the map instead of flashing it
+local MIN_SHOW = 3.5
 while true do
 	local phase = State:GetAttribute("Phase")
-	if phase ~= "Waiting" then break end
+	if phase ~= "Waiting" and os.clock() - t0 >= MIN_SHOW then break end
 	local expected = State:GetAttribute("Expected") or 0
 	local ready = State:GetAttribute("Ready") or 0
-	if State:GetAttribute("AllReady") then
+	if State:GetAttribute("AllReady") or phase ~= "Waiting" then
 		setStatus("ALL PLAYERS LOADED", false)
 		progress = 1
 	elseif expected > 0 then
@@ -141,9 +265,7 @@ while true do
 	end
 	task.wait(0.1)
 end
-if State:GetAttribute("Phase") == "Pregame" then
-	setStatus("ALL PLAYERS LOADED", false)
-	progress = 1
-	task.wait(0.35)
-end
+setStatus("ALL PLAYERS LOADED", false)
+progress = 1
+task.wait(0.35)
 finish()
