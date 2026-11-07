@@ -1,4 +1,6 @@
--- CosmeticsServer v2 (Script in ServerScriptService) - LOBBY place only. NEW in v5.10.
+-- CosmeticsServer v3 (Script in ServerScriptService) - LOBBY place only. NEW in v5.10.
+-- v5.12: the 3 showcase items on the player card are free to move / resize / turn:
+--     Equip("place", slot 1..3, { x, y, s, r })   where the item of that slot sits on the card (PlayerCards.CleanPlace clamps it), saved in PlayerCard.pos
 -- v5.11: player card BANNERS can be bought (Buy("banner", id)) and the PLAYER CARD is saved here:
 --     Equip("card", bannerId)              background of your lobby player card (must be free or owned)
 --     Equip("show", slot 1..3, value)      a showcase slot: "skin:<Skins id>" / "gun:<GunSkins id>" / "card:<Cards id>" (must be owned) or "" = empty
@@ -73,9 +75,15 @@ BuyR.OnServerInvoke = function(player, kind, id)
 	return ok, msg
 end
 
+local lastPlace = {}
 EquipR.OnServerInvoke = function(player, kind, id, gunId)
-	if os.clock() - (lastCall[player] or 0) < 0.15 then return false, "Slow down." end
-	lastCall[player] = os.clock()
+	if kind == "place" then -- v5.12: its own (shorter) rate limit, so moving items never blocks an equip
+		if os.clock() - (lastPlace[player] or 0) < 0.12 then return false, "Slow down." end
+		lastPlace[player] = os.clock()
+	else
+		if os.clock() - (lastCall[player] or 0) < 0.15 then return false, "Slow down." end
+		lastCall[player] = os.clock()
+	end
 	if not loaded(player) then return false, "Your data is still loading." end
 	if kind == "skin" then
 		if type(id) ~= "string" or not Skins.Is(id) then return false, "Unknown skin." end
@@ -132,6 +140,18 @@ EquipR.OnServerInvoke = function(player, kind, id, gunId)
 		Profiles.Set(player, "PlayerCard", pc)
 		task.spawn(Profiles.Save, player)
 		return true, "Showcase updated."
+	elseif kind == "place" then -- v5.12: where a showcase item sits on the card. id = slot number, gunId = { x, y, s, r }
+		local slot, t = tonumber(id), gunId
+		if not slot or slot < 1 or slot > 3 or slot % 1 ~= 0 then return false, "Unknown slot." end
+		if type(t) ~= "table" then return false, "Bad placement." end
+		local pc = table.clone(Profiles.Get(player, "PlayerCard") or {})
+		local pos = {}
+		for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i) end
+		pos[slot] = PlayerCards.CleanPlace({ x = t.x, y = t.y, s = t.s, r = t.r }, slot)
+		pc.pos = pos
+		Profiles.Set(player, "PlayerCard", pc)
+		task.spawn(Profiles.Save, player)
+		return true, "Placed."
 	end
 	return false, "Unknown request."
 end
@@ -155,8 +175,11 @@ Players.PlayerAdded:Connect(function(p)
 		pc = type(pc) == "table" and table.clone(pc) or {}
 		if not Cat.OwnsBanner(p, pc.bg) then pc.bg = PlayerCards.Default end
 		if type(pc.show) ~= "table" then pc.show = { "", "", "" } end
+		local pos = {} -- v5.12: placements of the showcase items (checked / defaults)
+		for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i) end
+		pc.pos = pos
 		Profiles.Set(p, "PlayerCard", pc)
 	end)
 end)
 
-Players.PlayerRemoving:Connect(function(p) busy[p], lastCall[p] = nil, nil end)
+Players.PlayerRemoving:Connect(function(p) busy[p], lastCall[p], lastPlace[p] = nil, nil, nil end)
