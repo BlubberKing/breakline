@@ -1,3 +1,12 @@
+-- LobbyClient v6 (v5.11, owner Nov 7): PLAY SCREEN REBUILT -
+--   * left half: PLAYER CARDS (PlayerCards module) - yours always on top, two party slots under it (empty = INVITE). Each card: background banner,
+--     avatar picture, name, level, PARTY LEADER / READY tags, 3 showcase slots on the right. EDIT CARD opens the PLAYER CARD tab of the cosmetics locker.
+--   * the GAME MODES tab + the squad slots above PLAY are gone. The podiums moved right (the right one is close to the wall, above PLAY / INVITE),
+--     PROMOTE / KICK sit on the front of a teammate's podium (party leader only).
+--   * PLAY opens the big GAME MODES screen: every mode as a large card with a READY UP button. Solo = searches right away; in a party everybody readies
+--     up and the party searches once all are ready for the leader's mode (LobbyServer, remote Ready).
+--   * INVITE (the + button) opens its own INVITE screen (lobby / friends / search + your party), not a page inside the play screen.
+--   * the souls icon is the ghost from UIKit everywhere (the old diamond was still drawn here); the home-screen currencies sit on a dark plate with bigger names.
 -- LobbyClient v5.7 (v5.10: the hanger button next to PLAY (and TAB) now opens the COSMETICS LOCKER (CosmeticsClient, its own menu) instead of the skin picker inside the play screen;
 --   the play-screen label under it says COSMETICS; the squad stage figures hold their equipped gun skin) (v5.6 v5.9: ESSENCE next to the souls (big with names on the home screen, compact in menus), clear BACK / CLOSE buttons, fixed hanger, bolder labels, CARD INDEX lower, fitted gun pictures, less filler text) (v5.5 v4.7: loadout pickers only list items you own) (v5.4: v4.3: CARD INDEX buttons - home HUD above PLAY + play screen top bar; they open the CardIndex LocalScript)
 -- LobbyClient v5.3 (v3.8/v3.9: play-block queue indicator, static skin poses, LobbyMenuOpen flag, ability icons, no souls bullet) "CLEAN" (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only.
@@ -28,12 +37,14 @@ local QueueR, InviteR, RespondR, LeaveR, KickR, NoticeR =
 	remotes:WaitForChild("Queue"), remotes:WaitForChild("Invite"), remotes:WaitForChild("Respond"),
 	remotes:WaitForChild("Leave"), remotes:WaitForChild("Kick"), remotes:WaitForChild("Notice")
 local PromoteR, SetLoadoutR, SetSkinR = remotes:WaitForChild("Promote"), remotes:WaitForChild("SetLoadout"), remotes:WaitForChild("SetSkin")
+local ReadyR = remotes:WaitForChild("Ready") -- v5.11: READY UP on the game modes screen (LobbyServer)
 local Catalog = require(RS:WaitForChild("LobbyCatalog"))
 local Skins = require(RS:WaitForChild("Skins"))
 local GunSkins = RS:FindFirstChild("GunSkins") and require(RS.GunSkins) or nil -- v5.10: gun skins on the squad stage
 local GunModels = RS:FindFirstChild("GunModels") and require(RS.GunModels) or nil
 local GM = RS:FindFirstChild("GadgetModels") and require(RS.GadgetModels) or nil -- v4.1: real gadget pictures (new ModuleScript, copy of Breakline's)
 local UI = require(RS:WaitForChild("UIKit")) -- v5.2: shared logo (copy of Breakline's UIKit)
+local PlayerCards = require(RS:WaitForChild("PlayerCards")) -- v5.11: the player cards on the play screen
 
 -- ================= theme =================
 local rgb = Color3.fromRGB
@@ -267,26 +278,25 @@ local function makeLogo(parent, x, y, size)
 	return holder
 end
 
--- ================= soul icon: faceted crystal (outlined diamond + bright core) =================
+-- ================= soul icon (v5.11): the little GHOST from UIKit (same as the cosmetics shop). The old diamond was still drawn here. =================
 local function soulIcon(parent, size)
-	local h = new("Frame", { Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1 }, parent)
-	local d = math.floor(size * 0.68)
-	local outer = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(d, d),
-		Rotation = 45, BackgroundColor3 = C.soul, BackgroundTransparency = 0.82, BorderSizePixel = 0 }, h)
-	border(outer, C.soul, math.max(1.5, size * 0.07))
-	local inner = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(math.floor(d * 0.46), math.floor(d * 0.46)),
-		Rotation = 45, BackgroundColor3 = WHITE, BorderSizePixel = 0 }, h)
-	grad(inner, C.soulPale, C.soul, 90)
-	return h
+	return UI.SoulIcon(parent, size)
 end
 
 -- v5.9 CURRENCIES, right-aligned at (right, y): SOULS then ESSENCE (premium, purple) to its right.
 --   big = true  (home screen, no menu open): icon + the currency NAME above its balance, larger
 --   big = false (play screen / menus open)  : icon + balance only, compact
 local function currencyWidget(parent, right, y, big)
-	local H = big and 56 or 40
+	local H = big and 60 or 40
 	local w = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, y), Size = UDim2.fromOffset(640, H),
 		BackgroundTransparency = 1 }, parent)
+	if big then -- v5.11: a slight dark plate behind the currencies on the home screen (they sat straight on the 3D world)
+		w.AutomaticSize = Enum.AutomaticSize.X
+		w.Size = UDim2.fromOffset(0, H)
+		w.BackgroundColor3, w.BackgroundTransparency = C.void, 0.38
+		border(w, C.line, 1, 0.2)
+		new("UIPadding", { PaddingLeft = UDim.new(0, 18), PaddingRight = UDim.new(0, 20), PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, w)
+	end
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right,
 		VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, big and 40 or 26) }, w)
 	local function block(order, name, attr, color, makeIcon)
@@ -298,10 +308,10 @@ local function currencyWidget(parent, right, y, big)
 		if big then
 			local col = new("Frame", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, H), BackgroundTransparency = 1, LayoutOrder = 2 }, b)
 			new("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, -2) }, col)
-			new("TextLabel", { BackgroundTransparency = 1, Text = name, TextSize = 13, FontFace = FONTS.MB, TextColor3 = color, AutomaticSize = Enum.AutomaticSize.X,
-				Size = UDim2.fromOffset(0, 16), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1 }, col)
-			num = new("TextLabel", { BackgroundTransparency = 1, Text = "0", TextSize = 36, FontFace = FONTS.H, TextColor3 = C.text, AutomaticSize = Enum.AutomaticSize.X,
-				Size = UDim2.fromOffset(0, 40), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2 }, col)
+			new("TextLabel", { BackgroundTransparency = 1, Text = name, TextSize = 18, FontFace = FONTS.H, TextColor3 = color, AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.fromOffset(0, 20), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 1 }, col) -- v5.11: bigger (was 13 px mono)
+			num = new("TextLabel", { BackgroundTransparency = 1, Text = "0", TextSize = 34, FontFace = FONTS.H, TextColor3 = C.text, AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.fromOffset(0, 36), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2 }, col)
 		else
 			num = new("TextLabel", { BackgroundTransparency = 1, Text = "0", TextSize = 28, FontFace = FONTS.H, TextColor3 = C.text,
 				AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, H), LayoutOrder = 2 }, b)
@@ -377,7 +387,6 @@ local MODES = {
 	},
 }
 local function modeById(id) for _, m in MODES do if m.id == id then return m end end return MODES[1] end
-local selectedMode = "breakline"
 
 local loadout = { Weapon = Catalog.DefaultWeapon, Move = "", Gadgets = { "", "", "" }, Reserve = { "", "", "" } }
 local localEdited = false
@@ -503,7 +512,7 @@ local CL_W, CIRCLE, CL_GAP = 480, 72, 16                    -- cluster width, ci
 local CL_X = RIGHT - CL_W                                   -- 1384
 local BY, BH = 932, 96                                      -- bottom row top + height
 local PLAY_X, PLAY_W = CL_X + CIRCLE + CL_GAP, CL_W - 2 * (CIRCLE + CL_GAP)
-local homePlay, homeMain, homeSub, homePaint = actionBlock(hudC, PLAY_X, BY, PLAY_W, BH, "PLAY", "BREAKLINE  //  3V3")
+local homePlay, homeMain, homeSub, homePaint = actionBlock(hudC, PLAY_X, BY, PLAY_W, BH, "PLAY", "")
 homePaint("go")
 -- v3.9: queue indicator on the home PLAY block (the block still just opens the play screen, so it cannot say CANCEL):
 -- while you search it turns white with a red edge, shows SEARCHING + the timer, and a thin red light runs along its bottom edge.
@@ -552,9 +561,10 @@ end
 local stage = canvas(screen, 2)
 
 -- ----- layout lines of the PLAY screen -----
-local TAB_X, TAB_W = 56, 300                 -- game modes tab (left)
-local MID_X = TAB_X + TAB_W + 24             -- 380: middle area starts here
-local STAGE_CX = math.floor((MID_X + RIGHT) / 2) -- 1122: the squad is centred in the middle area
+-- v5.11: the player cards fill the left half, the squad stands right of them (the right podium close to the wall, above PLAY / INVITE)
+local CARD_X, CARD_W = 56, 840               -- player cards (left half)
+local MID_X = CARD_X + CARD_W + 24           -- 920: the stage area starts here
+local STAGE_CX = 1385                        -- the middle podium; the right one ends up above PLAY / INVITE
 
 -- ----- background: a slowly turning galaxy behind the squad (2D, canvas space) -----
 local galaxy = new("Frame", { Size = UDim2.fromOffset(1920, 1080), BackgroundTransparency = 1, ZIndex = 0 }, stage)
@@ -696,15 +706,27 @@ end
 local squad = {} -- { fig, root, tag, top }
 local squadKey = ""
 local nameLayer = new("Frame", { Position = UDim2.fromOffset(VPX, 0), Size = UDim2.fromOffset(VPW, VPH), BackgroundTransparency = 1, ZIndex = 4 }, stage)
+-- v5.11: PROMOTE / KICK buttons on the front of a teammate's podium (party leader only)
+local podLayer = new("Frame", { Position = UDim2.fromOffset(VPX, 0), Size = UDim2.fromOffset(VPW, VPH), BackgroundTransparency = 1, ZIndex = 6 }, stage)
 
 -- names above heads: just text
-local function nameTag(text, isLeader)
+local function nameTag(text, isLeader, ready)
 	local holder = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(320, 54), BackgroundTransparency = 1 }, nameLayer)
 	local n = lbl(holder, text, 26, 0, 20, 320, 34, C.text, "HM", Enum.TextXAlignment.Center)
 	n.TextTruncate = Enum.TextTruncate.AtEnd
 	new("UIStroke", { Color = BLACK, Thickness = 1.5, Transparency = 0.45 }, n)
-	if isLeader then lbl(holder, "PARTY LEADER", 12, 0, 4, 320, 16, C.redHi, "MB", Enum.TextXAlignment.Center) end
+	local top = {}
+	if isLeader then table.insert(top, "PARTY LEADER") end
+	if ready then table.insert(top, "READY") end
+	if #top > 0 then lbl(holder, table.concat(top, "  //  "), 12, 0, 4, 320, 16, ready and UI.C.green or C.redHi, "MB", Enum.TextXAlignment.Center) end
 	return holder
+end
+-- v5.11: ready states of the party (LobbyServer sets PartyReadyJson = { [userId] = modeId })
+local function readyMap()
+	local raw = player:GetAttribute("PartyReadyJson")
+	if type(raw) ~= "string" or raw == "" then return {} end
+	local ok, t = pcall(function() return HttpService:JSONDecode(raw) end)
+	return (ok and type(t) == "table") and t or {}
 end
 
 local function rebuildSquad()
@@ -723,8 +745,9 @@ local function rebuildSquad()
 			local who = m.me and player or Players:GetPlayerByUserId(m.id)
 			gunSkin = who and GunSkins.Equipped(who, weapon) or nil
 		end
-		looks[i] = { skin = skin, weapon = weapon, name = name, leader = (m.id == leader) and #members > 1, me = m.me, gunSkin = gunSkin }
-		table.insert(key, ("%d:%s:%s:%s:%s"):format(m.id, skin, weapon, tostring(looks[i].leader), tostring(gunSkin)))
+		local ready = readyMap()[tostring(m.id)] ~= nil
+		looks[i] = { skin = skin, weapon = weapon, name = name, leader = (m.id == leader) and #members > 1, me = m.me, gunSkin = gunSkin, ready = ready }
+		table.insert(key, ("%d:%s:%s:%s:%s:%s"):format(m.id, skin, weapon, tostring(looks[i].leader), tostring(gunSkin), tostring(ready)))
 	end
 	local k = table.concat(key, "|")
 	if k == squadKey then return end
@@ -736,7 +759,7 @@ local function rebuildSquad()
 		local fig = Skins.NewFigure(vp, look.skin, { weapon = look.weapon, gunSkin = look.gunSkin, camPos = CAM_POS, idle = true }) -- idle moves: this stage only
 		local root = CFrame.new(slot.pos) * CFrame.Angles(0, math.rad(slot.yaw), 0)
 		fig:SetRoot(root)
-		local tag = nameTag(string.upper(look.name), look.leader)
+		local tag = nameTag(string.upper(look.name), look.leader, look.ready)
 		table.insert(squad, { fig = fig, root = root, tag = tag, top = fig.HeadTop })
 	end
 end
@@ -770,7 +793,7 @@ end
 -- [move]  [primary]  [g2][g3][g4] | [r1][r2][r3]   all square tiles, one size
 local SQ, SQ_GAP, GRP_GAP, RES_GAP = 96, 8, 26, 22
 local DOCK_W = SQ * 8 + SQ_GAP * 4 + GRP_GAP * 2 + RES_GAP * 2 + 2
-local DOCK_X = math.floor((MID_X + CL_X - 24) / 2 - DOCK_W / 2)
+local DOCK_X = CARD_X -- v5.11: bottom left, under the player cards
 local loadCol = new("Frame", { Position = UDim2.fromOffset(DOCK_X, BY - 24), Size = UDim2.fromOffset(DOCK_W, SQ + 24), BackgroundTransparency = 1, ZIndex = 5 }, stage)
 
 local slots = {}
@@ -911,15 +934,15 @@ do -- dock geometry: group labels sit above the tiles, a slim line splits active
 	for i = 1, 3 do makeSlot("reserve", i, x + (i - 1) * (SQ + SQ_GAP), y, SQ, SQ, "tile", "R" .. i) end
 end
 
--- ================= overlay (picker / invite / mode) over the stage =================
-local PARTY_Y, PARTY_H = 800, 108 -- party row (right cluster), the overlay stops above it
-local OX, OY = MID_X, 116
-local OW, OH = RIGHT - MID_X, PARTY_Y - 36 - OY
+-- ================= overlay (loadout picker) over the stage =================
+-- v5.11: the picker covers the whole width above the dock (the invite + mode pages became their own screens)
+local OX, OY = CARD_X, 116
+local OW, OH = RIGHT - CARD_X, BY - 44 - OY
 local overlay = frame(stage, OX, OY, OW, OH, C.bg, 0.04)
 overlay.ZIndex, overlay.Visible, overlay.Active = 8, false, true
 border(overlay, C.line, 1)
 local views = {}
-for _, name in { "pick", "invite", "mode" } do
+for _, name in { "pick" } do
 	views[name] = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, overlay)
 end
 
@@ -1087,26 +1110,42 @@ for _, s in slots do
 	end)
 end
 
--- ----- invite view -----
-local inviteV = views.invite
-viewHeader(inviteV, "INVITE", "")
+-- ----- v5.11: INVITE screen (its own full screen, opened by the + buttons) -----
+local inviteRoot = new("Frame", { Name = "InviteScreen", Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.void, BackgroundTransparency = 0.03, BorderSizePixel = 0,
+	Visible = false, ZIndex = 40, Active = true }, gui)
+local inviteC = canvas(inviteRoot, 41)
+local IW, IH = 1300, 900 -- the player list (left); your party sits on the right
+lbl(inviteC, "INVITE", 56, 56, 26, 600, 70, C.text, "H")
+frame(inviteC, 56, 108, RIGHT - 56, 1, C.line, 0)
+local inviteClose = UI.CloseButton(inviteC, "CLOSE", { Position = UDim2.fromOffset(RIGHT - 152, 34) })
+local inviteV = frame(inviteC, 56, 128, IW, IH, C.bg, 0.25)
+border(inviteV, C.line, 1)
+local invParty = frame(inviteC, 56 + IW + 24, 128, RIGHT - (56 + IW + 24), IH, C.bg, 0.25)
+border(invParty, C.line, 1)
+lbl(invParty, "YOUR PARTY", 26, 24, 14, 300, 40, C.text, "H")
+local invPartyCount = lbl(invParty, "", 13, 0, 26, 0, 20, C.dim, "MB", Enum.TextXAlignment.Right)
+invPartyCount.Position, invPartyCount.Size = UDim2.new(1, -224, 0, 24), UDim2.fromOffset(200, 20)
+frame(invParty, 24, 62, invParty.Size.X.Offset - 48, 1, C.line, 0)
+local invPartyList = new("Frame", { Position = UDim2.fromOffset(24, 78), Size = UDim2.new(1, -48, 1, -96), BackgroundTransparency = 1 }, invParty)
+new("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder }, invPartyList)
+local inviteOpen = false
 local inviteTab = "lobby"
 local tabs = {}
 for i, name in { "lobby", "friends" } do
 	local b = new("TextButton", { Text = string.upper(name), TextSize = 18, FontFace = FONTS.H, TextColor3 = C.dim, BackgroundTransparency = 1,
-		AutoButtonColor = false, Position = UDim2.fromOffset(32 + (i - 1) * 112, 116), Size = UDim2.fromOffset(100, 40) }, inviteV)
+		AutoButtonColor = false, Position = UDim2.fromOffset(32 + (i - 1) * 112, 18), Size = UDim2.fromOffset(100, 40) }, inviteV)
 	local u = frame(b, 0, 38, 100, 2, C.red, 0)
 	tabs[name] = { b = b, u = u }
 end
 local search = new("TextBox", { PlaceholderText = "Search players...", Text = "", TextSize = 16, FontFace = FONTS.B, TextColor3 = C.text,
 	PlaceholderColor3 = C.mute, BackgroundColor3 = C.panel, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
-	Position = UDim2.fromOffset(276, 116), Size = UDim2.fromOffset(520, 40), BorderSizePixel = 0 }, inviteV)
+	Position = UDim2.fromOffset(276, 18), Size = UDim2.fromOffset(520, 40), BorderSizePixel = 0 }, inviteV)
 local searchStroke = border(search, C.line, 1)
 search.Focused:Connect(function() searchStroke.Color = C.line2 end)
 search.FocusLost:Connect(function() searchStroke.Color = C.line end)
 new("UIPadding", { PaddingLeft = UDim.new(0, 14) }, search)
-local inviteHint = lbl(inviteV, "", 12, 820, 116, 500, 40, C.redHi, "M")
-local inviteScroll = new("ScrollingFrame", { Position = UDim2.fromOffset(24, 172), Size = UDim2.fromOffset(OW - 48, OH - 188), BackgroundTransparency = 1, BorderSizePixel = 0,
+local inviteHint = lbl(inviteV, "", 12, 820, 18, 460, 40, C.redHi, "M")
+local inviteScroll = new("ScrollingFrame", { Position = UDim2.fromOffset(24, 74), Size = UDim2.fromOffset(IW - 48, IH - 90), BackgroundTransparency = 1, BorderSizePixel = 0,
 	ScrollBarThickness = 4, ScrollBarImageColor3 = C.line2, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y }, inviteV)
 new("UIListLayout", { Padding = UDim.new(0, 8) }, inviteScroll)
 new("UIPadding", { PaddingRight = UDim.new(0, 10), PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 4) }, inviteScroll)
@@ -1122,8 +1161,32 @@ local function loadFriends()
 		local ok, res = pcall(function() return player:GetFriendsOnline(200) end)
 		friendsCache = (ok and type(res) == "table") and res or {}
 		friendsLoading = false
-		if view == "invite" then rebuildInvite() end
+		if inviteOpen then rebuildInvite() end
 	end)
+end
+
+-- your party, on the right of the invite screen
+local function renderInviteParty()
+	for _, c in invPartyList:GetChildren() do if c:IsA("GuiObject") then c:Destroy() end end
+	local list, leader = partyInfo()
+	invPartyCount.Text = ("%d / 3"):format(#list)
+	local ordered = {}
+	for _, m in list do if m.id == leader then table.insert(ordered, m) end end
+	for _, m in list do if m.id ~= leader then table.insert(ordered, m) end end
+	for i = 1, 3 do
+		local m = ordered[i]
+		local row = new("Frame", { Size = UDim2.new(1, 0, 0, 84), BackgroundColor3 = C.panel, BackgroundTransparency = m and 0 or 0.5, BorderSizePixel = 0, LayoutOrder = i }, invPartyList)
+		border(row, (m and m.id == leader and #list > 1) and C.red or C.line, 1)
+		if m then
+			local isMe = m.id == player.UserId
+			new("ImageLabel", { BackgroundColor3 = C.panel3, BorderSizePixel = 0, Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(60, 60), Image = thumb(m.id) }, row)
+			local nm = lbl(row, string.upper(isMe and player.DisplayName or m.name), 24, 86, 12, 300, 32, C.text, "H")
+			nm.TextTruncate = Enum.TextTruncate.AtEnd
+			lbl(row, (m.id == leader and #list > 1) and "PARTY LEADER" or (isMe and "YOU" or "MEMBER"), 12, 87, 48, 300, 18, (m.id == leader and #list > 1) and C.redHi or C.dim, "MB")
+		else
+			lbl(row, "OPEN SLOT", 18, 0, 0, 0, 84, C.mute, "H", Enum.TextXAlignment.Center).Size = UDim2.new(1, 0, 0, 84)
+		end
+	end
 end
 
 function rebuildInvite()
@@ -1198,13 +1261,13 @@ function rebuildInvite()
 			sentAt[e.id] = os.clock()
 			InviteR:FireServer(e.id)
 			rebuildInvite()
-			task.delay(8.1, function() if view == "invite" then rebuildInvite() end end)
+			task.delay(8.1, function() if inviteOpen then rebuildInvite() end end)
 		end)
 	end
 end
 tabs.lobby.b.MouseButton1Click:Connect(function() inviteTab = "lobby" rebuildInvite() end)
 tabs.friends.b.MouseButton1Click:Connect(function() inviteTab = "friends" rebuildInvite() end)
-search:GetPropertyChangedSignal("Text"):Connect(function() if view == "invite" then rebuildInvite() end end)
+search:GetPropertyChangedSignal("Text"):Connect(function() if inviteOpen then rebuildInvite() end end)
 search.FocusLost:Connect(function(enter)
 	if enter and #search.Text >= 3 then
 		local list, leader = partyInfo()
@@ -1214,8 +1277,23 @@ search.FocusLost:Connect(function(enter)
 		end
 	end
 end)
-Players.PlayerAdded:Connect(function() if view == "invite" then rebuildInvite() end end)
-Players.PlayerRemoving:Connect(function() if view == "invite" then task.defer(rebuildInvite) end end)
+Players.PlayerAdded:Connect(function() if inviteOpen then rebuildInvite() end end)
+Players.PlayerRemoving:Connect(function() if inviteOpen then task.defer(rebuildInvite) end end)
+local function openInvite()
+	if inviteOpen then return end
+	inviteOpen = true
+	inviteRoot.Visible = true
+	player:SetAttribute("LobbyMenuOpen", true)
+	rebuildInvite()
+	renderInviteParty()
+end
+local function closeInvite()
+	if not inviteOpen then return end
+	inviteOpen = false
+	inviteRoot.Visible = false
+	player:SetAttribute("LobbyMenuOpen", screenOpen or nil)
+end
+inviteClose.MouseButton1Click:Connect(closeInvite)
 
 -- ----- game mode graphic: flat top-down map (red end, wall with holes, blue end) -----
 local function modeGraphic(parent, duel)
@@ -1260,59 +1338,117 @@ local function modeGraphic(parent, duel)
 	return g
 end
 
--- ----- mode info view -----
-local modeV = views.mode
-viewHeader(modeV, "GAME MODE", "")
-local modeArt = frame(modeV, 32, 124, 600, 450, C.panel, 0)
-border(modeArt, C.line, 1)
-local modeArtG = modeGraphic(modeArt)
-local mTitle = lbl(modeV, "", 72, 668, 112, 640, 84, C.text, "H")
-local mTag = lbl(modeV, "", 13, 671, 196, 640, 16, C.redHi, "MB")
-local mDesc = lbl(modeV, "", 16, 670, 228, 640, 110, C.dim, "B")
-mDesc.TextWrapped, mDesc.TextYAlignment = true, Enum.TextYAlignment.Top
-local mFacts = new("Frame", { Position = UDim2.fromOffset(670, 350), Size = UDim2.fromOffset(640, 180), BackgroundTransparency = 1 }, modeV)
-local mSelect = button(modeV, "SELECT", 670, 518, 260, 56, "primary", 24)
-local modeShown = MODES[1]
-local modeCardSel = function() end -- forward (bottom-left card refresh)
 local refreshQueue -- forward (defined near the PLAY block)
-local function openMode(m)
-	modeShown = m
-	modeArtG:Destroy()
-	modeArtG = modeGraphic(modeArt, m.id == "1v1")
-	mTitle.Text, mTag.Text, mDesc.Text = m.name, m.tag, m.desc
-	for _, c in mFacts:GetChildren() do c:Destroy() end
-	for i, f in m.facts do
-		local y = (i - 1) * 30
-		frame(mFacts, 0, y + 9, 6, 6, C.red, 0)
-		lbl(mFacts, f, 16, 20, y, 600, 24, C.text, "B")
-	end
-	mSelect.Text = (selectedMode == m.id) and "SELECTED" or "SELECT"
-	setView("mode")
-end
-mSelect.MouseButton1Click:Connect(function()
-	selectedMode = modeShown.id
-	if modeCardSel then modeCardSel() end
-	if refreshQueue then pcall(refreshQueue) end
-	setView("home")
-end)
+local renderParty   -- forward (player cards + podium buttons)
+local paintModes    -- forward (game modes screen)
+local function fmtTime(s) return ("%d:%02d"):format(math.floor(s / 60), s % 60) end
 
 function setView(name)
 	view = name
 	overlay.Visible = name ~= "home"
 	for n, f in views do f.Visible = (n == name) end
 	nameLayer.Visible = name == "home"
+	podLayer.Visible = name == "home"
 	for _, s in slots do drawSlot(s) end
-	if name == "invite" then rebuildInvite() end
-	if skinsActive then skinsActive(name == "pick" and pickKind == "skin") end
-	if inviteActive then inviteActive(name == "invite") end
+	if skinsActive then skinsActive(false) end
 	if name ~= "pick" then
 		for _, f in skinFigs do f:Destroy() end
 		table.clear(skinFigs)
 	end
 end
 
--- ================= left: GAME MODES tab =================
--- BREAKLINE on top (live, click = mode info / select). The rest are locked placeholders that fill the column until new modes ship.
+-- ================= v5.11: PLAYER CARDS (left half: yours on top, two party slots under it) =================
+local CARD_H, CARD_GAP = PlayerCards.H, 16
+local CARD_Y = 116
+local cardLayer = new("Frame", { Position = UDim2.fromOffset(CARD_X, CARD_Y), Size = UDim2.fromOffset(CARD_W, CARD_H * 3 + CARD_GAP * 2), BackgroundTransparency = 1, ZIndex = 5 }, stage)
+local cardKey = ""
+local function orderedMembers()
+	local list, leader = partyInfo()
+	local out = { { id = player.UserId, name = player.Name, me = true } }
+	for _, m in list do if m.id ~= player.UserId then table.insert(out, m) end end
+	return out, leader, #list
+end
+local function renderCards()
+	if not screenOpen then cardKey = "" return end
+	local members, leader, n = orderedMembers()
+	local rm = readyMap()
+	local key, datas = {}, {}
+	for i = 1, 3 do
+		local m = members[i]
+		if m then
+			local p = m.me and player or Players:GetPlayerByUserId(m.id)
+			local d = {
+				userId = m.id, name = p and p.DisplayName or m.name, username = p and p.Name or m.name, level = p and p:GetAttribute("Level") or nil,
+				leader = n > 1 and m.id == leader, ready = rm[tostring(m.id)] ~= nil, card = PlayerCards.Read(p), me = m.me,
+			}
+			datas[i] = d
+			table.insert(key, ("%d:%s:%s:%s:%s:%s"):format(m.id, tostring(d.level), tostring(d.leader), tostring(d.ready), d.card.bg, table.concat(d.card.show, ",")))
+		else
+			table.insert(key, "-")
+		end
+	end
+	local k = table.concat(key, "|") .. tostring(n)
+	if k == cardKey then return end
+	cardKey = k
+	cardLayer:ClearAllChildren()
+	for i = 1, 3 do
+		local y = (i - 1) * (CARD_H + CARD_GAP)
+		local d = datas[i]
+		if d then
+			local holder = PlayerCards.Render(cardLayer, d, CARD_W)
+			holder.Position = UDim2.fromOffset(0, y)
+			if d.me then
+				local edit = button(holder, "EDIT CARD", 312, 146, 132, 40, "ghost", 16)
+				edit.ZIndex = 8
+				grow(edit, 1.05)
+				edit.MouseButton1Click:Connect(function() player:SetAttribute("CosmeticsOpen", "card") end)
+				if n > 1 then
+					local lv = button(holder, "LEAVE PARTY", 214, 196, 132, 28, "danger", 13)
+					lv.ZIndex = 8
+					lv.MouseButton1Click:Connect(function() LeaveR:FireServer() end)
+				end
+			end
+		else
+			local holder = PlayerCards.Render(cardLayer, { empty = true }, CARD_W)
+			holder.Position = UDim2.fromOffset(0, y)
+			local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 8 }, holder)
+			local card = holder:FindFirstChild("Card")
+			b.MouseEnter:Connect(function() if card then tween(card, FAST, { BackgroundTransparency = 0.2 }) end end)
+			b.MouseLeave:Connect(function() if card then tween(card, FAST, { BackgroundTransparency = 0.45 }) end end)
+			b.MouseButton1Click:Connect(openInvite)
+		end
+	end
+end
+
+-- PROMOTE / KICK on the front of every teammate's podium (only the party leader sees them)
+local function renderPodium()
+	podLayer:ClearAllChildren()
+	local members, leader, n = orderedMembers()
+	if leader ~= player.UserId or n < 2 then return end
+	for i = 2, math.min(3, #members) do
+		local m = members[i]
+		local pl = PILLARS[i]
+		local p = project(Vector3.new(pl.x, pl.top - 0.9, pl.z + 2.05))
+		if p then
+			local row = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(p.X, p.Y), Size = UDim2.fromOffset(216, 36), BackgroundTransparency = 1 }, podLayer)
+			local prom = button(row, "PROMOTE", 0, 0, 106, 36, "ghost", 16)
+			local kick = button(row, "KICK", 110, 0, 106, 36, "danger", 16)
+			grow(prom, 1.06)
+			grow(kick, 1.06)
+			prom.MouseButton1Click:Connect(function() PromoteR:FireServer(m.id) end)
+			kick.MouseButton1Click:Connect(function() KickR:FireServer(m.id) end)
+		end
+	end
+end
+renderParty = function()
+	renderCards()
+	renderPodium()
+	if inviteOpen then renderInviteParty() rebuildInvite() end
+end
+
+-- ================= v5.11: GAME MODES screen (PLAY opens it) =================
+-- Every mode is a big card with its picture, rules and a READY UP button. Solo: READY UP searches straight away. In a party everybody readies up,
+-- the leader's mode counts, and the party searches once all are ready for it (LobbyServer).
 local LOCKED_MODES = {
 	{ name = "RANKED", tag = "3V3  //  COMPETITIVE" },
 	{ name = "OVERLOAD", tag = "5V5  //  ZONE CONTROL" },
@@ -1320,169 +1456,109 @@ local LOCKED_MODES = {
 	{ name = "SIEGE", tag = "4V4  //  ATTACK + DEFEND" },
 	{ name = "FIRING RANGE", tag = "SOLO  //  PRACTICE" },
 }
-local TAB_Y, TAB_H = 116, BY + BH - 116
-local modeTab = frame(stage, TAB_X, TAB_Y, TAB_W, TAB_H, C.bg, 0.1)
-modeTab.ZIndex = 5
-border(modeTab, C.line, 1)
-lbl(modeTab, "GAME MODES", 22, 18, 12, 200, 30, C.text, "H")
-lbl(modeTab, ("%d / %d"):format(#MODES, #MODES + #LOCKED_MODES), 11, TAB_W - 118, 21, 100, 14, C.mute, "M", Enum.TextXAlignment.Right)
-frame(modeTab, 18, 52, TAB_W - 36, 1, C.line, 0)
-
-local MODE_PAD, LIVE_H, SMALL_H, LOCK_GAP = 12, 178, 78, 10
-local cardRefresh = {}
-local expandedMode = "breakline" -- the big card (picture + name); every other mode is a small name-only card
-local rebuildModeList -- forward
-local listTop = 62
-local scroll = new("ScrollingFrame", { Position = UDim2.fromOffset(0, listTop), Size = UDim2.fromOffset(TAB_W, TAB_H - listTop - 4),
-	BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line2, ZIndex = 6,
-	CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.None,
-	ScrollingDirection = Enum.ScrollingDirection.Y, ElasticBehavior = Enum.ElasticBehavior.Never }, modeTab)
-
-local function liveCard(m, y, big)
-	local w = TAB_W - MODE_PAD * 2 - 6
-	local h = big and LIVE_H or SMALL_H
-	local card = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BorderSizePixel = 0,
-		Position = UDim2.fromOffset(MODE_PAD, y), Size = UDim2.fromOffset(w, h), ZIndex = 6 }, scroll)
-	local st = border(card, C.red, 1)
-	hoverable(card, C.panel, C.panel2, st, C.red, C.redHi)
-	frame(card, 0, 0, 3, h, C.red, 0)
-	local tag
-	if big then
-		local th = frame(card, 3, 0, w - 3, 92, C.panel, 0)
-		modeGraphic(th, m.id == "1v1")
-		tag = frame(card, w - 82, 8, 74, 18, C.red, 0)
-		tag.ZIndex = 3
-		lbl(tag, "SELECTED", 10, 0, 0, 74, 18, C.text, "MB", Enum.TextXAlignment.Center)
-		lbl(card, m.name, 30, 16, 98, w - 50, 40, C.text, "H")
-		lbl(card, m.tag, 11, 17, 138, w - 50, 14, C.dim, "M")
-		lbl(card, "MODE INFO", 10, 17, 156, 120, 14, C.mute, "MB")
-		chevron(card, w - 24, 118, 8, C.dim, 2)
-	else
-		lbl(card, m.name, 22, 16, 12, w - 110, 30, C.text, "H")
-		lbl(card, m.tag, 10, 17, 44, w - 40, 14, C.dim, "M")
-		lbl(card, "MODE INFO", 10, 17, 59, 120, 14, C.mute, "MB")
-		tag = frame(card, w - 82, 10, 74, 18, C.red, 0)
-		tag.ZIndex = 3
-		lbl(tag, "SELECTED", 10, 0, 0, 74, 18, C.text, "MB", Enum.TextXAlignment.Center)
-		chevron(card, w - 24, 52, 8, C.dim, 2)
-	end
-	table.insert(cardRefresh, function() tag.Visible = (selectedMode == m.id) end)
-	card.MouseButton1Click:Connect(function()
-		if expandedMode == m.id and view == "mode" and modeShown == m then setView("home") return end
-		if expandedMode ~= m.id then
-			expandedMode = m.id
-			rebuildModeList()
+local modesRoot = new("Frame", { Name = "GameModes", Size = UDim2.fromOffset(1920, 1080), BackgroundColor3 = C.void, BackgroundTransparency = 0.04, BorderSizePixel = 0,
+	Visible = false, ZIndex = 30, Active = true }, stage)
+local modesOpen = false
+lbl(modesRoot, "GAME MODES", 56, 56, 26, 700, 70, C.text, "H").ZIndex = 31
+frame(modesRoot, 56, 108, RIGHT - 56, 1, C.line, 0).ZIndex = 31
+local modesClose = UI.CloseButton(modesRoot, "BACK", { Position = UDim2.fromOffset(RIGHT - 152, 34), ZIndex = 32 })
+local partyStrip = lbl(modesRoot, "", 18, 760, 34, RIGHT - 152 - 24 - 760, 44, C.dim, "HM", Enum.TextXAlignment.Right)
+partyStrip.ZIndex = 31
+local modeCards = {}
+do
+	local MW, MH, MG = 880, 610, 48
+	for i, m in MODES do
+		local x = 56 + (i - 1) * (MW + MG)
+		local card = frame(modesRoot, x, 132, MW, MH, C.panel, 0)
+		card.ZIndex = 31
+		local st = border(card, C.line, 1)
+		local pic = frame(card, 0, 0, MW, 300, C.panel, 0)
+		modeGraphic(pic, m.id == "1v1")
+		lbl(card, m.name, 66, 28, 310, MW - 56, 76, C.text, "H")
+		lbl(card, m.tag, 14, 30, 386, MW - 56, 18, C.redHi, "MB")
+		local ds = lbl(card, m.desc, 16, 28, 414, MW - 56, 64, C.dim, "B")
+		ds.TextWrapped, ds.TextYAlignment = true, Enum.TextYAlignment.Top
+		for f, fact in m.facts do
+			local fx, fy = 28, 486 + (f - 1) * 28 -- one column on the left, the READY UP button sits bottom right
+			frame(card, fx, fy + 9, 6, 6, C.red, 0)
+			lbl(card, fact, 15, fx + 18, fy, 430, 24, C.text, "B").TextTruncate = Enum.TextTruncate.AtEnd
 		end
-		openMode(m)
-	end)
-	if big then grow(card, 1.03) end
-end
-
-local function lockedCard(m, y)
-	local w = TAB_W - MODE_PAD * 2 - 6
-	local H = SMALL_H
-	local f = frame(scroll, MODE_PAD, y, w, H, C.panel, 0.45)
-	f.ZIndex = 6
-	border(f, C.line, 1, 0.35)
-	local hatch = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ClipsDescendants = true }, f)
-	for k = 0, 14 do
-		new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(k * 26 - 40, H / 2), Size = UDim2.fromOffset(1, H * 1.8),
-			Rotation = 35, BackgroundColor3 = C.line, BackgroundTransparency = 0.55, BorderSizePixel = 0 }, hatch)
+		local btn, main, sub, paint = actionBlock(card, MW - 28 - 360, MH - 24 - 76, 360, 76, "READY UP", "")
+		modeCards[m.id] = { card = card, st = st, btn = btn, main = main, sub = sub, paint = paint, m = m }
 	end
-	lbl(f, m.name, 22, 16, 12, w - 60, 30, C.mute, "H")
-	lbl(f, m.tag, 10, 17, 44, w - 60, 14, C.mute, "M")
-	lbl(f, "COMING SOON", 10, 17, 59, w - 60, 14, C.redDeep:Lerp(C.mute, 0.3), "MB")
-	lockIcon(f, w - 32, math.floor(H / 2) - 9, C.mute)
-end
-
-function rebuildModeList()
-	for _, c in scroll:GetChildren() do c:Destroy() end
-	table.clear(cardRefresh)
-	local y = 4
-	for _, m in MODES do
-		local big = (expandedMode == m.id)
-		liveCard(m, y, big)
-		y += (big and LIVE_H or SMALL_H) + LOCK_GAP
+	-- locked placeholder modes (TBD names), small, under the live ones
+	local LW = math.floor((RIGHT - 56 - 16 * (#LOCKED_MODES - 1)) / #LOCKED_MODES)
+	for i, m in LOCKED_MODES do
+		local f = frame(modesRoot, 56 + (i - 1) * (LW + 16), 132 + MH + 28, LW, 150, C.panel, 0.45)
+		f.ZIndex = 31
+		border(f, C.line, 1, 0.35)
+		local hatch = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ClipsDescendants = true }, f)
+		for k = 0, 18 do
+			new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(k * 26 - 40, 75), Size = UDim2.fromOffset(1, 270),
+				Rotation = 35, BackgroundColor3 = C.line, BackgroundTransparency = 0.55, BorderSizePixel = 0 }, hatch)
+		end
+		lbl(f, m.name, 30, 20, 26, LW - 70, 38, C.mute, "H")
+		lbl(f, m.tag, 12, 21, 68, LW - 40, 16, C.mute, "M")
+		lbl(f, "COMING SOON", 12, 21, 112, LW - 40, 16, C.redDeep:Lerp(C.mute, 0.3), "MB")
+		lockIcon(f, LW - 36, 28, C.mute)
 	end
-	for _, m in LOCKED_MODES do
-		lockedCard(m, y)
-		y += SMALL_H + LOCK_GAP
-	end
-	scroll.CanvasSize = UDim2.fromOffset(0, y + 4)
-	modeCardSel()
-end
-modeCardSel = function() for _, f in cardRefresh do f() end end
-rebuildModeList()
-
--- ================= right cluster: party (3 slots) above (hanger) | PLAY | (+) =================
--- party: 3 compact slots, the leader is always the leftmost
-local PW, PGAP = math.floor((CL_W - 24) / 3), 12
-local partyHolder = new("Frame", { Position = UDim2.fromOffset(CL_X, PARTY_Y), Size = UDim2.fromOffset(CL_W, PARTY_H), BackgroundTransparency = 1, ZIndex = 5 }, stage)
-lbl(stage, "SQUAD", 11, CL_X, PARTY_Y - 22, 200, 14, C.mute, "M").ZIndex = 5
-local squadCount = lbl(stage, "", 11, RIGHT - 200, PARTY_Y - 22, 200, 14, C.mute, "M", Enum.TextXAlignment.Right)
-squadCount.ZIndex = 5
-
-local function smallBtn(parent, text, x, y, w, danger)
-	local b = new("TextButton", { Text = text, TextSize = 10, FontFace = FONTS.MB, TextColor3 = danger and C.redHi or C.dim, BackgroundColor3 = C.panel2,
-		AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, 20) }, parent)
-	local st = border(b, danger and C.redDeep or C.line, 1)
-	hoverable(b, C.panel2, C.panel3, st, danger and C.redDeep or C.line, danger and C.red or C.line2)
-	grow(b, 1.08)
-	return b
 end
 
-local function renderParty()
-	for _, c in partyHolder:GetChildren() do c:Destroy() end
+-- what each READY UP button does / says right now
+local function modeState(mId)
+	local q, qm = player:GetAttribute("Queued"), player:GetAttribute("QueuedMode")
 	local list, leader = partyInfo()
-	local iLead = (leader == player.UserId)
-	local ordered = {}
-	for _, m in list do if m.id == leader then table.insert(ordered, m) end end
-	for _, m in list do if m.id ~= leader then table.insert(ordered, m) end end
-	squadCount.Text = ("%d / 3"):format(#ordered)
-
-	for i = 1, 3 do
-		local m = ordered[i]
-		local x = (i - 1) * (PW + PGAP)
-		if m then
-			local isMe = m.id == player.UserId
-			local isLeader = m.id == leader
-			local f = frame(partyHolder, x, 0, PW, PARTY_H, C.panel, 0.08)
-			border(f, C.line, 1)
-			if isLeader then frame(f, 0, 0, PW, 2, C.red, 0) end
-			local av = new("ImageLabel", { BackgroundColor3 = C.panel3, BorderSizePixel = 0, Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(40, 40),
-				Image = thumb(m.id) }, f)
-			border(av, C.line, 1)
-			lbl(f, isLeader and "LEADER" or "MEMBER", 10, 58, 14, PW - 66, 14, isLeader and C.redHi or C.mute, "MB")
-			if isMe then lbl(f, "YOU", 10, 58, 30, PW - 66, 14, C.dim, "MB") end
-			local nm = lbl(f, string.upper(isMe and player.DisplayName or m.name), 20, 10, 54, PW - 20, 24, C.text, "H")
-			nm.TextTruncate = Enum.TextTruncate.AtEnd
-			if iLead and not isMe then
-				local prom = smallBtn(f, "PROMOTE", 10, PARTY_H - 28, 74)
-				local kick = smallBtn(f, "KICK", 90, PARTY_H - 28, PW - 100, true)
-				prom.MouseButton1Click:Connect(function() PromoteR:FireServer(m.id) end)
-				kick.MouseButton1Click:Connect(function() KickR:FireServer(m.id) end)
-			elseif isMe and #list > 1 then
-				local lv = smallBtn(f, "LEAVE PARTY", 10, PARTY_H - 28, PW - 20, true)
-				lv.MouseButton1Click:Connect(function() LeaveR:FireServer() end)
-			else
-				lbl(f, "@" .. m.name, 10, 10, PARTY_H - 26, PW - 20, 14, C.mute, "M").TextTruncate = Enum.TextTruncate.AtEnd
-			end
-		else
-			local f = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(x, 0), Size = UDim2.fromOffset(PW, PARTY_H),
-				BackgroundColor3 = C.void, BackgroundTransparency = 0.3, BorderSizePixel = 0 }, partyHolder)
-			local st = border(f, C.line, 1)
-			hoverable(f, C.void, C.panel2, st, C.line, C.red)
-			local well = frame(f, (PW - 40) / 2, 16, 40, 40, C.panel, 0.4)
-			border(well, C.line, 1)
-			emptyMark(well, 40, 40)
-			lbl(f, "OPEN SLOT", 10, 0, 64, PW, 14, C.mute, "MB", Enum.TextXAlignment.Center)
-			lbl(f, "INVITE", 18, 0, 78, PW, 22, C.dim, "H", Enum.TextXAlignment.Center)
-			f.MouseButton1Click:Connect(function() setView("invite") end)
-			grow(f, 1.05)
-		end
+	local n = #list
+	local rm = readyMap()
+	local mine = rm[tostring(player.UserId)]
+	local leaderMode = rm[tostring(leader)]
+	local function countFor(x) local c = 0 for _, v in rm do if v == x then c += 1 end end return c end
+	if player:GetAttribute("Teleporting") then return "wait", "DEPLOYING", "JOINING MATCH", nil end
+	if q then
+		if qm == mId or (not qm) then return "cancel", "CANCEL", "SEARCHING  " .. fmtTime(math.max(0, os.time() - (player:GetAttribute("QueuedAt") or os.time()))), "cancel" end
+		return "wait", "IN QUEUE", "", nil
 	end
-	if view == "invite" then rebuildInvite() end
+	if n > 1 then
+		if mId == "1v1" then return "wait", "SOLO ONLY", "LEAVE YOUR PARTY", nil end
+		if mine == mId then return "cancel", "UNREADY", ("READY  %d / %d"):format(countFor(mId), n), "unready" end
+		if leaderMode and leaderMode ~= mId and leader ~= player.UserId then return "wait", "LEADER PICKED", modeById(leaderMode).name, nil end
+		return "go", "READY UP", leaderMode == mId and ("READY  %d / %d"):format(countFor(mId), n) or "", "ready"
+	end
+	return "go", "READY UP", "", "ready"
 end
+paintModes = function()
+	local list = partyInfo()
+	local rm = readyMap()
+	local readyN = 0
+	for _ in rm do readyN += 1 end
+	partyStrip.Text = (#list > 1) and ("PARTY  %d / %d READY"):format(readyN, #list) or ""
+	for id, c in modeCards do
+		local style, main, sub = modeState(id)
+		c.paint(style)
+		c.main.Text, c.sub.Text = main, sub
+		c.st.Color = (style == "cancel") and C.red or C.line
+		c.st.Thickness = (style == "cancel") and 2 or 1
+	end
+end
+for id, c in modeCards do
+	c.btn.MouseButton1Click:Connect(function()
+		local _, _, _, act = modeState(id)
+		if act == "cancel" or act == "unready" then ReadyR:FireServer(nil)
+		elseif act == "ready" then ReadyR:FireServer(id) end
+	end)
+end
+local function openModes()
+	modesOpen = true
+	modesRoot.Visible = true
+	setView("home")
+	paintModes()
+end
+local function closeModes()
+	modesOpen = false
+	modesRoot.Visible = false
+end
+modesClose.MouseButton1Click:Connect(closeModes)
+
 
 -- PLAY (queue) block with the two round buttons
 local startBtn, startMain, startSub, startPaint = actionBlock(stage, PLAY_X, BY, PLAY_W, BH, "PLAY", "")
@@ -1502,48 +1578,50 @@ for _, spec in { { "COSMETICS", CL_X - 14 }, { "INVITE", RIGHT - CIRCLE - 14 } }
 	new("UIStroke", { Color = BLACK, Thickness = 1.5, Transparency = 0.5 }, l)
 end
 
-local function fmtTime(s) return ("%d:%02d"):format(math.floor(s / 60), s % 60) end
 refreshQueue = function()
 	local q, tp = player:GetAttribute("Queued"), player:GetAttribute("Teleporting")
-	local list, leader = partyInfo()
-	local iLead = (leader == player.UserId)
-	local mode = modeById(selectedMode)
-	local size = (mode.id == "1v1") and "1V1" or "3V3"
+	local list = partyInfo()
+	local rm = readyMap()
+	local mine = rm[tostring(player.UserId)]
+	local readyN = 0
+	for _ in rm do readyN += 1 end
+	local qTime = fmtTime(math.max(0, os.time() - (player:GetAttribute("QueuedAt") or os.time())))
+	local qName = player:GetAttribute("QueuedMode") and modeById(player:GetAttribute("QueuedMode")).name or ""
 	if tp then
 		startMain.Text, startSub.Text = "DEPLOYING", "JOINING MATCH..."
 		startPaint("wait")
 	elseif q then
-		local qa = player:GetAttribute("QueuedAt")
-		startMain.Text, startSub.Text = "CANCEL", "SEARCHING  " .. fmtTime(math.max(0, os.time() - (qa or os.time())))
+		startMain.Text, startSub.Text = "CANCEL", qName .. "  //  " .. qTime
 		startPaint("cancel")
-	elseif not iLead then
-		startMain.Text, startSub.Text = "WAITING", "ONLY THE LEADER CAN START"
-		startPaint("wait")
+	elseif #list > 1 and mine then
+		startMain.Text, startSub.Text = "READY", ("%s  //  %d / %d READY"):format(modeById(mine).name, readyN, #list)
+		startPaint("go")
 	else
-		startMain.Text, startSub.Text = "PLAY", mode.name .. (#list > 1 and ("  //  PARTY OF " .. #list) or ("  //  " .. size))
+		startMain.Text, startSub.Text = "PLAY", ""
 		startPaint("go")
 	end
-	hudStatus.Text = tp and "JOINING MATCH..." or (q and ("SEARCHING FOR PLAYERS  " .. fmtTime(math.max(0, os.time() - (player:GetAttribute("QueuedAt") or os.time())))) or "")
+	hudStatus.Text = tp and "JOINING MATCH..." or (q and ("SEARCHING FOR PLAYERS  " .. qTime) or "")
 	-- v3.9: the home PLAY block shows the queue state too
 	if tp then
 		homeMain.Text, homeSub.Text = "DEPLOYING", "JOINING MATCH..."
 		homePaint("wait")
 		homeQueueBar.Visible, homeQueueEdge.Transparency = false, 1
 	elseif q then
-		homeMain.Text, homeSub.Text = "SEARCHING", fmtTime(math.max(0, os.time() - (player:GetAttribute("QueuedAt") or os.time()))) .. "  //  CLICK FOR LOADOUT"
+		homeMain.Text, homeSub.Text = "SEARCHING", qName .. "  //  " .. qTime
 		homePaint("cancel")
 		homeQueueBar.Visible, homeQueueEdge.Transparency = true, 0
 	else
-		homeMain.Text, homeSub.Text = "PLAY", mode.name .. "  //  " .. size
+		homeMain.Text, homeSub.Text = "PLAY", ""
 		homePaint("go")
 		homeQueueBar.Visible, homeQueueEdge.Transparency = false, 1
 	end
+	if modesOpen then paintModes() end
 end
+-- PLAY on the play screen: opens the GAME MODES screen; while searching it cancels the search
 startBtn.MouseButton1Click:Connect(function()
 	if player:GetAttribute("Teleporting") then return end
-	local _, leader = partyInfo()
-	if leader ~= player.UserId and not player:GetAttribute("Queued") then say("Only the party leader can start the search.") return end
-	QueueR:FireServer(not player:GetAttribute("Queued"), selectedMode)
+	if player:GetAttribute("Queued") then ReadyR:FireServer(nil) return end
+	openModes()
 end)
 
 local squadQueued = false
@@ -1556,13 +1634,17 @@ function rebuildSquadSoon()
 	end)
 end
 
-for _, k in { "Queued", "Teleporting", "QueuedAt" } do player:GetAttributeChangedSignal(k):Connect(refreshQueue) end
+for _, k in { "Queued", "Teleporting", "QueuedAt", "QueuedMode" } do player:GetAttributeChangedSignal(k):Connect(refreshQueue) end
+-- v5.11: ready states, levels and player cards repaint the cards / podium names / modes screen
+player:GetAttributeChangedSignal("PartyReadyJson"):Connect(function() refreshQueue() renderCards() rebuildSquadSoon() end)
+for _, k in { "Level", "PlayerCardJson" } do player:GetAttributeChangedSignal(k):Connect(renderCards) end
 for _, k in { "PartyId", "PartyLeader", "PartyMembers" } do
 	player:GetAttributeChangedSignal(k):Connect(function() renderParty() refreshQueue() rebuildSquadSoon() end)
 end
 local function watchOther(p)
 	p:GetAttributeChangedSignal("Skin"):Connect(function() rebuildSquadSoon() if screenOpen then renderParty() end end)
 	p:GetAttributeChangedSignal("LoadoutJson"):Connect(rebuildSquadSoon)
+	for _, k in { "Level", "PlayerCardJson", "DisplayName" } do p:GetAttributeChangedSignal(k):Connect(renderCards) end -- v5.11
 end
 for _, p in Players:GetPlayers() do if p ~= player then watchOther(p) end end
 Players.PlayerAdded:Connect(watchOther)
@@ -1614,7 +1696,8 @@ end
 local function closeScreen()
 	if not screenOpen then return end
 	screenOpen = false
-	player:SetAttribute("LobbyMenuOpen", nil)
+	closeModes()
+	player:SetAttribute("LobbyMenuOpen", inviteOpen or nil)
 	setView("home")
 	screen.Visible = false
 	hud.Visible = true
@@ -1629,21 +1712,23 @@ local function toggleSkins() -- v5.10: opens the COSMETICS LOCKER (CosmeticsClie
 	player:SetAttribute("CosmeticsOpen", true)
 end
 homePlay.MouseButton1Click:Connect(function() openScreen("home") end)
-homePlus.MouseButton1Click:Connect(function() openScreen("invite") end)
+homePlus.MouseButton1Click:Connect(openInvite) -- v5.11: its own INVITE screen
 homeSkins.MouseButton1Click:Connect(toggleSkins)
 closeBtn.MouseButton1Click:Connect(closeScreen)
 skinsBtn.MouseButton1Click:Connect(toggleSkins)
-inviteBtn.MouseButton1Click:Connect(function()
-	if view == "invite" then setView("home") else setView("invite") end
-end)
+inviteBtn.MouseButton1Click:Connect(openInvite)
 
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe or UIS:GetFocusedTextBox() then return end
 	if player:GetAttribute("CardIndexOpen") then return end -- v4.3: the card index handles its own keys
+	if player:GetAttribute("CosmeticsShown") then return end -- v5.11: the cosmetics shop / locker handle their own keys
 	if input.KeyCode == Enum.KeyCode.Tab then
+		if inviteOpen then closeInvite() end
 		toggleSkins()
 	elseif input.KeyCode == Enum.KeyCode.Escape then
-		if screenOpen and view ~= "home" then setView("home")
+		if inviteOpen then closeInvite()
+		elseif modesOpen then closeModes()
+		elseif screenOpen and view ~= "home" then setView("home")
 		elseif screenOpen then closeScreen() end
 	end
 end)
