@@ -88,7 +88,16 @@ do
 		MAP_NAME = string.sub(pick.Name, 1, #pick.Name - #C.MAPS.Suffix):gsub("_", " ")
 		-- v5.8: display name + loading picture (folder attributes DisplayName / LoadingImage win over MatchConfig.MAPS.Info.<key>)
 		local key = string.lower(string.sub(pick.Name, 1, #pick.Name - #C.MAPS.Suffix))
-		local info = (C.MAPS.Info and C.MAPS.Info[key]) or {}
+		-- v5.11: the Info key is matched loosely - case, spaces, underscores and dashes do not matter, and an entry whose Name is the
+		-- map's name counts too. So "testing grounds_map" finds Info.testinggrounds, Info["testing grounds"] AND Info.test (Name = "TESTING GROUNDS").
+		local function norm(x) return (string.lower(tostring(x or "")):gsub("[%s_%-]", "")) end
+		local info = (C.MAPS.Info and C.MAPS.Info[key]) or nil
+		if not info and C.MAPS.Info then
+			for k, v in C.MAPS.Info do
+				if type(v) == "table" and (norm(k) == norm(key) or (v.Name and norm(v.Name) == norm(key))) then info = v break end
+			end
+		end
+		info = info or {}
 		local dn = pick:GetAttribute("DisplayName")
 		if type(dn) == "string" and dn ~= "" then MAP_NAME = dn elseif type(info.Name) == "string" and info.Name ~= "" then MAP_NAME = info.Name end
 		local img = pick:GetAttribute("LoadingImage")
@@ -97,7 +106,7 @@ do
 			if tonumber(img) then img = "rbxassetid://" .. img end -- a bare number works too
 			if img ~= "rbxassetid://0" then MAP_IMAGE = img end
 		else
-			warn(("[MatchServer] map '%s' has NO loading picture: MatchConfig.MAPS.Info has no entry for the key '%s' (the folder name without '_map', lower case) and the folder has no LoadingImage attribute. The loading screen will be dark."):format(pick.Name, key))
+			warn(("[MatchServer] map '%s' has NO loading picture: MatchConfig.MAPS.Info has no entry matching '%s' (the folder name without '_map'; case, spaces and _ are ignored, an entry whose Name matches counts too) and the folder has no LoadingImage attribute. The loading screen will be dark."):format(pick.Name, key))
 		end
 		if MAP_IMAGE ~= "" then print(("[MatchServer] loading picture for '%s': %s"):format(pick.Name, MAP_IMAGE)) end
 		print(("[MatchServer] mode %s: loaded map '%s' (1 of %d)"):format(MODE, pick.Name, #maps))
