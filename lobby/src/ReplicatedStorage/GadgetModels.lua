@@ -5,6 +5,7 @@
 --   * the sentry / mine / shield device on the ground (GadgetServer builds them from GM.Describe)
 --   * the blue / red placement preview                                      GM.Build(id, nil, { ghost = Color3 })
 --   * the picture in the lobby + pre-game loadout screens                  GM.Picture(parent, id)  (ViewportFrame, like the gun pictures)
+--     v5.9: framed with UIKit.FitViewport (centred on the visible model, never cropped)
 --   * v4.8: the gloved first-person hand that holds them                     GM.BuildHand(parent)
 -- It also owns the placement rules (GM.Place + GM.Check) that BOTH the client preview and the server use, so "red" on your screen
 -- means the server would refuse it too.
@@ -436,8 +437,12 @@ function GM.Picture(parent, id, opts)
 	cam.Parent = vp
 	vp.CurrentCamera = cam
 	local dir = (GM.PicDir[id] or Vector3.new(0.85, 0.45, 1.15)).Unit
-	local dist = (size.Magnitude * 0.5) / math.tan(math.rad(13)) * 1.08
-	cam.CFrame = CFrame.lookAt(cf.Position + dir * dist, cf.Position)
+	local UIKit = game:GetService("ReplicatedStorage"):FindFirstChild("UIKit")
+	local ok = UIKit and pcall(function() require(UIKit).FitViewport(vp, cam, model, dir, { pad = opts.pad or 0.12, fov = 26 }) end)
+	if not ok then -- (old framing, only if UIKit is missing)
+		local dist = (size.Magnitude * 0.5) / math.tan(math.rad(13)) * 1.08
+		cam.CFrame = CFrame.lookAt(cf.Position + dir * dist, cf.Position)
+	end
 	return vp
 end
 
