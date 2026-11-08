@@ -9,7 +9,14 @@
 --   Cards.DefaultDeck(collection)        a valid 32-card deck (one of every card)
 --   Cards.Counts(deck)                   { [id] = copies }
 --   Cards.Sort(a, b)                     sort ids: highest rarity first, then name
--- PLACEHOLDER CARDS: names, art and text are placeholders. None of the abilities do anything yet.
+--   Cards.Owned(t)                       a clean copy of a full collection table (the CardsJson attribute is ALREADY the full collection - never run Collection on it)
+--   Cards.STARTER                        { [id] = copies } every player owns for free (v5.14: 4 copies of 8 cards = exactly one 32-card deck)
+-- v5.14: the starter collection is now 4 copies each of EMBER HEART, THICK SKIN, DEEP POCKETS (common), HOT BARREL, GRAVE CANDLE (uncommon),
+--   SCOUT'S EYE (uncommon), HOLLOW POINT (rare) and GLASS CANNON (epic) for every new AND existing player. Those 8 cards WORK in a match
+--   (Breakline: CardEffects). The profile key "Cards" now holds only the EXTRA copies won from packs / bought in the daily card shop
+--   (CardShopServer), added on top of the starter copies. The other placeholder cards are still in the game (pack contents later) but nobody
+--   owns them by default any more. New: the PLACEHOLDER card (art "mystery") used by the card shop until the real pack cards exist.
+-- Cards marked works = true do something in a match; the rest are still placeholders (names / art / text only).
 local M = {}
 
 M.DECK_SIZE = 32   -- a deck holds exactly this many cards, no more, no less
@@ -40,30 +47,30 @@ M.List = {
 	-- COMMON (grey)
 	{ id = "steady_hands",  rarity = "common",    art = "hand",      name = "Steady Hands",   desc = "Your recoil settles a little faster after every burst." },
 	{ id = "light_feet",    rarity = "common",    art = "feather",   name = "Light Feet",     desc = "Sprint speed +4%. You land from big drops without a stumble." },
-	{ id = "thick_skin",    rarity = "common",    art = "shield",    name = "Thick Skin",     desc = "+10 max health for the whole match." },
-	{ id = "deep_pockets",  rarity = "common",    art = "bullets",   name = "Deep Pockets",   desc = "Spawn with one extra magazine for your primary." },
+	{ id = "thick_skin",    rarity = "common",    art = "shield",    name = "Thick Skin",     desc = "+10 max health for the whole match.", works = true },
+	{ id = "deep_pockets",  rarity = "common",    art = "bullets",   name = "Deep Pockets",   desc = "Every life starts with one extra magazine loaded in your primary.", works = true },
 	{ id = "long_breath",   rarity = "common",    art = "wind",      name = "Long Breath",    desc = "Slides carry you 15% further before they fade out." },
 	{ id = "box_hugger",    rarity = "common",    art = "crate",     name = "Box Hugger",     desc = "Pick up loose boxes a quarter of a second faster." },
-	{ id = "ember_heart",   rarity = "common",    art = "heart",     name = "Ember Heart",    desc = "Health starts coming back one second sooner." },
+	{ id = "ember_heart",   rarity = "common",    art = "heart",     name = "Ember Heart",    desc = "Health starts coming back one second sooner.", works = true },
 	{ id = "scrap_plating", rarity = "common",    art = "gear",      name = "Scrap Plating",  desc = "Boxes you plug start with 5% more health." },
 	{ id = "lucky_coin",    rarity = "common",    art = "coin",      name = "Lucky Coin",     desc = "Earn 5% more souls from this match. Heads, you win." },
 	-- UNCOMMON (green)
 	{ id = "ghost_step",    rarity = "uncommon",  art = "footprints",name = "Ghost Step",     desc = "Your footsteps are quieter while you crouch or walk." },
 	{ id = "menders_thread",rarity = "uncommon",  art = "needle",    name = "Mender's Thread",desc = "Revive teammates 1.5 seconds faster." },
-	{ id = "hot_barrel",    rarity = "uncommon",  art = "flame",     name = "Hot Barrel",     desc = "Fire rate +10% for 4 seconds after a kill." },
+	{ id = "hot_barrel",    rarity = "uncommon",  art = "flame",     name = "Hot Barrel",     desc = "Fire rate +10% for 4 seconds after a kill.", works = true },
 	{ id = "magnet_palms",  rarity = "uncommon",  art = "magnet",    name = "Magnet Palms",   desc = "Catch thrown boxes from twice as far away." },
-	{ id = "grave_candle",  rarity = "uncommon",  art = "candle",    name = "Grave Candle",   desc = "See fallen teammates' souls through walls." },
-	{ id = "scouts_eye",    rarity = "uncommon",  art = "eye",       name = "Scout's Eye",    desc = "Enemies you hit stay outlined for 2 seconds." },
+	{ id = "grave_candle",  rarity = "uncommon",  art = "candle",    name = "Grave Candle",   desc = "See fallen teammates' souls through walls.", works = true },
+	{ id = "scouts_eye",    rarity = "uncommon",  art = "eye",       name = "Scout's Eye",    desc = "Enemies you hit stay outlined for 2 seconds.", works = true },
 	{ id = "skeleton_key",  rarity = "uncommon",  art = "key",       name = "Skeleton Key",   desc = "Pull enemy boxes out of their holes 30% faster." },
 	{ id = "paper_crane",   rarity = "uncommon",  art = "crane",     name = "Paper Crane",    desc = "Thrown boxes fly further and fall slower." },
 	-- RARE (blue)
 	{ id = "tidebreaker",   rarity = "rare",      art = "wave",      name = "Tidebreaker",    desc = "While your team pushes, the wall moves 10% faster." },
 	{ id = "moonlit_reload",rarity = "rare",      art = "moon",      name = "Moonlit Reload", desc = "Reload 20% faster while under half health." },
-	{ id = "hollow_point",  rarity = "rare",      art = "target",    name = "Hollow Point",   desc = "Headshots deal 12% more damage." },
+	{ id = "hollow_point",  rarity = "rare",      art = "target",    name = "Hollow Point",   desc = "Headshots deal 12% more damage.", works = true },
 	-- EPIC (purple, v4.9)
 	{ id = "stormcaller",   rarity = "epic",      art = "storm",     name = "Stormcaller",    desc = "Your frag grenade arcs lightning to one nearby enemy." },
 	{ id = "lantern_keeper",rarity = "epic",      art = "lantern",   name = "Lantern Keeper", desc = "Carrying a soul no longer slows you down." },
-	{ id = "glass_cannon",  rarity = "epic",      art = "crystal",   name = "Glass Cannon",   desc = "Deal 15% more damage. Take 15% more damage." },
+	{ id = "glass_cannon",  rarity = "epic",      art = "crystal",   name = "Glass Cannon",   desc = "Deal 15% more damage. Take 15% more damage.", works = true },
 	-- LEGENDARY (yellow)
 	{ id = "crown_of_line", rarity = "legendary", art = "crown",     name = "Crown of the Line", desc = "Every box your team plugs heals you to full." },
 	{ id = "sun_eater",     rarity = "legendary", art = "sun",       name = "Sun Eater",      desc = "Flashbangs cannot blind you. Yours burn twice as bright." },
@@ -77,17 +84,25 @@ M.List = {
 	{ id = "seraphs_eye",   rarity = "divine",    art = "seraph",    name = "Seraph's Eye",   desc = "Every 20 seconds, see every enemy through walls for 1 second." },
 	-- SIGNATURE (white / black)
 	{ id = "the_breakline", rarity = "signature", art = "breakline", name = "The Breakline",  desc = "Once per match, shove the wall a full box-length toward the enemy." },
+	-- v5.14: the stand-in card for the card shop packs + daily shop until the real pack cards are made (CardShop shows it in any rarity)
+	{ id = "placeholder",   rarity = "common",    art = "mystery",   name = "Placeholder",    desc = "A stand-in card. The real card for this slot is coming soon.", placeholder = true },
 }
 M.ById = {}
 for i, c in M.List do c.order = i M.ById[c.id] = c end
 
--- starter collection: everyone owns every placeholder card (no shop yet). Lower rarities come with more copies.
-local STARTER_COPIES = { common = 4, uncommon = 3, rare = 2, epic = 2, legendary = 2, mythic = 1, divine = 1, signature = 1 }
+-- v5.14 starter collection: 4 copies of these 8 cards (= one full 32-card deck). Every player owns them, new and old.
+M.STARTER = {
+	ember_heart = 4, thick_skin = 4, deep_pockets = 4, -- common
+	hot_barrel = 4, grave_candle = 4, scouts_eye = 4,  -- uncommon (Scout's Eye is uncommon in Cards.List; the owner listed it as rare)
+	hollow_point = 4,                                  -- rare
+	glass_cannon = 4,                                  -- epic
+}
 
 M.RULES = {
 	"Your deck holds exactly 32 cards. No more, no less. It only saves when it is full.",
 	"You can put at most 4 copies of the same card in your deck.",
 	"You can only add copies you own. Your collection shows how many you have.",
+	"Everyone starts with 4 copies of 8 cards. Get more cards from the CARDS tab in the shop: card packs and the daily shop.",
 	"At the start of every match, after the run-in, 3 cards roll out of your DECK (not your whole collection).",
 	"You have 10 seconds to pick one. If you do not pick, the middle card is picked for you.",
 	"The card you pick lasts the whole match and sits on your HUD.",
@@ -96,12 +111,25 @@ M.RULES = {
 function M.Is(id) return type(id) == "string" and M.ById[id] ~= nil end
 function M.Rarity(id) local c = M.ById[id] return c and M.RarityById[c.rarity] or M.Rarities[1] end
 
+-- saved = the profile key "Cards" = EXTRA copies (packs / daily shop). Result = starter copies + extra copies, for every card id.
 function M.Collection(saved)
 	local out = {}
-	for _, c in M.List do out[c.id] = STARTER_COPIES[c.rarity] or 1 end
+	for _, c in M.List do out[c.id] = M.STARTER[c.id] or 0 end
 	if type(saved) == "table" then
 		for id, n in saved do
-			if M.Is(id) and type(n) == "number" then out[id] = math.max(out[id] + 1, math.floor(n)) end
+			if M.Is(id) and type(n) == "number" and n > 0 then out[id] += math.floor(n) end
+		end
+	end
+	return out
+end
+
+-- a full collection that is already built (the CardsJson attribute): just cleaned, nothing added
+function M.Owned(full)
+	local out = {}
+	for _, c in M.List do out[c.id] = 0 end
+	if type(full) == "table" then
+		for id, n in full do
+			if M.Is(id) and type(n) == "number" and n > 0 then out[id] = math.floor(n) end
 		end
 	end
 	return out
