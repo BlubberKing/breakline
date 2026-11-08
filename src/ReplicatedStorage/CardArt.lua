@@ -1,4 +1,6 @@
--- CardArt (ModuleScript in ReplicatedStorage) - BOTH games (Lobby + Breakline). Keep the two copies identical (Lobby is the master).
+-- CardArt (ModuleScript in ReplicatedStorage) - BOTH games (Lobby + Breakline). Keep the two copies identical (Lobby is the master) - EXCEPT the
+-- A.SHEETS line: each place has its own uploaded sheet ids, so keep YOUR line when you paste a new copy.
+-- v5.14: new painter P.mystery (the PLACEHOLDER card) + opts.rarity (draw a card in another rarity's frame). The 32 baked cards did not change.
 -- v4.3: draws a Breakline power-up card out of plain GUI frames (no uploaded images needed).
 -- v4.9 PERFORMANCE: every static card (anim = false) is drawn ONCE and kept as a template; Build then hands out CLONES of it (a clone of ~400 GUI objects is
 --   many times cheaper than drawing them again, and it needs no text measuring). Small cards (<= 260 px, the collection grid + deck minis) use the LITE
@@ -11,6 +13,8 @@
 --       opts.cache    = false forces a fresh build
 --       opts.baked    = false skips the baked sprite-sheet card (v4.9; static cards use it automatically once A.SHEETS has ids)
 --       opts.position / opts.anchor = holder Position / AnchorPoint
+--       opts.rarity   = v5.14: draw the card in ANOTHER rarity's frame (the card shop shows the PLACEHOLDER card as every rarity of a pack slot).
+--                       A card drawn in another rarity never uses the baked sheet and gets its own template in the cache.
 --     api.card (the 250 x 350 card frame, scaled), api.rarity, api.setGlow(on, color)
 --   CardArt.W, CardArt.H = 250, 350 (design size; everything is drawn at this size and scaled with a UIScale)
 -- Look: hand-inked illustrations (wobbly double-pass strokes, cross-hatching, watercolour washes that sit a little off the lines,
@@ -105,6 +109,7 @@ local BAKED_MAP = { -- card id = { sheet, x, y } (each card is 250 x 350 on its 
 	the_breakline = { 4, 750, 350 },
 }
 local AW, AH = 222, 168 -- art window
+-- (v5.14: the new PLACEHOLDER card is not on the sheets on purpose - it is drawn live, like any card missing from BAKED_MAP)
 
 local rgb = Color3.fromRGB
 local INK = rgb(32, 25, 21)
@@ -1240,6 +1245,31 @@ P.footprints = function(d, R)
 	d:curve({ 170, 18, 182, 10, 196, 14 }, 1, { tr = 0.55 })
 end
 
+-- v5.14: PLACEHOLDER card - a blank card leaning behind a big inked question mark
+P.mystery = function(d, R)
+	d:wash(111, 86, 176, 136, R.light, 0.55)
+	d:wash(128, 100, 96, 84, R.body, 0.72, 12)
+	-- two blank cards, fanned behind the mark
+	for i, cfg in { { 84, 90, -14, 0.45 }, { 140, 84, 11, 0.2 } } do
+		local cx, cy, rot, tr = cfg[1], cfg[2], cfg[3], cfg[4]
+		local pts = place({ -30, -42, 30, -42, 30, 42, -30, 42 }, cx, cy, rot, 1)
+		d:path(pts, 1.6, true, { tr = tr })
+		local inner = place({ -23, -35, 23, -35, 23, 35, -23, 35 }, cx, cy, rot, 1)
+		d:path(inner, 1, true, { tr = tr + 0.3 })
+		if i == 2 then d:shade(cx + 18, cy - 30, cx + 26, cy + 34, 7, 7, 200 + rot, 1, 0.55) end
+	end
+	-- the question mark
+	d:arc(111, 60, 24, 22, 185, 400, 4.2)
+	d:curve({ 128, 76, 114, 88, 111, 104 }, 4.2, { taper = { 1, 0.85 } })
+	d:circle(111, 126, 4.5, 3)
+	d:dot(111, 126, 3.2)
+	d:arc(111, 60, 16, 14, 200, 300, 1.2, { col = WHITE, tr = 0.35 })
+	d:shade(124, 50, 136, 70, 5, 6, 210, 1, 0.5)
+	d:twinkle(46, 30, 6, 1.2)
+	d:twinkle(180, 136, 5, 1.1)
+	d:twinkle(176, 28, 4, 1)
+end
+
 A.Painters = P
 
 -- ======================================================================================
@@ -1356,6 +1386,10 @@ end
 local function buildFresh(parent, id, opts, lite)
 	opts = opts or {}
 	local c = Cards.ById[id] or Cards.List[1]
+	if opts.rarity and Cards.RarityById[opts.rarity] and opts.rarity ~= c.rarity then -- v5.14: drawn in another rarity's frame
+		c = table.clone(c)
+		c.rarity = opts.rarity
+	end
 	local R = Cards.RarityById[c.rarity]
 	local rank = STYLE[c.rarity] or 1
 	local sig = c.rarity == "signature"
@@ -1689,8 +1723,8 @@ local function evict()
 		if t then t:Destroy() end
 	end
 end
-local function getTemplate(id, lite)
-	local key = id .. ":" .. tostring(lite or "full")
+local function getTemplate(id, lite, rarity)
+	local key = id .. ":" .. tostring(lite or "full") .. (rarity and (":" .. rarity) or "")
 	local t = templates[key]
 	if t then touch(key) return t end
 	if tplBuilding[key] then -- another thread is drawing it right now (the first draw can yield while it measures text)
@@ -1701,7 +1735,7 @@ local function getTemplate(id, lite)
 		return nil
 	end
 	tplBuilding[key] = true
-	local ok, holder = pcall(buildFresh, nil, id, { width = A.W, anim = false }, lite)
+	local ok, holder = pcall(buildFresh, nil, id, { width = A.W, anim = false, rarity = rarity }, lite)
 	tplBuilding[key] = nil
 	if not ok or not holder then
 		warn("[CardArt] template failed for", id, holder)
@@ -1725,17 +1759,20 @@ function A.Build(parent, id, opts)
 	elseif opts.lod == nil and not anim then
 		if width <= 130 then lite = 2 elseif width <= 260 then lite = 1 end
 	end
-	if not anim and opts.baked ~= false then
+	-- v5.14: another rarity's frame (card shop pack slots)
+	local base = Cards.ById[id] or Cards.List[1]
+	local rarity = (opts.rarity and Cards.RarityById[opts.rarity] and opts.rarity ~= base.rarity) and opts.rarity or nil
+	if not anim and opts.baked ~= false and not rarity then
 		local h, api = buildBaked(parent, id, opts)
 		if h then return h, api end
 	end
 	if anim or opts.cache == false then
 		return buildFresh(parent, id, opts, lite)
 	end
-	local tpl = getTemplate(id, lite)
+	local tpl = getTemplate(id, lite, rarity)
 	if not tpl then return buildFresh(parent, id, opts, lite) end
-	local c = Cards.ById[id] or Cards.List[1]
-	local R = Cards.RarityById[c.rarity]
+	local c = base
+	local R = Cards.RarityById[rarity or c.rarity]
 	local holder = tpl:Clone()
 	holder.Name = "Card_" .. c.id
 	holder.Size = UDim2.fromOffset(width, width * A.H / A.W)
