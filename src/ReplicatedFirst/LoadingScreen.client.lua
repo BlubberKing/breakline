@@ -1,4 +1,11 @@
--- LoadingScreen v3.2 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- LoadingScreen v3.3 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- v5.15 FIX (owner: "the loading screen never goes away, it stays there even after the 15 seconds have passed and everyone has loaded in, the game
+--        goes on without you"): the wait loop at the end used `os.clock() - t0`, but `t0` only existed as a local inside the logo fade task, so here it
+--        was an undefined global (nil). While the phase was Waiting the check was skipped; the moment the server moved on to Pregame it ran
+--        `os.clock() - nil`, the script errored and stopped, finish() never ran and the screen (DisplayOrder 1000) stayed on top of the whole match.
+--        Now: (1) `shownAt` is set when the screen appears and the loop uses it; (2) the wait loop runs inside pcall, so any error still closes the
+--        screen; (3) a WATCHDOG closes the screen at the latest FAILSAFE seconds after the phase has left Waiting (and MIN_SHOW has passed), whatever
+--        happens; (4) waiting for the ClientReady remote has a time limit.
 -- v5.13 (owner: "the camera zooms in ever so slightly, it looks weird"): the map picture is now a STILL image. No slow drift / zoom while loading
 --        and no push-in when the screen leaves (it just fades). It is shown as zoomed OUT as it can be while still filling the whole screen with no
 --        empty space: Size 1 x 1 + ScaleType Crop (before: 106 % and growing, so the edges were always cut off a bit more than needed).
@@ -33,6 +40,9 @@ gui.IgnoreGuiInset = true
 gui.DisplayOrder = 1000
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = pg
+local shownAt = os.clock() -- v5.15: when the screen appeared (MIN_SHOW counts from here; this was the missing `t0`)
+local MIN_SHOW = 15 -- v5.10: at least 15 s on screen (was 3.5)
+local FAILSAFE = 3 -- v5.15: the screen is closed at the latest this many seconds after the phase left Waiting (once MIN_SHOW has passed)
 
 local root = Instance.new("CanvasGroup") -- everything lives in here so the whole screen can fade as one
 root.Size = UDim2.fromScale(1, 1)
@@ -190,6 +200,7 @@ local finishing = false
 local function finish()
 	if finishing then return end
 	finishing = true
+	if not gui.Parent then return end
 	tw(statusLbl, 0.3, { TextTransparency = 1 })
 	tw(pctLbl, 0.3, { TextTransparency = 1 })
 	tw(nameShift, 0.6, { PaddingRight = UDim.new(0, -px(80)) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
@@ -198,9 +209,30 @@ local function finish()
 	task.wait(0.25)
 	tw(root, 0.55, { GroupTransparency = 1 }, Enum.EasingStyle.Quad)
 	task.wait(0.6)
-	logoApi.stop()
+	pcall(function() logoApi.stop() end)
 	gui:Destroy()
 end
+
+-- v5.15 WATCHDOG: whatever happens below (an error, a remote that never shows up), the screen can never stay over a running match.
+-- It closes the screen FAILSAFE seconds after the phase has left Waiting, once the screen has been up MIN_SHOW seconds.
+task.spawn(function()
+	local State = RS:WaitForChild("MatchState", 60)
+	local leftAt = nil
+	while gui.Parent and not finishing do
+		local phase = State and State:GetAttribute("Phase")
+		if State == nil or (phase ~= nil and phase ~= "Waiting") then
+			leftAt = leftAt or os.clock()
+			if os.clock() - leftAt >= FAILSAFE and os.clock() - shownAt >= MIN_SHOW then
+				warn("[Breakline] LoadingScreen watchdog closed the loading screen (phase: " .. tostring(phase) .. ")")
+				finish()
+				return
+			end
+		else
+			leftAt = nil
+		end
+		task.wait(0.25)
+	end
+end)
 
 -- ===== 1) wait for the game, then for the match objects =====
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -242,15 +274,19 @@ do
 	local w0 = os.clock()
 	while not player.Character and os.clock() - w0 < 8 do task.wait(0.1) end
 end
-Remotes:WaitForChild("ClientReady"):FireServer()
+do
+	local readyRemote = Remotes:WaitForChild("ClientReady", 30) -- v5.15: time limit (it used to wait forever)
+	if readyRemote then readyRemote:FireServer() else warn("[Breakline] MatchRemotes.ClientReady not found - the server will start after its READY_TIMEOUT") end
+end
 progress = 0.85
 
 -- ===== 4) show what the server is waiting for until the match starts =====
 -- v5.8: the picture stays up at least MIN_SHOW seconds, so a fast load still shows the map instead of flashing it
-local MIN_SHOW = 15 -- v5.10: at least 15 s on screen (was 3.5)
+-- (MIN_SHOW + shownAt are set at the top of the script.) v5.15: the loop runs in pcall, so an error can no longer leave the screen up.
+local okLoop, loopErr = pcall(function()
 while true do
 	local phase = State:GetAttribute("Phase")
-	if phase ~= "Waiting" and os.clock() - t0 >= MIN_SHOW then break end
+	if phase ~= "Waiting" and os.clock() - shownAt >= MIN_SHOW then break end
 	local expected = State:GetAttribute("Expected") or 0
 	local ready = State:GetAttribute("Ready") or 0
 	local holdEnds = State:GetAttribute("LoadHoldEnds") or 0
@@ -267,6 +303,12 @@ while true do
 		setStatus("WAITING FOR PLAYERS")
 	end
 	task.wait(0.1)
+end
+end)
+if not okLoop then
+	warn("[Breakline] LoadingScreen wait loop error: " .. tostring(loopErr))
+	-- keep the picture up (no live status) until the match really moves on, then close as normal
+	while gui.Parent and not finishing and (State:GetAttribute("Phase") == "Waiting" or os.clock() - shownAt < MIN_SHOW) do task.wait(0.1) end
 end
 setStatus("ALL PLAYERS LOADED", false)
 progress = 1
