@@ -1,3 +1,5 @@
+-- LobbyClient v6.2 (v5.14: play-screen CARD INDEX button - the three-card fan sits further right and higher inside its space, CARD INDEX + DECK n / 32
+--   moved right with it, the DECK line is bigger (about 18 px Oswald) and brighter)
 -- LobbyClient v6.1 (v5.12, owner Nov 7): the player cards have the new PlayerCards v2 layout (no EDIT CARD button, LEAVE PARTY bottom left, the cards are
 --   swapped in the same frame so the showcase models never blink); the home-screen currency plate is styled (gradient, double frame, red accent,
 --   divider); COSMETICS / INVITE labels under the home round buttons; the small line under PLAY is back (home: the last mode, e.g. BREAKLINE // 3V3;
@@ -239,9 +241,12 @@ end
 -- ================= v4.3: CARD INDEX button =================
 -- Opens the card index page (CardIndex LocalScript) by setting the Player attribute CardIndexOpen. Shows the deck count (DeckJson).
 -- Three fanned mini cards on the left, CARD INDEX + DECK n / 32 in the middle, chevron on the right.
-local function cardFanIcon(parent, cx, cy, s)
+-- v5.14: centered = true puts the fan's middle exactly on (cx, cy) (the old maths hung the cards 0.62 * s BELOW cy, so on the play-screen button
+-- they sat low and poked out to the left of their space)
+local function cardFanIcon(parent, cx, cy, s, centered)
+	local baseY = centered and (cy + s * 0.43) or (cy + s * 0.62)
 	for i, rot in { -16, 0, 16 } do
-		local c = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(cx + (i - 2) * s * 0.34, cy + s * 0.62), Size = UDim2.fromOffset(s * 0.62, s * 0.86),
+		local c = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(cx + (i - 2) * s * 0.34, baseY), Size = UDim2.fromOffset(s * 0.62, s * 0.86),
 			Rotation = rot, BackgroundColor3 = (i == 2) and C.red or C.panel3, BorderSizePixel = 0 }, parent)
 		border(c, (i == 2) and C.redHi or C.line2, 1)
 		if i == 2 then
@@ -256,15 +261,28 @@ local function deckCountText()
 	local n = (ok and type(d) == "table") and #d or 0
 	return ("DECK  %d / 32"):format(n)
 end
-local function cardIndexButton(parent, x, y, w, h)
+-- v5.14: opts.big (the play-screen button): the card fan sits further right and higher (centred in its own space, clear of the red edge),
+-- CARD INDEX + the DECK n / 32 line move right with it, and the DECK line is bigger and brighter
+local function cardIndexButton(parent, x, y, w, h, opts)
+	opts = opts or {}
 	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.panel, BackgroundTransparency = 0.08, BorderSizePixel = 0,
 		Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h) }, parent)
 	local st = border(b, C.line, 1)
 	hoverable(b, C.panel, C.panel2, st, C.line, C.red)
 	frame(b, 0, 0, 3, h, C.red, 0)
-	cardFanIcon(b, 34, h / 2, math.floor(h * 0.62))
-	lbl(b, "CARD INDEX", math.floor(h * 0.42), 66, math.floor(h * 0.08), w - 110, math.floor(h * 0.5), C.text, "H")
-	local sub = lbl(b, deckCountText(), 11, 67, math.floor(h * 0.6), w - 110, 14, C.dim, "M")
+	local sub
+	if opts.big then
+		local fs = math.floor(h * 0.6)
+		cardFanIcon(b, 58, h / 2 - 3, fs, true)                       -- was x 34, hanging low
+		local tx = 112                                                -- text starts right of the fan (was 66)
+		lbl(b, "CARD INDEX", math.floor(h * 0.4), tx, math.floor(h * 0.06), w - tx - 44, math.floor(h * 0.48), C.text, "H")
+		sub = lbl(b, deckCountText(), math.floor(h * 0.22), tx + 1, math.floor(h * 0.56), w - tx - 44, math.floor(h * 0.3), C.text, "HM")
+		sub.TextTransparency = 0.12
+	else
+		cardFanIcon(b, 34, h / 2, math.floor(h * 0.62))
+		lbl(b, "CARD INDEX", math.floor(h * 0.42), 66, math.floor(h * 0.08), w - 110, math.floor(h * 0.5), C.text, "H")
+		sub = lbl(b, deckCountText(), 11, 67, math.floor(h * 0.6), w - 110, 14, C.dim, "M")
+	end
 	table.insert(cardBtnSubs, sub)
 	chevron(b, w - 30, h / 2 - 8, 8, C.dim, 2)
 	grow(b, 1.03)
@@ -969,7 +987,7 @@ end
 do
 	local x0 = DOCK_X + DOCK_W + 26
 	local x1 = CL_X - 30
-	cardIndexButton(stage, x0, BY + 8, x1 - x0, BH - 16).ZIndex = 5
+	cardIndexButton(stage, x0, BY + 8, x1 - x0, BH - 16, { big = true }).ZIndex = 5 -- v5.14: fan up + right, text moved over, bigger DECK line
 end
 
 -- ================= overlay (loadout picker) over the stage =================
