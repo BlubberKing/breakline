@@ -1,3 +1,4 @@
+-- GadgetServer (v5.14: GLASS CANNON +15% gadget damage dealt, gadget kills start HOT BARREL - ReplicatedStorage.CardEffects)
 -- GadgetServer v2.1 (v4.9: throws are much stronger - ~115 studs/s, light gravity in flight via a VectorForce until the first bounce, 60% run-speed
 --   carry-over, released from the throwing hand AFTER the windup so it leaves the hand when the arm whips; Use(slot, dir, underhand) for the right-click toss) (was v2: Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0, reworked in v4.1:
 --   v4.1: gadgets are EQUIPPED first (remote Equip: your gun is swapped for the item, char attribute HeldGadget = id), then
@@ -119,10 +120,15 @@ local function gunRemote(name)
 end
 
 -- damage a humanoid on behalf of `owner` (stats for the souls screen + hit confirm + damage indicator)
+local CardFx = require(RS:WaitForChild("CardEffects")) -- v5.14: power-up cards
 local function hurt(owner, targetPlayer, hum, dmg, hitPos)
 	if hum.Health <= 0 or dmg <= 0 then return end
+	if owner and targetPlayer ~= owner and CardFx.Has(owner, "glass_cannon") then dmg *= CardFx.GLASS_CANNON_DEAL end -- v5.14: GLASS CANNON
 	local dealt = Vitals.Damage(hum, dmg) -- shield first, then health (sentries have no shield and just take it)
 	local killed = hum.Health <= 0
+	if killed and owner and targetPlayer ~= owner and (targetPlayer or hum.Parent:GetAttribute("IsBot")) and CardFx.Has(owner, "hot_barrel") then -- v5.14: HOT BARREL
+		owner:SetAttribute("HotBarrelUntil", workspace:GetServerTimeNow() + CardFx.HOT_BARREL_TIME)
+	end
 	if owner and targetPlayer and targetPlayer ~= owner then
 		owner:SetAttribute("StatDamage", (owner:GetAttribute("StatDamage") or 0) + dealt)
 		if killed then owner:SetAttribute("StatKills", (owner:GetAttribute("StatKills") or 0) + 1) end
