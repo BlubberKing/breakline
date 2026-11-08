@@ -1,3 +1,5 @@
+-- CardIndex v1.6 (v5.14: the DECK title above the n / 32 counter is much bigger (46 px); the collection is read with Cards.Owned - CardsJson is already
+--   the full collection, running Cards.Collection on it again added the starter copies twice)
 -- CardIndex v1.5 (v5.12: the (?) DECK RULES button is just a ring now - no grey fill - with a bigger, centred question mark)
 -- CardIndex v1.4 (v5.9: clear BACK / CLOSE buttons, no filler line under DECK) (v1.3 v4.9b: the collection grid really uses static cards now - it built fresh ANIMATED cards before, which was the lag - and baked sprite-sheet cards when CardArt.SHEETS is filled in) (was v1.2 v4.9: PERFORMANCE - only the cards on screen exist. Collection cells are filled when they scroll into view and emptied when they leave, card art comes from a shared template cache (CardArt) and the deck minis are built the same way, so hundreds of cards stay smooth even on a tablet) (was v1.1 v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
 -- (was v1.0) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.3 (GDD section 4.1).
@@ -110,7 +112,7 @@ local function decode(attr)
 	local ok, d = pcall(HttpService.JSONDecode, HttpService, raw)
 	return ok and type(d) == "table" and d or nil
 end
-local collection = Cards.Collection(decode("CardsJson"))
+local collection = Cards.Owned(decode("CardsJson"))
 local saved = decode("DeckJson") or Cards.DefaultDeck(collection)
 local draft = table.clone(saved)
 local pendingSave = false
@@ -423,7 +425,7 @@ local DX, DY, DW, DH = 1260, 120, RIGHT - 1260, 904
 local deckP = frame(cv, DX, DY, DW, DH, C.bg, 0.12)
 border(deckP, C.line, 1)
 frame(deckP, 0, 0, DW, 3, C.red, 0)
-lbl(deckP, "DECK", 24, 20, 12, 200, 32, C.text, "H")
+lbl(deckP, "DECK", 46, 20, 8, 300, 54, C.text, "H") -- v5.14: much bigger (was 24 px), fills the space above the n / 32 counter
 -- v5.9: the explainer line under DECK is gone
 local countBig = lbl(deckP, "32", 72, 18, 66, 110, 80, C.text, "H")
 local countOf = lbl(deckP, "/ 32", 30, 120, 96, 90, 40, C.mute, "HM")
@@ -826,7 +828,7 @@ end
 local function open()
 	if isOpen then return end
 	isOpen = true
-	collection = Cards.Collection(decode("CardsJson"))
+	collection = Cards.Owned(decode("CardsJson"))
 	saved = decode("DeckJson") or saved
 	draft = table.clone(saved)
 	discardArmed = 0
@@ -887,7 +889,7 @@ player:GetAttributeChangedSignal("DeckJson"):Connect(function()
 	if isOpen then refreshAll() end
 end)
 player:GetAttributeChangedSignal("CardsJson"):Connect(function()
-	collection = Cards.Collection(decode("CardsJson"))
+	collection = Cards.Owned(decode("CardsJson"))
 	if isOpen then rebuildOrder() refreshAll() end
 end)
 
