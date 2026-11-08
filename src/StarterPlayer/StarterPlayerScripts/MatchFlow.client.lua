@@ -1,3 +1,4 @@
+-- MatchFlow v1.4 (v5.14: the big loadout picker stays open through the 5-4-3-2-1 countdown slams and only closes when the clock hits 0)
 -- MatchFlow v1.3 (v5.10: the Warp camera trails the soul (further behind + above, the soul stays in view instead of filling the screen), the painting reuses the picture link the loading
 --   screen verified (MapImageSrc), and the RESULT cutscene is a LINE-UP: the winning team stands side by side holding their guns in a pose, a crown floating over each head (with their
 --   win streak xN), instead of sitting on thrones) (v1.2 v5.9: watercolor fly-through warp, no run-in; loadout picker texts trimmed) (v1.1 v3.8: cursor fix on menu screens, XP bar on the summary) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
@@ -469,8 +470,9 @@ local function runPregame(token)
 					e.BackgroundTransparency = hot and 0.35 or 0.6
 					tween(e, TweenInfo.new(0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
 				end
-				if left <= 3 then closePicker() end
+				-- v5.14: the picker is NOT closed on 3-2-1 any more (it kicked you out of the loadout menu every second); it closes at 0 below
 			end
+			if left <= 0 then closePicker() end -- v5.14: only when the clock runs out
 		end
 	end
 end
