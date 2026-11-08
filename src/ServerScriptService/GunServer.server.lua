@@ -1,3 +1,5 @@
+-- GunServer v2.2 (v5.14: power-up cards, numbers in ReplicatedStorage.CardEffects - DEEP POCKETS = every life starts with one extra magazine loaded,
+--   HOT BARREL = +10% fire rate for 4 s after a kill (attribute HotBarrelUntil), HOLLOW POINT = headshots +12%, GLASS CANNON = +15% damage dealt)
 -- GunServer v2: server-authoritative ammo, fire rate and damage for every weapon in WeaponConfig.
 -- Also owns the equipped weapon: Player attributes "Weapon" + "Sight". v2.1: the weapon is ONLY the one picked in the lobby loadout
 -- (the temporary G picker + its open SetLoadout remote are gone). The whole lobby loadout is published as "LoadoutJson" for MatchHUD.
@@ -12,6 +14,7 @@ local GadgetDamage = ServerStorage:WaitForChild("GadgetDamage", 30) -- BindableE
 local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
 local Vitals = require(script.Parent:WaitForChild("Vitals")) -- v4.4: 200 health + 100 shield (damage hits the shield first)
 local MatchState = RS:WaitForChild("MatchState", 30) -- made by MatchServer; guns only work while the match is live
+local CardFx = require(RS:WaitForChild("CardEffects")) -- v5.14: power-up cards
 
 local remotes = Instance.new("Folder")
 remotes.Name = "GunRemotes"
@@ -23,10 +26,17 @@ local HitConfirm, ShotFX, Damaged = remote("HitConfirm"), remote("ShotFX"), remo
 remotes.Parent = RS
 
 local state = {}
+local pocketsReady = {} -- v5.14 DEEP POCKETS: true from every spawn until the extra magazine was handed out
 local function getState(player, weapon)
 	local s = state[player]
 	if not s or s.weapon ~= weapon then
-		s = { weapon = weapon, ammo = Weapons.Get(weapon).MagSize, lastFire = 0, reloadUntil = 0 }
+		local mag = Weapons.Get(weapon).MagSize
+		local ammo = mag
+		if pocketsReady[player] and CardFx.Has(player, "deep_pockets") then
+			ammo = mag * (1 + CardFx.DEEP_POCKETS_MAGS)
+			pocketsReady[player] = nil
+		end
+		s = { weapon = weapon, ammo = ammo, lastFire = 0, reloadUntil = 0, untouched = true }
 		state[player] = s
 	end
 	return s
@@ -35,7 +45,16 @@ end
 local function onPlayer(p)
 	p:SetAttribute("Weapon", Weapons.Default)
 	p:SetAttribute("Sight", Weapons.Get(Weapons.Default).DefaultSight)
-	p.CharacterAdded:Connect(function() state[p] = nil end)
+	p.CharacterAdded:Connect(function() state[p] = nil pocketsReady[p] = true end)
+	pocketsReady[p] = true
+	-- v5.14: the card is picked after you spawned; if your gun was not used yet the extra magazine is loaded right then
+	p:GetAttributeChangedSignal("MatchCard"):Connect(function()
+		local s = state[p]
+		if pocketsReady[p] and CardFx.Has(p, "deep_pockets") and s and s.untouched then
+			s.ammo = Weapons.Get(s.weapon).MagSize * (1 + CardFx.DEEP_POCKETS_MAGS)
+			pocketsReady[p] = nil
+		end
+	end)
 	-- safety net: the Weapon attribute can never be empty / unknown (the server rejects shots that do not match it)
 	p:GetAttributeChangedSignal("Weapon"):Connect(function()
 		local w = p:GetAttribute("Weapon")
@@ -60,7 +79,7 @@ local function onPlayer(p)
 end
 Players.PlayerAdded:Connect(onPlayer)
 for _, p in Players:GetPlayers() do onPlayer(p) end
-Players.PlayerRemoving:Connect(function(p) state[p] = nil end)
+Players.PlayerRemoving:Connect(function(p) state[p] = nil pocketsReady[p] = nil end)
 
 ReloadRemote.OnServerEvent:Connect(function(player, weapon)
 	if weapon ~= player:GetAttribute("Weapon") or player:GetAttribute("Carrying") then return end
@@ -68,6 +87,7 @@ ReloadRemote.OnServerEvent:Connect(function(player, weapon)
 	local w = getState(player, weapon)
 	local now = os.clock()
 	if now < w.reloadUntil or w.ammo >= cfg.MagSize then return end
+	w.untouched = false
 	-- v7: round-fed guns (AWP / shotgun / revolver) only load what is missing, and a short top-up is a short reload
 	w.reloadUntil = now + Weapons.ReloadDuration(cfg, w.ammo) * 0.9
 	w.ammo = cfg.MagSize
@@ -164,11 +184,15 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 	if now < w.reloadUntil or w.ammo <= 0 then return end
 	-- rate limit that allows small bursts (lag bunches shots together); still caps at the weapon's rate
 	local cap = maxBudget(cfg)
-	w.budget = math.min((w.budget or cap) + (now - w.lastFire) / Weapons.AvgInterval(cfg), cap)
+	w.budget = math.min((w.budget or cap) + (now - w.lastFire) / (Weapons.AvgInterval(cfg) * CardFx.FireIntervalMult(player)), cap) -- v5.14: HOT BARREL
 	if w.budget < 1 then return end
 	w.budget -= 1
 	w.ammo -= 1
 	w.lastFire = now
+	w.untouched = false
+	-- v5.14 cards: damage multipliers for players / bots / sentries
+	local hollow = CardFx.Has(player, "hollow_point")
+	local glass = CardFx.Has(player, "glass_cannon")
 
 	local first, maxCone = nil, math.cos(math.rad(cfg.PelletSpread * 2.2 + 1))
 	local ends, hits, boxHits = {}, {}, {}
@@ -202,6 +226,8 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 		local model, hum, dmg, head, pos, targetPlayer = checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
 		if model then
 			local h = hits[model] or { hum = hum, dmg = 0, head = false, pos = pos, player = targetPlayer }
+			if head and hollow then dmg *= CardFx.HOLLOW_POINT_HEAD end -- v5.14: HOLLOW POINT
+			if glass then dmg *= CardFx.GLASS_CANNON_DEAL end           -- v5.14: GLASS CANNON
 			h.dmg += dmg
 			h.head = h.head or head
 			hits[model] = h
@@ -225,6 +251,9 @@ FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
 			local dealt = Vitals.Damage(h.hum, h.dmg) -- v5.8: the damage that really came off (0 while the target is spawn-protected)
 			local killed = h.hum.Health <= 0
 			if dealt <= 0 and not killed then continue end -- protected target: no number, no stats (the client hitmarker still shows)
+			if killed and (h.player or model:GetAttribute("IsBot")) and CardFx.Has(player, "hot_barrel") then -- v5.14: HOT BARREL
+				player:SetAttribute("HotBarrelUntil", workspace:GetServerTimeNow() + CardFx.HOT_BARREL_TIME)
+			end
 			if h.player or model:GetAttribute("IsBot") then -- match stats for the souls screen (MatchServer resets them every round); v5.7: bots count too
 				player:SetAttribute("StatDamage", (player:GetAttribute("StatDamage") or 0) + dealt)
 				if killed then player:SetAttribute("StatKills", (player:GetAttribute("StatKills") or 0) + 1) end
