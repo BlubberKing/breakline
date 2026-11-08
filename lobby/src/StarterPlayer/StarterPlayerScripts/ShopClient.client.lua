@@ -1,4 +1,5 @@
--- ShopClient v1.1 (v5.9: cart icon, Essence next to the souls, clear CLOSE button, no filler line) (v1) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.7.
+-- ShopClient v1.2 (v5.14: new CARDS tab - daily card shop + card packs with their own layout, built by the CardShopUI module; ESC closes the pack
+--   view first and does nothing while a pack is opening) (v1.1 v5.9: cart icon, Essence next to the souls, clear CLOSE button, no filler line) (v1) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.7.
 -- 1) SHOP. Opens from the SHOP button (left side of the screen, halfway down) or from the shop NPC (ShopServer adds the prompt; the server then fires
 --    ShopRemotes.Open). Three tabs at the top: GUNS / GADGETS / MOVEMENT. Click an item = a panel on the right: guns show their real stats (WeaponConfig),
 --    gadgets show what they do + their numbers (GadgetConfig), movement abilities what they do + their numbers. Prices are SOULS (LobbyCatalog.Price).
@@ -21,6 +22,7 @@ local GunModels = require(RS:WaitForChild("GunModels"))
 local GM = require(RS:WaitForChild("GadgetModels"))
 local WeaponCfg = require(RS:WaitForChild("WeaponConfig"))
 local GadgetCfg = require(RS:WaitForChild("GadgetConfig"))
+local CardShopUI = require(RS:WaitForChild("CardShopUI")) -- v5.14: the CARDS tab
 local Remotes = RS:WaitForChild("ShopRemotes")
 local BuyR, StarterR, OpenR = Remotes:WaitForChild("Buy"), Remotes:WaitForChild("Starter"), Remotes:WaitForChild("Open")
 
@@ -174,7 +176,7 @@ local essenceLbl = lbl(soulsBox, "0", 28, 256, 0, 140, 52, K.text, F.H)
 local closeBtn = UI.CloseButton(shop, "CLOSE", { Position = UDim2.fromOffset(1704, 45) })
 
 -- tabs
-local TABS = { { id = "gun", name = "GUNS" }, { id = "gadget", name = "GADGETS" }, { id = "move", name = "MOVEMENT" } }
+local TABS = { { id = "gun", name = "GUNS" }, { id = "gadget", name = "GADGETS" }, { id = "move", name = "MOVEMENT" }, { id = "cards", name = "CARDS" } } -- v5.14: + CARDS
 local tabBtns = {}
 for i, t in TABS do
 	local b = new("TextButton", { Text = t.name, TextSize = 24, FontFace = F.H, TextColor3 = K.dim, BackgroundTransparency = 1, AutoButtonColor = false,
@@ -192,6 +194,10 @@ new("UIPadding", { PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 8), Pa
 local detail = box(shop, 1292, 216, 564, 816, K.panel, 0.04)
 stroke(detail, K.line, 1)
 local detailBody = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, detail)
+
+-- v5.14: the CARDS tab has its own page (daily shop + card packs), it replaces the grid + detail panel while that tab is open
+local cardsPage = CardShopUI.Mount(shop, { gui = gui })
+local cardsShown = false
 
 local function itemsOf(t)
 	local list = (t == "gun" and Catalog.Weapons) or (t == "gadget" and Catalog.Gadgets) or Catalog.Moves
@@ -363,15 +369,22 @@ function refreshAll()
 		t.b.TextColor3 = (id == tab) and K.text or K.dim
 		t.u.Visible = id == tab
 	end
+	if tab == "cards" then -- v5.14
+		gridScroll.Visible, detail.Visible = false, false
+		if cardsShown then cardsPage.Refresh() else cardsShown = true cardsPage.Show() end
+		return
+	end
+	if cardsShown then cardsShown = false cardsPage.Hide() end
+	gridScroll.Visible, detail.Visible = true, true
 	buildGrid()
 	renderDetail()
 end
 
 for _, t in TABS do
 	tabBtns[t.id].b.MouseButton1Click:Connect(function()
-		if tab == t.id then return end
+		if tab == t.id or cardsPage.Busy() then return end
 		tab = t.id
-		selected = itemsOf(tab)[1] and itemsOf(tab)[1].id or nil
+		selected = (tab ~= "cards" and itemsOf(tab)[1]) and itemsOf(tab)[1].id or nil
 		armedId, toastText = nil, ""
 		gridScroll.CanvasPosition = Vector2.zero
 		refreshAll()
@@ -389,13 +402,15 @@ local function openShop()
 	holdMenu()
 	dim.Visible, stage.Visible = true, true
 	shop.Visible, starter.Visible = true, false
-	if not selected or not Catalog.ById[selected] then selected = itemsOf(tab)[1].id end
+	if tab ~= "cards" and (not selected or not Catalog.ById[selected]) then selected = itemsOf(tab)[1].id end
 	armedId, toastText = nil, ""
 	refreshAll()
 	updateButton()
 end
 local function closeShop()
 	if not shopOpen then return end
+	if cardsPage.Busy() then return end -- v5.14: never close the shop under a pack that is opening
+	if cardsShown then cardsShown = false cardsPage.Hide() end
 	shopOpen = false
 	dim.Visible, stage.Visible = false, false
 	releaseMenu()
@@ -408,7 +423,10 @@ OpenR.OnClientEvent:Connect(function()
 end)
 UIS.InputBegan:Connect(function(input, gpe)
 	if gpe or UIS:GetFocusedTextBox() then return end
-	if input.KeyCode == Enum.KeyCode.Escape and shopOpen then closeShop() end
+	if input.KeyCode == Enum.KeyCode.Escape and shopOpen then
+		if tab == "cards" and cardsPage.CloseOverlay() then return end -- v5.14: the pack view closes first; nothing while a pack opens
+		closeShop()
+	end
 end)
 
 player:GetAttributeChangedSignal("Souls"):Connect(function() if shopOpen then refreshAll() end end)
