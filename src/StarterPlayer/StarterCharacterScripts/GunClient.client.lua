@@ -1,3 +1,4 @@
+-- GunClient (v5.14: DEEP POCKETS extra magazine at the start of every life + HOT BARREL fire rate after a kill, from ReplicatedStorage.CardEffects)
 -- GunClient v3.4 (GUN FEEL): Rivals-style recoil. Only guns with Recoil = "Climb" (WeaponConfig; the AK-47) really move your aim. Every other
 --       gun is "Kick": the bullet goes exactly where the crosshair was, while the viewmodel + camera still kick, flinch and settle for feel
 --       (the camera flinch and getting hit never move your aim any more). Also: stylish draw animations per gun (Swing / Flip / Twirl /
@@ -27,6 +28,9 @@ local GunSkins = RS:FindFirstChild("GunSkins") and require(RS.GunSkins) or nil -
 local Sfx = require(RS:WaitForChild("Sfx"))
 local TimeScale = require(RS:WaitForChild("TimeScale"))
 local HitFX = require(RS:WaitForChild("HitFX"))
+local CardFx = require(RS:WaitForChild("CardEffects")) -- v5.14: DEEP POCKETS (extra magazine) + HOT BARREL (fire rate) match the server
+local pocketsReady = true -- DEEP POCKETS: this script runs once per life, the extra magazine is handed out once
+local gunUntouched = true -- no shot / reload yet this life (the card can arrive after the spawn)
 local Remotes = RS:WaitForChild("GunRemotes")
 local FireRemote, ReloadRemote = Remotes:WaitForChild("Fire"), Remotes:WaitForChild("Reload")
 local HitConfirm, ShotFX, DamagedRemote = Remotes:WaitForChild("HitConfirm"), Remotes:WaitForChild("ShotFX"), Remotes:WaitForChild("Damaged")
@@ -248,6 +252,14 @@ local HIP, SPRINT, AIM = CFrame.identity, CFrame.identity, CFrame.identity
 local adsFov, adsSens = 58, 0.7
 
 local ammo, reloading, reloadStart, reloadEvents = 0, false, 0, {}
+-- v5.14 DEEP POCKETS: magazine size for a fresh equip (the extra magazine only once per life)
+local function deepMag()
+	if pocketsReady and CardFx.Has(player, "deep_pockets") then
+		pocketsReady = false
+		return cfg.MagSize * (1 + CardFx.DEEP_POCKETS_MAGS)
+	end
+	return cfg.MagSize
+end
 local reloadDur, magCenter = 2, Vector3.zero -- v7: seconds of the CURRENT reload (round-fed guns: depends on how many rounds are missing)
 local triggerDown, aimHeld, shiftHeld = false, false, false
 local sprintToggle, stillTime = false, 0 -- mobile button / gamepad L3 sprint (tap to toggle)
@@ -324,7 +336,7 @@ local function updateHUD()
 	modeL.Text = modeText() .. " · " .. (sight.Display or "Iron")
 	if not reloading then
 		barFill.BackgroundColor3 = Color3.new(1, 1, 1)
-		barFill.Size = UDim2.fromScale(ammo / cfg.MagSize, 1)
+		barFill.Size = UDim2.fromScale(math.clamp(ammo / cfg.MagSize, 0, 1), 1) -- (v5.14: DEEP POCKETS can hold more than one magazine)
 	end
 	-- local-only attributes (a client never replicates these) read by MatchHUD
 	player:SetAttribute("HUDWeapon", cfg.Name)
@@ -451,7 +463,7 @@ local function equip(id, sightId)
 	adsFov = sight.Mag and magFov(sight.Mag) or cfg.ADSFov
 	adsSens = cfg.ADSSensitivity * (sight.Mag and math.tan(rad(adsFov / 2)) / math.tan(rad(cfg.ADSFov / 2)) or 1)
 
-	ammo, reloading, reloadEvents = cfg.MagSize, false, {}
+	ammo, reloading, reloadEvents = deepMag(), false, {} -- v5.14: DEEP POCKETS
 	nextFireTime, bloom, sprayIndex, burstQueue, semiPending = 0, 0, 0, 0, nil
 	cycleStart = -10
 	climbTarget = Vector2.zero
@@ -470,8 +482,9 @@ local function reloadPose(u)
 end
 
 local function startReload()
-	if reloading or ammo == cfg.MagSize or humanoid.Health <= 0 or isCarrying() or character:GetAttribute("HeldGadget") ~= nil then return end
+	if reloading or ammo >= cfg.MagSize or humanoid.Health <= 0 or isCarrying() or character:GetAttribute("HeldGadget") ~= nil then return end
 	reloading = true
+	gunUntouched = false
 	burstQueue, semiPending = 0, nil
 	reloadStart = os.clock()
 	reloadEvents = {}
@@ -494,6 +507,7 @@ end
 -- ================= FIRE =================
 local function fire()
 	ammo -= 1
+	gunUntouched = false
 	local now = os.clock()
 	if now - lastShotTime > cfg.SprayResetTime then sprayIndex = 0 end
 	sprayIndex += 1
@@ -656,6 +670,13 @@ end
 table.insert(conns, player:GetAttributeChangedSignal("Weapon"):Connect(onLoadoutChanged))
 table.insert(conns, player:GetAttributeChangedSignal("Sight"):Connect(onLoadoutChanged))
 equip(player:GetAttribute("Weapon"), player:GetAttribute("Sight"))
+-- v5.14 DEEP POCKETS: the card is picked after this life started; load the extra magazine if the gun was not used yet
+table.insert(conns, player:GetAttributeChangedSignal("MatchCard"):Connect(function()
+	if gunUntouched and not reloading and ammo == cfg.MagSize and pocketsReady and CardFx.Has(player, "deep_pockets") then
+		ammo = deepMag()
+		updateHUD()
+	end
+end))
 
 -- ================= FIRE CONTROL =================
 local lastDry, wasAiming = 0, false
@@ -674,7 +695,7 @@ local function fireControl(now, canFire)
 	end
 	if cfg.FireMode == "Auto" then
 		if triggerDown then
-			local iv = INTERVAL / TimeScale.Get() -- slow motion: fewer shots per second
+			local iv = INTERVAL * CardFx.FireIntervalMult(player) / TimeScale.Get() -- slow motion: fewer shots per second; v5.14: HOT BARREL
 			if nextFireTime < now - iv then nextFireTime = now end
 			while nextFireTime <= now and ammo > 0 do
 				fire()
@@ -686,7 +707,7 @@ local function fireControl(now, canFire)
 		if semiPending and now >= nextFireTime then
 			semiPending = nil
 			fire()
-			nextFireTime = now + INTERVAL / TimeScale.Get()
+			nextFireTime = now + INTERVAL * CardFx.FireIntervalMult(player) / TimeScale.Get()
 		end
 	else -- Burst (holding keeps bursting)
 		if burstQueue == 0 and (triggerDown or semiPending) and now >= nextFireTime then
@@ -697,7 +718,7 @@ local function fireControl(now, canFire)
 		while burstQueue > 0 and nextFireTime <= now and ammo > 0 do
 			fire()
 			burstQueue -= 1
-			nextFireTime += (burstQueue > 0 and 60 / cfg.BurstRPM or cfg.BurstDelay) / TimeScale.Get()
+			nextFireTime += (burstQueue > 0 and 60 / cfg.BurstRPM or cfg.BurstDelay) * CardFx.FireIntervalMult(player) / TimeScale.Get()
 		end
 		if ammo <= 0 then burstQueue = 0 end
 	end
