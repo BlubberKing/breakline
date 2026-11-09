@@ -1,3 +1,7 @@
+-- MatchFlow v1.5 (v5.16: the loadout screen background is a MISSION BRIEFING of the map you are about to play - a live night-vision / thermal recon picture
+--   of the real map (height-coloured blocks, outlines, grid, both insertion points, THE LINE), a feed look (scan lines, REC, clock, corner brackets), a typed
+--   MISSION BRIEFING panel + OBJECTIVES - instead of the black starfield; a gadget and a reserve slot can no longer hold the same item; the camera hand-over
+--   keeps the match mouse sensitivity (MatchConfig.MOUSE_SENS))
 -- MatchFlow v1.4 (v5.14: the big loadout picker stays open through the 5-4-3-2-1 countdown slams and only closes when the clock hits 0)
 -- MatchFlow v1.3 (v5.10: the Warp camera trails the soul (further behind + above, the soul stays in view instead of filling the screen), the painting reuses the picture link the loading
 --   screen verified (MapImageSrc), and the RESULT cutscene is a LINE-UP: the winning team stands side by side holding their guns in a pose, a crown floating over each head (with their
@@ -221,6 +225,350 @@ local function popText(text, color, size, hold)
 end
 
 -- ======================================================================================
+-- v5.16 PREGAME BACKGROUND = a MISSION BRIEFING of the map you are about to play (replaces the black starfield).
+-- Owner: "change the background from a black spacey area into something more on brand, that represents the map they are loading into, but not the
+-- same loading picture ... like a stealth mission: a stealth image of the map and stuff that looks like a briefing".
+--   * RECON MAP (whole screen, behind the squad): the REAL map (the <name>_map folder MatchServer cloned, MatchState.MapFolder) redrawn live as a
+--     night-vision / thermal recon picture seen from high above: floors dark, every block coloured by its HEIGHT (low = deep teal, tall = pale
+--     green), bright outlines on the tallest blocks, a faint grid, both teams' insertion points (from the RedSpawn / BlueSpawn markers) as glowing
+--     pillars + rings with a tag, and THE LINE across the middle (Breakline). The camera drifts slowly over it from your team's side.
+--   * FEED LOOK on top: scan lines, a slow scan band, vignette, corner brackets, a blinking REC + RECON FEED // <map> + a running clock.
+--   * MISSION BRIEFING panel (right): operation (map), mode, squad, area (real size in studs), insertion time + INTEL lines that are true game facts,
+--     typed in line by line, with a red CLASSIFIED stamp. OBJECTIVES panel (left).
+-- Nothing is uploaded: everything is built from the map that is already loaded + GUI frames.
+-- ======================================================================================
+local INTEL = {
+	base = rgb(5, 11, 13), floor = rgb(12, 30, 32), low = rgb(18, 62, 64), high = rgb(150, 238, 196), edge = rgb(150, 255, 214),
+	grid = rgb(70, 170, 150), ui = rgb(140, 238, 206), uiDim = rgb(84, 140, 128), panel = rgb(6, 15, 17),
+	MAX_PARTS = 600, MAX_EDGED = 160, HEIGHT_FULL = 26,
+}
+local function intelMapFolder()
+	local n = State:GetAttribute("MapFolder")
+	if type(n) == "string" and n ~= "" then
+		local f = workspace:FindFirstChild(n)
+		if f then return f end
+	end
+	for _, ch in workspace:GetChildren() do
+		if (ch:IsA("Folder") or ch:IsA("Model")) and string.lower(ch.Name):match(string.lower(C.MAPS.Suffix) .. "$") then return ch end
+	end
+	return nil
+end
+local function boxCorners(cf, size)
+	local h, out = size / 2, {}
+	for _, sx in { -1, 1 } do for _, sy in { -1, 1 } do for _, sz in { -1, 1 } do
+		table.insert(out, cf:PointToWorldSpace(Vector3.new(sx * h.X, sy * h.Y, sz * h.Z)))
+	end end end
+	return out
+end
+
+local function buildBriefing(root, myCol)
+	local api = {}
+	local mode = tostring(State:GetAttribute("Mode") or "Breakline")
+	local oneV1 = string.lower(mode) == "1v1"
+	local myTeam = player.Team and player.Team.Name or ""
+
+	-- ---------- 1) the recon map (a ViewportFrame under everything else on this screen) ----------
+	local vp = new("ViewportFrame", { Name = "ReconMap", Size = UDim2.fromScale(1, 1), BackgroundColor3 = INTEL.base, BorderSizePixel = 0, ZIndex = 1,
+		Ambient = rgb(110, 140, 136), LightColor = rgb(210, 255, 236), LightDirection = Vector3.new(-0.35, -1, -0.25), ImageTransparency = 0.12 }, root)
+	local cam = new("Camera", { FieldOfView = 30 }, vp)
+	vp.CurrentCamera = cam
+	local world = new("Model", { Name = "Recon" }, vp)
+	local folder = intelMapFolder()
+	local lo, hi
+	local mb = folder and folder:FindFirstChild("MapBounds", true) or workspace:FindFirstChild("MapBounds")
+	if mb and mb:IsA("BasePart") then
+		for _, c in boxCorners(mb.CFrame, mb.Size) do lo = lo and lo:Min(c) or c; hi = hi and hi:Max(c) or c end
+	end
+	local spawns = { Red = {}, Blue = {} }
+	if folder then
+		local list = {}
+		for _, d in folder:GetDescendants() do
+			if d:IsA("BasePart") then
+				local team = (d.Name == "RedSpawn" or (d.Parent and d.Parent.Name == "RedSpawn")) and "Red"
+					or ((d.Name == "BlueSpawn" or (d.Parent and d.Parent.Name == "BlueSpawn")) and "Blue") or nil
+				if team then
+					table.insert(spawns[team], d.Position)
+				elseif d.Transparency < 0.95 and d.Name ~= "MapBounds" then
+					table.insert(list, d)
+				end
+			end
+		end
+		table.sort(list, function(a, b) return a.Size.X * a.Size.Y * a.Size.Z > b.Size.X * b.Size.Y * b.Size.Z end)
+		local floorY = lo and lo.Y or math.huge
+		if not lo then for _, d in list do floorY = math.min(floorY, d.Position.Y - d.Size.Y / 2) end end
+		local edged = 0
+		for i, src in list do
+			if i > INTEL.MAX_PARTS then break end
+			local sz, cf = src.Size, src.CFrame
+			local flat = sz.Y < 0.3 * math.min(sz.X, sz.Z) and math.abs(cf.UpVector.Y) > 0.9
+			local p
+			if src:IsA("Part") then
+				p = part(world, sz, cf, INTEL.low, false, 0, src.Shape)
+			else
+				local ok, c = pcall(function() return src:Clone() end)
+				if ok and c then
+					for _, ch in c:GetChildren() do ch:Destroy() end
+					c.Anchored, c.CanCollide, c.CanQuery, c.CanTouch, c.CastShadow = true, false, false, false, false
+					if c:IsA("UnionOperation") then c.UsePartColor = true end
+					if c:IsA("MeshPart") then pcall(function() c.TextureID = "" end) end
+					c.Parent = world
+					p = c
+				end
+			end
+			if p then
+				local corners = boxCorners(cf, sz)
+				local top = -math.huge
+				for _, c in corners do
+					top = math.max(top, c.Y)
+					if not mb and math.max(sz.X, sz.Z) < 600 then lo = lo and lo:Min(c) or c; hi = hi and hi:Max(c) or c end
+				end
+				local t = math.clamp((top - floorY) / INTEL.HEIGHT_FULL, 0, 1)
+				p.Material = Enum.Material.SmoothPlastic
+				p.Color = flat and INTEL.floor or INTEL.low:Lerp(INTEL.high, t * 0.85)
+				p.Transparency = flat and 0 or 0.18
+				-- bright outline round the TOP face of the tallest standing blocks (reads like a thermal / NV edge)
+				if not flat and edged < INTEL.MAX_EDGED and src:IsA("Part") and src.Shape == Enum.PartType.Block and sz.Y > 2 then
+					edged += 1
+					local th = math.clamp(math.max(sz.X, sz.Z) * 0.01, 0.18, 0.5)
+					local h = sz / 2
+					local tc = { cf:PointToWorldSpace(Vector3.new(-h.X, h.Y, -h.Z)), cf:PointToWorldSpace(Vector3.new(h.X, h.Y, -h.Z)),
+						cf:PointToWorldSpace(Vector3.new(h.X, h.Y, h.Z)), cf:PointToWorldSpace(Vector3.new(-h.X, h.Y, h.Z)) }
+					for k = 1, 4 do
+						local a, b = tc[k], tc[k % 4 + 1]
+						local len = (b - a).Magnitude
+						if len > 0.1 then part(world, Vector3.new(th, th, len), CFrame.lookAt((a + b) / 2, b), INTEL.edge, true, 0.45) end
+					end
+				end
+			end
+		end
+	end
+	if not lo then lo, hi = Vector3.new(-70, 0, -130), Vector3.new(70, 30, 130) end
+	local center = (lo + hi) / 2
+	local floorY = lo.Y + 0.1
+	local spanX, spanZ = hi.X - lo.X, hi.Z - lo.Z
+	-- grid on the floor
+	do
+		local step = math.max(10, math.floor(math.max(spanX, spanZ) / 24))
+		local n = 0
+		for x = math.ceil(lo.X / step) * step, hi.X, step do
+			n += 1 if n > 48 then break end
+			part(world, Vector3.new(0.12, 0.05, spanZ), CFrame.new(x, floorY + 0.12, center.Z), INTEL.grid, true, 0.86)
+		end
+		n = 0
+		for z = math.ceil(lo.Z / step) * step, hi.Z, step do
+			n += 1 if n > 48 then break end
+			part(world, Vector3.new(spanX, 0.05, 0.12), CFrame.new(center.X, floorY + 0.12, z), INTEL.grid, true, 0.86)
+		end
+		-- the outline of the play area
+		for _, e in { { Vector3.new(lo.X, 0, lo.Z), Vector3.new(hi.X, 0, lo.Z) }, { Vector3.new(hi.X, 0, lo.Z), Vector3.new(hi.X, 0, hi.Z) },
+			{ Vector3.new(hi.X, 0, hi.Z), Vector3.new(lo.X, 0, hi.Z) }, { Vector3.new(lo.X, 0, hi.Z), Vector3.new(lo.X, 0, lo.Z) } } do
+			local a, b = e[1] + Vector3.new(0, floorY + 0.15, 0), e[2] + Vector3.new(0, floorY + 0.15, 0)
+			part(world, Vector3.new(0.35, 0.1, (b - a).Magnitude), CFrame.lookAt((a + b) / 2, b), INTEL.edge, true, 0.55)
+		end
+	end
+	-- THE LINE across the middle (Breakline): a dashed red line + a soft band
+	if not oneV1 then
+		local wallRed = rgb(255, 72, 72)
+		local dash = math.max(3, spanX / 30)
+		local x = lo.X
+		while x < hi.X do
+			local len = math.min(dash, hi.X - x)
+			part(world, Vector3.new(len, 0.12, 0.5), CFrame.new(x + len / 2, floorY + 0.2, center.Z), wallRed, true, 0.2)
+			x += dash * 1.8
+		end
+		part(world, Vector3.new(spanX, 0.06, math.max(4, spanZ * 0.03)), CFrame.new(center.X, floorY + 0.16, center.Z), wallRed, true, 0.88)
+	end
+	-- insertion points: a glowing pillar + a ring per team (average of that team's spawn markers)
+	local insert = {}
+	for team, list in spawns do
+		if #list > 0 then
+			local s = Vector3.zero
+			for _, q in list do s += q end
+			s /= #list
+			local col = team == "Red" and rgb(255, 84, 84) or rgb(80, 160, 255)
+			local up = CFrame.Angles(0, 0, math.rad(90))
+			part(world, Vector3.new(36, 0.9, 0.9), CFrame.new(s.X, floorY + 18, s.Z) * up, col, true, 0.35, Enum.PartType.Cylinder)
+			part(world, Vector3.new(0.12, 14, 14), CFrame.new(s.X, floorY + 0.25, s.Z) * up, col, true, 0.55, Enum.PartType.Cylinder)
+			insert[team] = { pos = Vector3.new(s.X, floorY + 2, s.Z), col = col }
+		end
+	end
+
+	-- camera: high above, tilted, coming from YOUR side of the map, drifting slowly
+	local mine = insert[myTeam]
+	local baseYaw = 0
+	if mine then
+		local d = mine.pos - center
+		if Vector2.new(d.X, d.Z).Magnitude > 1 then baseYaw = math.atan2(d.X, d.Z) end
+	end
+	local span = math.max(spanX, spanZ, 40)
+	local EL = math.rad(56)
+	local dist = span * 0.62 / math.tan(math.rad(cam.FieldOfView / 2))
+	local function placeCam(t)
+		local yaw = baseYaw + math.sin(t * 0.07) * math.rad(9)
+		local el = EL + math.sin(t * 0.11) * math.rad(3)
+		local off = Vector3.new(math.sin(yaw) * math.cos(el), math.sin(el), math.cos(yaw) * math.cos(el)) * dist
+		local look = center + Vector3.new(math.sin(t * 0.05) * span * 0.03, 0, math.cos(t * 0.06) * span * 0.03)
+		cam.CFrame = CFrame.lookAt(look + off, look)
+	end
+	placeCam(0)
+
+	-- ---------- 2) the feed look (a canvas between the map and the squad) ----------
+	local feed = makeCanvas(root, 2)
+	local function fr(props, parent)
+		local f = new("Frame", { BorderSizePixel = 0, BackgroundColor3 = INTEL.ui, ZIndex = 2 }, parent or feed)
+		for k, v in props do f[k] = v end
+		return f
+	end
+	-- a dark pool behind the squad so the figures + names always read on the map
+	local pool = fr({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 560), Size = UDim2.fromOffset(1250, 820), BackgroundColor3 = BLACK, BackgroundTransparency = 0.25 })
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, pool)
+	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.35), NumberSequenceKeypoint.new(1, 1) }) }, pool)
+	-- vignette
+	for _, spec in { { 0, 0, true, 90 }, { 0, 1, true, 270 }, { 0, 0, false, 0 }, { 1, 0, false, 180 } } do
+		local e = new("Frame", { AnchorPoint = Vector2.new(spec[1], spec[2]), Position = UDim2.fromScale(spec[1], spec[2]),
+			Size = spec[3] and UDim2.new(1, 0, 0.3, 0) or UDim2.new(0.22, 0, 1, 0), BackgroundColor3 = BLACK, BackgroundTransparency = 0.15, BorderSizePixel = 0, ZIndex = 2 }, root)
+		new("UIGradient", { Rotation = spec[4], Transparency = NumberSequence.new(0, 1) }, e)
+	end
+	-- scan lines + the slow scan band
+	for y = 0, 1080, 6 do fr({ Position = UDim2.fromOffset(0, y), Size = UDim2.fromOffset(1920, 1), BackgroundColor3 = BLACK, BackgroundTransparency = 0.82 }) end
+	local band = fr({ Position = UDim2.fromOffset(0, -140), Size = UDim2.fromOffset(1920, 140), BackgroundTransparency = 0.9 })
+	new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.85, 0.55), NumberSequenceKeypoint.new(1, 0.2) }) }, band)
+	-- corner brackets of the feed
+	local BX0, BY0, BX1, BY1, BL, BT = 48, 216, 1872, 930, 46, 3
+	for _, c in { { BX0, BY0, 1, 1 }, { BX1, BY0, -1, 1 }, { BX0, BY1, 1, -1 }, { BX1, BY1, -1, -1 } } do
+		fr({ Position = UDim2.fromOffset(c[3] > 0 and c[1] or c[1] - BL, c[4] > 0 and c[2] or c[2] - BT), Size = UDim2.fromOffset(BL, BT), BackgroundTransparency = 0.25 })
+		fr({ Position = UDim2.fromOffset(c[3] > 0 and c[1] or c[1] - BT, c[4] > 0 and c[2] or c[2] - BL), Size = UDim2.fromOffset(BT, BL), BackgroundTransparency = 0.25 })
+	end
+	-- REC + feed name (top right, under the clock row) and a running clock
+	local recDot = fr({ Position = UDim2.fromOffset(1560, 236), Size = UDim2.fromOffset(12, 12), BackgroundColor3 = rgb(255, 60, 60) })
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, recDot)
+	local mapName = string.upper(tostring(State:GetAttribute("MapName") or "UNKNOWN"))
+	label(feed, "REC   RECON FEED  //  " .. mapName, 14, F.MB, INTEL.ui, { Position = UDim2.fromOffset(1580, 230), Size = UDim2.fromOffset(290, 24),
+		TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2, TextTruncate = Enum.TextTruncate.AtEnd })
+	local stamp = label(feed, "", 13, F.M, INTEL.uiDim, { Position = UDim2.fromOffset(1580, 252), Size = UDim2.fromOffset(290, 20), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2 })
+	label(feed, ("GRID  %d x %d  //  ALT %d"):format(math.floor(spanX), math.floor(spanZ), math.floor(dist)), 13, F.M, INTEL.uiDim,
+		{ Position = UDim2.fromOffset(BX0 + 14, BY1 - 30), Size = UDim2.fromOffset(400, 20), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2 })
+	-- tags for the insertion points (follow the map on screen)
+	local tags = {}
+	for team, ins in insert do
+		local own = team == myTeam
+		local t = label(feed, own and "YOUR INSERTION" or ("HOSTILE INSERTION"), 15, F.MB, ins.col, { AnchorPoint = Vector2.new(0, 0.5),
+			Size = UDim2.fromOffset(260, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2 })
+		new("UIStroke", { Color = BLACK, Thickness = 1.5, Transparency = 0.3 }, t)
+		local dia = fr({ AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(14, 14), Rotation = 45, BackgroundTransparency = 1 })
+		new("UIStroke", { Color = ins.col, Thickness = 2 }, dia)
+		table.insert(tags, { label = t, dia = dia, pos = ins.pos })
+	end
+
+	-- ---------- 3) MISSION BRIEFING (right) + OBJECTIVES (left) ----------
+	local panelL = { x = 1480, y = 290, w = 384 }
+	local plate = new("Frame", { Position = UDim2.fromOffset(panelL.x, panelL.y), Size = UDim2.fromOffset(panelL.w, 420), BackgroundColor3 = INTEL.panel,
+		BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 2 }, feed)
+	new("UIStroke", { Color = INTEL.ui, Thickness = 1, Transparency = 0.55 }, plate)
+	fr({ Size = UDim2.fromOffset(panelL.w, 3), BackgroundColor3 = myCol }, plate)
+	label(plate, "MISSION BRIEFING", 26, F.H, WHITE, { Position = UDim2.fromOffset(18, 14), Size = UDim2.fromOffset(300, 32), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	local stampL = label(plate, "CLASSIFIED", 16, F.H, rgb(255, 80, 80), { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(panelL.w - 70, 30),
+		Size = UDim2.fromOffset(112, 26), Rotation = -8, ZIndex = 4 })
+	new("UIStroke", { Color = rgb(255, 80, 80), Thickness = 2, Transparency = 0.15, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, stampL)
+	fr({ Position = UDim2.fromOffset(18, 54), Size = UDim2.fromOffset(panelL.w - 36, 1), BackgroundTransparency = 0.6 }, plate)
+	local squadN = 0
+	for _, p in Players:GetPlayers() do if p.Team == player.Team then squadN += 1 end end
+	local timeStr = os.date("%H:%M")
+	local rows = {
+		{ "OPERATION", mapName },
+		{ "MODE", oneV1 and "1V1  //  DUEL" or "BREAKLINE  //  3V3" },
+		{ "SQUAD", (myTeam ~= "" and string.upper(myTeam) or "-") .. (oneV1 and "" or ("  //  " .. squadN .. (squadN == 1 and " OPERATOR" or " OPERATORS"))) },
+		{ "AREA", ("%d x %d STUDS"):format(math.floor(spanX), math.floor(spanZ)) },
+		{ "INSERTION", timeStr .. "  LOCAL" },
+	}
+	local intel = oneV1 and {
+		"ONE HOSTILE. FIRST TO " .. tostring(C.V1 and C.V1.KillsToWin or 5) .. " KILLS TAKES THE ROUND.",
+		"AFTER A DEATH YOU SIT OUT A FEW SECONDS AND WATCH THEM.",
+	} or {
+		"BOX DROPS EVERY " .. tostring(C.BOX and C.BOX.SpawnInterval or 60) .. " S ON BOTH SIDES OF THE LINE.",
+		"3 HOLES PER SIDE. MORE PLUGGED BOXES = THE LINE MOVES.",
+		"THEIR PLUGGED BOXES CAN BE SHOT OR STOLEN.",
+	}
+	local typed = {}
+	local ry = 68
+	for _, r in rows do
+		label(plate, r[1], 12, F.MB, INTEL.uiDim, { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(110, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+		local v = label(plate, "", 16, F.MB, WHITE, { Position = UDim2.fromOffset(130, ry), Size = UDim2.fromOffset(panelL.w - 148, 22), TextXAlignment = Enum.TextXAlignment.Left,
+			ZIndex = 3, TextTruncate = Enum.TextTruncate.AtEnd })
+		table.insert(typed, { l = v, text = r[2] })
+		ry += 28
+	end
+	ry += 6
+	fr({ Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(panelL.w - 36, 1), BackgroundTransparency = 0.6 }, plate)
+	ry += 10
+	label(plate, "INTEL", 12, F.MB, INTEL.ui, { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(200, 18), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	ry += 22
+	for _, line in intel do
+		local v = label(plate, "", 13, F.M, rgb(214, 236, 228), { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(panelL.w - 36, 34), TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true, ZIndex = 3 })
+		table.insert(typed, { l = v, text = "> " .. line })
+		ry += 38
+	end
+	-- two redacted lines (black bars) under the intel
+	for k = 1, 2 do
+		label(plate, k == 1 and "SOURCE" or "HANDLER", 12, F.MB, INTEL.uiDim, { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(90, 18), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+		fr({ Position = UDim2.fromOffset(112, ry + 3), Size = UDim2.fromOffset(k == 1 and 190 or 130, 13), BackgroundColor3 = BLACK, BackgroundTransparency = 0.05 }, plate).ZIndex = 3
+		ry += 24
+	end
+	plate.Size = UDim2.fromOffset(panelL.w, ry + 14)
+	-- OBJECTIVES (left)
+	local obj = oneV1 and { "WIN " .. tostring(C.V1 and C.V1.KillsToWin or 5) .. " GUNFIGHTS" } or { "PLUG BOXES INTO YOUR HOLES", "PUSH THE LINE TO THEIR FINISH", "BREAK THEIR PLUGGED BOXES" }
+	local op = new("Frame", { Position = UDim2.fromOffset(56, 290), Size = UDim2.fromOffset(360, 60 + #obj * 34), BackgroundColor3 = INTEL.panel, BackgroundTransparency = 0.2,
+		BorderSizePixel = 0, ZIndex = 2 }, feed)
+	new("UIStroke", { Color = INTEL.ui, Thickness = 1, Transparency = 0.55 }, op)
+	fr({ Size = UDim2.fromOffset(360, 3), BackgroundColor3 = myCol }, op)
+	label(op, "OBJECTIVES", 22, F.H, WHITE, { Position = UDim2.fromOffset(18, 12), Size = UDim2.fromOffset(300, 28), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	for k, o in obj do
+		local y = 48 + (k - 1) * 34
+		local bx = fr({ Position = UDim2.fromOffset(18, y + 4), Size = UDim2.fromOffset(14, 14), BackgroundTransparency = 1 }, op)
+		new("UIStroke", { Color = INTEL.ui, Thickness = 1.5 }, bx)
+		local v = label(op, "", 15, F.MB, rgb(220, 240, 232), { Position = UDim2.fromOffset(44, y), Size = UDim2.fromOffset(300, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+		table.insert(typed, { l = v, text = o })
+	end
+	-- type every line in, one after another
+	task.spawn(function()
+		task.wait(0.5)
+		for _, tl in typed do
+			for i = 1, #tl.text, 2 do
+				if not tl.l.Parent then return end
+				tl.l.Text = string.sub(tl.text, 1, i + 1)
+				task.wait(0.012)
+			end
+			tl.l.Text = tl.text
+			task.wait(0.05)
+		end
+	end)
+
+	-- ---------- per frame ----------
+	local t0 = os.clock()
+	function api.update(_dt)
+		local t = os.clock() - t0
+		placeCam(t)
+		band.Position = UDim2.fromOffset(0, (t * 160) % 1360 - 140)
+		recDot.BackgroundTransparency = (math.floor(t * 1.6) % 2 == 0) and 0 or 0.85
+		stamp.Text = ("T+ %02d:%02d.%d   //   %s"):format(math.floor(t / 60), math.floor(t % 60), math.floor((t * 10) % 10), timeStr)
+		local vs = vp.AbsoluteSize
+		for _, tg in tags do
+			local sp = project(cam, vs, tg.pos)
+			if sp then
+				local c = (sp - feed.AbsolutePosition) / feed.UIScale.Scale
+				tg.dia.Position = UDim2.fromOffset(c.X, c.Y)
+				tg.label.Position = UDim2.fromOffset(c.X + 16, c.Y)
+				tg.dia.Visible, tg.label.Visible = true, true
+			else
+				tg.dia.Visible, tg.label.Visible = false, false
+			end
+		end
+	end
+	return api
+end
+
+-- ======================================================================================
 -- PREGAME
 -- ======================================================================================
 local SLOT_X = { [1] = { 0 }, [2] = { -3.4, 3.4 }, [3] = { 0, -5.6, 5.6 } }
@@ -265,7 +613,9 @@ local function runPregame(token)
 	scene.cam.FieldOfView = 34
 	local cam = scene.cam
 	local baseCam = Vector3.new(0, 4.2, 28) -- v5.8: squad raised again (v5.7 4.9 / look 5.3 put the feet into the loadout dock); LOOK_Y below
-	addStars(scene.world, 160, 60, Vector3.new(0, 4, -30), 40)
+	-- v5.16: the black starfield is gone; the background is the MISSION BRIEFING of the map (buildBriefing above)
+	local okB, brief = pcall(buildBriefing, root, myCol)
+	if not okB then warn("[MatchFlow] briefing background:", brief) brief = nil end
 	local figs, figKey = {}, ""
 
 	local cv = makeCanvas(root, 6)
@@ -358,6 +708,11 @@ local function runPregame(token)
 				end
 			end
 			arr[idx] = id
+			-- v5.16: an item is EITHER a gadget OR in the reserve, never both: picking it for one row takes it out of the other
+			if id ~= "" then
+				local other = (kind == "gadget") and loadout.Reserve or loadout.Gadgets
+				for j = 1, 3 do if other[j] == id then other[j] = "" end end
+			end
 		end
 		LoadoutR:FireServer({ Weapon = loadout.Weapon, Move = loadout.Move, Gadgets = table.clone(loadout.Gadgets), Reserve = table.clone(loadout.Reserve) })
 		if dock then dock:Paint() end
@@ -410,6 +765,7 @@ local function runPregame(token)
 	local t0 = os.clock()
 	renderFns.pregame = function(dt)
 		local t = os.clock() - t0
+		if brief then pcall(brief.update, dt) end -- v5.16: recon map drift, scan band, tags
 		-- camera drift
 		cam.CFrame = CFrame.lookAt(baseCam + Vector3.new(math.sin(t * 0.35) * 0.9, math.sin(t * 0.5) * 0.15, 0), Vector3.new(0, PREGAME_LOOK_Y, 0)) -- v5.8: 4.2 (v5.7: 5.3, first: 3.6). Lower = squad higher on screen
 		for _, f in figs do f.fig:Update(t, dt) end
@@ -848,7 +1204,7 @@ local function runWarp(token)
 			if lv.Magnitude > 0.05 then camera.CFrame = CFrame.lookAt(head.Position, head.Position + lv.Unit) end
 		end
 	end
-	game:GetService("UserInputService").MouseDeltaSensitivity = 1
+	game:GetService("UserInputService").MouseDeltaSensitivity = C.MOUSE_SENS or 1 -- v5.16: the match sensitivity (GunClient keeps it there)
 	tween(flash, TweenInfo.new(OUT1 - FLASH1 - 0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
 end
 
