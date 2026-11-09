@@ -1,4 +1,4 @@
--- Skins v11 (ModuleScript in ReplicatedStorage) - used by BOTH games (Lobby + Breakline). Keep the two copies identical.
+-- Skins v11.1 (v5.16: figures can hold a POSE - opts.pose / figure.pose, see the Poses module) (ModuleScript in ReplicatedStorage) - used by BOTH games (Lobby + Breakline). Keep the two copies identical.
 -- v11 (Nov 7): ALL THREE OUTFITS REBUILT with real detail (OPERATOR ~160 parts, SOULBOUND ~154, CHASSIS ~118), new kit pieces (K.pouch / K.sidePouch, B.cyl for robots),
 --   colourway EDITIONS for the cosmetics shop (S.List entries with `base` + `price`; S.Price / S.IsFree), figure option opts.gunSkin (shows the equipped gun skin).
 -- v9 (Nov 4): slim glove hands, showcase gun hold across the chest (gun visible in menus), chamfered body blocks, OPERATOR + SOULBOUND polish, see GDD 5.4 + 5.4d SKIN QUALITY STANDARD.
@@ -17,6 +17,7 @@
 --   Skins.NewFigure(parent, skinId, opts)        -> client: a posed showcase figure (lobby menus / ViewportFrames / cutscenes)
 --       opts = { weapon = "VX9", gunSkin = "VX9_GILT", camPos = Vector3, idle = true, still = true, static = true } (v11: gunSkin = a GunSkins id painted on the held gun)
 --       figure:SetRoot(cframe), figure:Update(t, dt), figure:Destroy(), figure.HeadTop, figure.run / runPhase / sit, figure.stance (v11: "aim" / "low" / "inspect" = hold that gun pose; opts.stance sets it at creation)
+--       v5.16: figure.pose / opts.pose = a Poses id (an empty-handed figure holds that pose, solved forward from its joint angles); opts.poseT / figure.poseT = the moment of an animated pose (nil = it plays)
 --   Skins.Proportions / Skins.ApplyProportions(character) / Skins.Prepare(character) (unchanged)
 -- Adding a skin: entry in Skins.List (colors) + DRESS[id](B, Z, C, opt) built from the block kit K (see "THE BLOCK KIT" + "OUTFITS" below).
 local RS = game:GetService("ReplicatedStorage")
@@ -867,6 +868,18 @@ S.FigureTune = { gunScale = 0.8, gripX = -0.4, gripY = -0.05, gripZ = 0.6, dirX 
 
 local FLIP = CFrame.Angles(0, math.pi, 0) -- rig space (faces -Z, +X right) -> figure space (faces +Z, +X = left)
 
+-- v5.16: the Poses module (optional: a place without it simply has no posed figures)
+local PosesMod = nil
+local function getPoses()
+	if PosesMod == nil then
+		local m = game:GetService("ReplicatedStorage"):FindFirstChild("Poses")
+		local ok, r = false, nil
+		if m then ok, r = pcall(require, m) end
+		PosesMod = (ok and r) or false
+	end
+	return PosesMod or nil
+end
+
 function S.NewFigure(parent, skinId, opts)
 	opts = opts or {}
 	local skin = S.Get(skinId)
@@ -962,7 +975,7 @@ function S.NewFigure(parent, skinId, opts)
 	end
 	local hasGun = desc ~= nil
 
-	local fig = { Model = model, HeadTop = NECK_Y + Z.h * 1.05, root = CFrame.new(), stance = opts.stance,
+	local fig = { Model = model, HeadTop = NECK_Y + Z.h * 1.05, root = CFrame.new(), stance = opts.stance, pose = opts.pose, poseT = opts.poseT, -- v5.16: + a POSE
 		still = opts.still == true or opts.static == true, static = opts.static == true, idle = opts.idle == true,
 		run = 0, runPhase = 0, sit = 0 }
 	local rng = Random.new()
@@ -1129,6 +1142,37 @@ function S.NewFigure(parent, skinId, opts)
 			base[side .. "UpperArm"] = placeAlong(sh, elbow, UA_SH(sg), UA_EL, side3)
 			base[side .. "LowerArm"] = placeAlong(elbow, wr, LA_EL, LA_WR, side3)
 			base[side .. "Hand"] = base[side .. "LowerArm"] * CFrame.new(LA_WR) * CFrame.new(0, -sz.RightHand.Y * 0.417, 0)
+		end
+		-- v5.16 POSES: a posed figure (fig.pose = a Poses id) is solved FORWARD from the pose's joint angles instead (same joint space as the
+		-- real character's Motor6D.Transform, see the Poses module). fig.poseT fixes the moment of an animated pose (pictures), else it plays.
+		if self.pose and not hasGun then
+			local Poses = getPoses()
+			local J = Poses and Poses.Sample(self.pose, self.poseT or t)
+			if J then
+				local function ang(j) return j and CFrame.Angles(j[1] or 0, j[2] or 0, j[3] or 0) or CFrame.identity end
+				local rj = J.Root or { 0, 0, 0, 0 }
+				local hipC = V3(0, HIP_Y, 0)
+				local rootCF = CFrame.new(0, (rj[4] or 0) * k * PR.Height, 0) * CFrame.new(hipC) * ang(rj) * CFrame.new(-hipC)
+				base.LowerTorso = rootCF * CFrame.new(rest.LowerTorso)
+				local waistP = V3(0, rest.LowerTorso.Y + sz.LowerTorso.Y * 0.5, 0)
+				local waistCF = rootCF * CFrame.new(waistP) * ang(J.Waist) * CFrame.new(-waistP)
+				base.UpperTorso = waistCF * CFrame.new(rest.UpperTorso)
+				base.Head = waistCF * CFrame.new(0, NECK_Y, 0) * ang(J.Neck) * CFrame.new(0, rest.Head.Y - NECK_Y, 0)
+				for _, side in { "Left", "Right" } do
+					local sg = side == "Right" and 1 or -1
+					local s1 = side == "Right" and "R" or "L"
+					local shP = V3(sg * Z.shX, rest.UpperTorso.Y + sz.UpperTorso.Y * 0.352, 0)
+					base[side .. "UpperArm"] = waistCF * CFrame.new(shP) * ang(J[s1 .. "Shoulder"]) * CFrame.new(-UA_SH(sg))
+					base[side .. "LowerArm"] = base[side .. "UpperArm"] * CFrame.new(UA_EL) * ang(J[s1 .. "Elbow"]) * CFrame.new(-LA_EL)
+					base[side .. "Hand"] = base[side .. "LowerArm"] * CFrame.new(LA_WR) * ang(J[s1 .. "Wrist"]) * CFrame.new(0, -sz.RightHand.Y * 0.417, 0)
+					local hip = V3(rest[side .. "UpperLeg"].X, HIP_Y, 0)
+					base[side .. "UpperLeg"] = rootCF * CFrame.new(hip) * ang(J[s1 .. "Hip"]) * CFrame.new(rest[side .. "UpperLeg"] - hip)
+					base[side .. "LowerLeg"] = base[side .. "UpperLeg"] * CFrame.new(0, -sz[side .. "UpperLeg"].Y * 0.329, 0) * ang(J[s1 .. "Knee"])
+						* CFrame.new(0, -sz[side .. "LowerLeg"].Y * 0.334, 0)
+					base[side .. "Foot"] = base[side .. "LowerLeg"] * CFrame.new(0, -sz[side .. "LowerLeg"].Y * 0.459, 0) * ang(J[s1 .. "Ankle"])
+						* CFrame.new(0, -sz[side .. "Foot"].Y * 0.333, 0)
+				end
+			end
 		end
 		-- ---- write every part (figure space = root * FLIP * rig)
 		local RF = root * FLIP
