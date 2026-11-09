@@ -1,3 +1,4 @@
+-- HitFX v3.5 (v5.17: damage numbers can be switched off in the settings)
 -- HitFX v3.4: the hitmarker is smaller and calmer (thin 45 degree ticks that pop in and fade out; white = body, gold = head, red = kill).
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
@@ -306,7 +307,19 @@ function HitFX:Hit(model, pos, normal, dmg, head)
 	Sfx.Play(head and "Headshot" or "Hit")
 end
 
+-- v5.17 SETTINGS: the player can switch the damage numbers off (Settings.DamageNumbers)
+local function numbersOn()
+	local m = script.Parent:FindFirstChild("Settings")
+	if not m then return true end
+	local ok, on = pcall(function()
+		local S = require(m)
+		return S.Get(game:GetService("Players").LocalPlayer).DamageNumbers ~= false
+	end)
+	return not ok or on
+end
+
 function HitFX:Number(model, pos, dmg, head)
+	if not numbersOn() then return end
 	self:_popup(pos, dmg, head)
 	self:_combo(model, dmg, head)
 end
