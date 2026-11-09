@@ -1,3 +1,4 @@
+-- Sfx (v5.17: every sound it plays goes through the master-volume SoundGroup of the Settings module - Settings.Master)
 -- Sfx: plays sounds from the SoundBank.
 --   Sfx.Play(name, parent, pitch, volume, gunId) -> Sound or nil
 --       parent = nil -> 2D (only you hear it) | Part / Attachment -> 3D from it | Vector3 -> 3D from that position
@@ -100,6 +101,16 @@ local function hostAt(pos)
 	return p
 end
 
+-- v5.17 SETTINGS: every sound the Sfx module plays goes through ONE SoundGroup (Settings.Master) whose Volume is the player's master volume setting
+local masterGroup
+local function master()
+	if masterGroup and masterGroup.Parent then return masterGroup end
+	local m = script.Parent:FindFirstChild("Settings")
+	local ok, S = pcall(function() return m and require(m) end)
+	masterGroup = ok and S and S.Master and S.Master() or nil
+	return masterGroup
+end
+
 function Sfx.Play(name, parent, pitch, volume, gunId)
 	local info, fp, fv = resolve(name, gunId)
 	if not info then return nil end
@@ -107,6 +118,7 @@ function Sfx.Play(name, parent, pitch, volume, gunId)
 	s.SoundId = info.variants[math.random(#info.variants)]
 	s.PlaybackSpeed = (info.lo + math.random() * (info.hi - info.lo)) * (pitch or 1) * fp
 	s.Volume = info.sound.Volume * (volume or 1) * fv
+	s.SoundGroup = master() -- v5.17: master volume
 	local host
 	if typeof(parent) == "Vector3" then host = hostAt(parent); parent = host end
 	s.Parent = parent or SoundService
@@ -123,6 +135,7 @@ function Sfx.Loop(name, parent, gunId)
 	local s = info.sound:Clone()
 	s.Looped = true
 	s.Volume = 0
+	s.SoundGroup = master() -- v5.17: master volume
 	s.Parent = parent or SoundService
 	s:Play()
 	return s
