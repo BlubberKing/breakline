@@ -1,3 +1,6 @@
+-- GunClient (v5.16: LOWER SENSITIVITY - MatchConfig.MOUSE_SENS multiplies your Roblox setting (0.55); NO SHOOTING before the match starts - clicks, R and
+--   aiming are ignored and no gun sound plays while loading / on the loadout screen / in the cutscene / card roll / 3-2-1 (MatchConfig.LOCKED_PHASES);
+--   POSES - while your character holds a pose (character attribute Pose, PoseClient) the gun is put away and your body is not hidden)
 -- GunClient (v5.14: DEEP POCKETS extra magazine at the start of every life + HOT BARREL fire rate after a kill, from ReplicatedStorage.CardEffects)
 -- GunClient v3.4 (GUN FEEL): Rivals-style recoil. Only guns with Recoil = "Climb" (WeaponConfig; the AK-47) really move your aim. Every other
 --       gun is "Kick": the bullet goes exactly where the crosshair was, while the viewmodel + camera still kick, flinch and settle for feel
@@ -68,7 +71,11 @@ local rad = math.rad
 
 player.CameraMode = Enum.CameraMode.LockFirstPerson
 UIS.MouseIconEnabled = false
-UIS.MouseDeltaSensitivity = 1 -- never scaled: sensitivity = the player's own Roblox setting (also while aiming / scoped)
+-- v5.16: lower sensitivity (owner: the guns moved way too easily at the same Roblox setting as other games). MatchConfig.MOUSE_SENS multiplies the
+-- player's own Roblox sensitivity; set every frame (MatchFlow / menus can reset it), the same while aiming / scoped.
+local function mouseSens() local ok, m = pcall(function() return require(RS:WaitForChild("MatchConfig")).MOUSE_SENS end) return (ok and type(m) == "number") and m or 0.55 end
+local MOUSE_SENS = mouseSens()
+UIS.MouseDeltaSensitivity = MOUSE_SENS
 
 -- ================= HUD =================
 local gui = Instance.new("ScreenGui")
@@ -640,9 +647,20 @@ table.insert(conns, DamagedRemote.OnClientEvent:Connect(function(dmg)
 end))
 
 local function menuOpen() return player:GetAttribute("GunMenuOpen") == true end
+-- v5.16: no shooting / reloading / aiming (and no gun sounds) until the match has really started: loading in, the loadout screen, the cutscene,
+-- the card roll and the 3-2-1 are all locked (MatchConfig.LOCKED_PHASES). The server already refused the shots; now the client does not even try.
+local MatchStateF = RS:FindFirstChild("MatchState")
+local function phaseLocked()
+	MatchStateF = MatchStateF or RS:FindFirstChild("MatchState")
+	if not MatchStateF then return false end
+	local ph = MatchStateF:GetAttribute("Phase")
+	return MatchCfg.LOCKED_PHASES ~= nil and MatchCfg.LOCKED_PHASES[ph] == true
+end
+-- v5.16 POSES: while you hold a pose the gun is put away (like carrying a box) and your body is shown (PoseClient runs a third-person camera)
+local function posing() return character:GetAttribute("Pose") ~= nil end
 
 table.insert(conns, UIS.InputBegan:Connect(function(input, gpe)
-	if gpe or menuOpen() then return end
+	if gpe or menuOpen() or phaseLocked() or posing() then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
 		triggerDown = true
 		semiPending = os.clock()
@@ -753,7 +771,9 @@ local function onRender(dt)
 		stillTime = moving and 0 or stillTime + dt
 		if stillTime > 0.3 or not alive then setSprintToggle(false) end
 	end
-	if alive and not character:GetAttribute("Revealing") then hideBody() end -- (RespawnReveal shows your body during the reveal)
+	UIS.MouseDeltaSensitivity = MOUSE_SENS -- v5.16 (kept every frame: menus / cutscenes may reset it to 1)
+	local isPosing = posing()
+	if alive and not character:GetAttribute("Revealing") and not isPosing then hideBody() end -- (RespawnReveal shows your body during the reveal; v5.16: PoseClient while posing)
 
 	-- states
 	-- v3.8: wall-climbing (and the respawn reveal) put the gun away too, exactly like carrying a box
@@ -763,6 +783,7 @@ local function onRender(dt)
 	local heldGadget = character:GetAttribute("HeldGadget") ~= nil
 	local carryingBox = isCarrying() or abilityMode == "climb" or revealing or heldGadget
 		or player:GetAttribute("CarryingSoul") == true or character:GetAttribute("Reviving") == true
+		or isPosing or phaseLocked() -- v5.16: a pose puts the gun away; nothing fires before the match starts
 	if carryingBox then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
 	if heldGadget ~= lastHeldGadget then -- coming back to the gun: the usual equip animation plays again
 		if lastHeldGadget and not heldGadget then equipStart = os.clock() end
@@ -1092,7 +1113,7 @@ cleanup = function()
 	for _, c in conns do c:Disconnect() end
 	fx:Destroy()
 	if built then built.Model:Destroy() end
-	UIS.MouseDeltaSensitivity = 1
+	UIS.MouseDeltaSensitivity = MOUSE_SENS
 	camera.FieldOfView = BASE_FOV
 	if windSound then windSound:Destroy() end
 	pcall(function() CAS:UnbindAction(SPRINT_ACTION) end)
