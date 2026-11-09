@@ -1,4 +1,13 @@
--- CosmeticsClient v3.1 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- CosmeticsClient v4 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- v5.16 (owner Nov 8):
+--   * PLAYER SKINS are called COSTUMES everywhere (tabs, labels, the showcase picker). The shop preview of a costume says COLORWAY FOR <base costume>.
+--   * gun skins say "<GUN> SKIN" (was "FOR THE <GUN>" on the cards and "GOES ON <GUN>" in the preview + locker).
+--   * locker GUN SKINS: one small TAB per gun side by side (like the shop's gun row, with how many skins you own for it) - click a gun to see its
+--     skins (STOCK + yours). Was: every gun stacked under each other.
+--   * NEW POSES tab (shop + locker): the locker shows your poses on the left, the selected pose PLAYING on your costume and the 6-slot POSE WHEEL on
+--     the right (click a slot to put the selected pose there, T opens the wheel in a match / the lobby). Shop: poses for souls / essence.
+--   * NEW TITLES tab (shop + locker): titles sit above your name in the lobby (and on your player card). Locker: EQUIP / REMOVE + SHOW ON MY PLAYER CARD.
+--   * PLAYER CARD tab: ADD POSE under REPOSITION for a costume in a showcase slot (pick the pose it holds on your card); TITLE ON CARD switch.
 -- v5.13 (owner Nov 7):
 --   * BUG FIX - the card editor's corner squares (resize) and round handle (turn) only ever MOVED the item. The handles were found by doing maths
 --     on the mouse position against the card's AbsolutePosition, and those two do not use the same screen origin (Roblox top bar inset), so a press
@@ -44,6 +53,8 @@ local GunSkins = require(RS:WaitForChild("GunSkins"))
 local GunModels = require(RS:WaitForChild("GunModels"))
 local Cat = require(RS:WaitForChild("CosmeticsCatalog"))
 local PlayerCards = require(RS:WaitForChild("PlayerCards")) -- v5.11
+local Poses = require(RS:WaitForChild("Poses"))   -- v5.16: POSES tab (shop + locker), ADD POSE on the player card
+local Titles = require(RS:WaitForChild("Titles")) -- v5.16: TITLES tab (shop + locker)
 local GuiService = game:GetService("GuiService")
 local Remotes = RS:WaitForChild("CosmeticsRemotes")
 local BuyR, EquipR = Remotes:WaitForChild("Buy"), Remotes:WaitForChild("Equip")
@@ -102,13 +113,21 @@ local function balance(cur) return cur == "essence" and essence() or souls() end
 local function owned(item)
 	if item.kind == "skin" then return Cat.OwnsSkin(player, item.id) end
 	if item.kind == "banner" then return Cat.OwnsBanner(player, item.id) end
+	if item.kind == "pose" then return Cat.OwnsPose(player, item.id) end   -- v5.16
+	if item.kind == "title" then return Cat.OwnsTitle(player, item.id) end -- v5.16
 	return Cat.OwnsGunSkin(player, item.id)
 end
 local function wornSkin() local s = player:GetAttribute("Skin"); return Skins.Is(s) and s or Skins.Default end
 local function equippedOn(gun) return GunSkins.Equipped(player, gun) end
+local function wheelSlotOf(id) -- v5.16: the pose-wheel slot a pose sits in (or nil)
+	for i, v in Poses.Wheel(player) do if v == id then return i end end
+	return nil
+end
 local function isEquipped(item)
 	if item.kind == "skin" then return wornSkin() == item.id end
 	if item.kind == "banner" then return PlayerCards.Read(player).bg == item.id end
+	if item.kind == "pose" then return wheelSlotOf(item.id) ~= nil end              -- v5.16: "equipped" = on the wheel
+	if item.kind == "title" then return player:GetAttribute("Title") == item.id end -- v5.16
 	return item.gun ~= nil and equippedOn(item.gun) == item.id
 end
 local function myWeapon()
@@ -121,6 +140,7 @@ local function myWeapon()
 end
 
 -- ================= pictures =================
+local figOf = setmetatable({}, { __mode = "k" }) -- v5.16: model -> posed figure (the viewer keeps an animated pose playing)
 local function addGunParts(model, gunId, skinId)
 	local ok, desc = pcall(GunModels.Describe, gunId, "Iron", skinId)
 	if not ok or not desc then return end
@@ -133,9 +153,10 @@ local function addGunParts(model, gunId, skinId)
 		end
 	end
 end
-local function addFigure(model, skinId)
-	local ok, fig = pcall(Skins.NewFigure, model, skinId, { static = true })
+local function addFigure(model, skinId, poseId)
+	local ok, fig = pcall(Skins.NewFigure, model, skinId, { static = true, pose = poseId }) -- v5.16: + a pose (it plays in the viewer)
 	if ok and fig then pcall(fig.Update, fig, 0, 0) end
+	if ok and fig and poseId then figOf[model] = fig end
 	-- a dark disc under the feet
 	local d = new("Part", { Anchored = true, CanCollide = false, CanQuery = false, Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.15, 6, 6), Color = rgb(20, 22, 28),
 		Material = Enum.Material.SmoothPlastic, CFrame = CFrame.new(0, -0.1, 0) * CFrame.Angles(0, 0, math.rad(90)) }, model)
@@ -152,6 +173,8 @@ local thumbTpl, thumbOrder = {}, {}
 local THUMB_MAX = 140
 local function thumbKey(item)
 	if item.kind == "banner" then return "banner|" .. item.id end
+	if item.kind == "title" then return "title|" .. item.id end
+	if item.kind == "pose" then return "pose|" .. item.id .. "|" .. wornSkin() end -- v5.16: a pose is shown on the costume you wear
 	if item.kind == "flex" then return ("flex|%s|%dx%d"):format(item.value, item.w or 0, item.h or 0) end
 	return item.kind .. "|" .. tostring(item.id) .. "|" .. tostring(item.gun)
 end
@@ -163,8 +186,10 @@ local function thumbTemplate(item)
 		LightDirection = Vector3.new(-0.5, -0.9, -0.4) })
 	new("Camera", { FieldOfView = 20 }, vp)
 	local model = new("Model", {}, vp)
-	if item.kind == "skin" then
-		local ok, fig = pcall(Skins.NewFigure, model, item.id, { static = true })
+	if item.kind == "skin" or item.kind == "pose" then
+		local pd = item.kind == "pose" and Poses.ById[item.id] or nil
+		local ok, fig = pcall(Skins.NewFigure, model, item.kind == "pose" and wornSkin() or item.id,
+			{ static = true, pose = pd and item.id or nil, poseT = pd and (pd.still or 0) or nil })
 		if ok and fig then pcall(fig.Update, fig, 0, 0) end
 		t = { vp = vp, dir = Vector3.new(0.28, 0.1, 1), opts = { pad = 0.04, fov = 22 } }
 	else
@@ -184,6 +209,8 @@ end
 local function thumb(parent, item)
 	if item.kind == "banner" then -- v5.11: player card background (animated ones move here too)
 		return PlayerCards.DrawBanner(parent, item.id, true)
+	elseif item.kind == "title" then -- v5.16: a title = its text plate
+		return Titles.Plate(parent, item.id, 64)
 	elseif item.kind == "flex" then -- v5.11: a showcase item (skin / gun skin / card); PlayerCards keeps its own template cache
 		return PlayerCards.ShowcaseItem(parent, item.value, item.w, item.h)
 	end
@@ -214,7 +241,7 @@ task.spawn(function()
 	end
 end)
 local function queueThumb(well, item)
-	if item.kind == "banner" or thumbReady[thumbKey(item)] then
+	if item.kind == "banner" or item.kind == "title" or thumbReady[thumbKey(item)] then
 		pcall(thumb, well, item)
 		return
 	end
@@ -240,10 +267,12 @@ local function newViewer(parent, x, y, w, h)
 		-- v5.12: the new model is built first and swapped in, so the viewer never shows an empty frame
 		local fresh = new("Model", {})
 		V.kind = item.kind
-		if item.kind == "skin" then
-			addFigure(fresh, item.id)
+		if item.kind == "skin" or item.kind == "pose" then
+			addFigure(fresh, item.kind == "pose" and wornSkin() or item.id, item.kind == "pose" and item.id or nil) -- v5.16: a pose plays on your costume
+			V.fig, V.figT0 = figOf[fresh], os.clock()
 			V.yaw, V.pitch = 0.45, 0.1
 		else
+			V.fig = nil
 			addGunParts(fresh, item.gun, item.id ~= "STOCK" and item.id or nil)
 			V.yaw, V.pitch = math.pi / 2 + 0.25, 0.14
 		end
@@ -253,9 +282,9 @@ local function newViewer(parent, x, y, w, h)
 		local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
 		if ok and cf then
 			V.center = cf.Position
-			if item.kind == "skin" then V.center = Vector3.new(cf.Position.X, cf.Position.Y + 0.15, cf.Position.Z) end
+			if item.kind ~= "gun" then V.center = Vector3.new(cf.Position.X, cf.Position.Y + 0.15, cf.Position.Z) end
 			local r = size.Magnitude / 2
-			V.baseDist = r / math.sin(math.rad(cam.FieldOfView / 2)) * (item.kind == "skin" and 0.98 or 1.02)
+			V.baseDist = r / math.sin(math.rad(cam.FieldOfView / 2)) * (item.kind ~= "gun" and 1.05 or 1.02)
 		end
 		V.dist = V.baseDist
 		V.touched = os.clock() - 10 -- spins by itself until the player grabs it
@@ -268,6 +297,7 @@ local function newViewer(parent, x, y, w, h)
 	table.insert(conns, RunService.RenderStepped:Connect(function(dt)
 		if not holder.Parent then return end
 		if not V.dragging and os.clock() - V.touched > 3 then V.yaw += dt * 0.5 end
+		if V.fig then pcall(V.fig.Update, V.fig, os.clock() - (V.figT0 or 0), dt) end -- v5.16: an animated pose keeps playing
 		place()
 	end))
 	-- v5.11: hit-test every click ourselves (the info panel is layered over the viewer, so holder.InputBegan never fired) and turn by how far the
@@ -394,16 +424,22 @@ local function baseName(id) local s = Skins.Get(id); return s.base and Skins.Get
 local function subLine(item)
 	if item.kind == "skin" then
 		local s = Skins.Get(item.id)
-		return s.base and (baseName(item.id) .. " COLOURWAY") or "BASE SKIN"
+		return s.base and (baseName(item.id) .. " COLOURWAY") or "BASE COSTUME"
 	elseif item.kind == "banner" then
 		return item.anim and "PLAYER CARD  //  ANIMATED" or "PLAYER CARD"
+	elseif item.kind == "pose" then -- v5.16
+		return item.anim and "POSE  //  ANIMATED" or "POSE  //  STILL"
+	elseif item.kind == "title" then
+		return "TITLE"
 	end
-	return "FOR THE  " .. string.upper(item.gunName or "")
+	return string.upper(item.gunName or "") .. " SKIN" -- v5.16: "<GUN> SKIN" (was "FOR THE <GUN>")
 end
 local function kindLine(item)
-	if item.kind == "skin" then return "PLAYER SKIN  //  " .. subLine(item) end
+	if item.kind == "skin" then return "COSTUME  //  " .. subLine(item) end -- v5.16: player skins are called COSTUMES
 	if item.kind == "banner" then return "PLAYER CARD BACKGROUND" .. (item.anim and "  //  ANIMATED" or "") end
-	return "GUN SKIN  //  FOR THE " .. string.upper(item.gunName or "")
+	if item.kind == "pose" then return subLine(item) end
+	if item.kind == "title" then return "TITLE  //  SHOWN ABOVE YOUR NAME" end
+	return "GUN SKIN"
 end
 
 -- ======================================================================================
@@ -428,8 +464,11 @@ local balSouls = lbl(balBox, "0", 28, 56, 0, 150, 52, K.text, F.H)
 local balEss = lbl(balBox, "0", 28, 256, 0, 140, 52, ESS_PALE, F.H)
 local shopClose = UI.CloseButton(shopRoot, "CLOSE", { Position = UDim2.fromOffset(1704, 45) })
 
-local TABS = { { id = "skin", name = "PLAYER SKINS" }, { id = "gun", name = "GUN SKINS" }, { id = "banner", name = "PLAYER CARDS" } } -- v5.11: + PLAYER CARDS
-local LOCK_TABS = { { id = "skin", name = "PLAYER SKINS" }, { id = "gun", name = "GUN SKINS" }, { id = "card", name = "PLAYER CARD" } }
+-- v5.16: PLAYER SKINS -> COSTUMES, + POSES + TITLES (shop and locker)
+local TABS = { { id = "skin", name = "COSTUMES" }, { id = "gun", name = "GUN SKINS" }, { id = "pose", name = "POSES" }, { id = "title", name = "TITLES" },
+	{ id = "banner", name = "PLAYER CARDS" } }
+local LOCK_TABS = { { id = "skin", name = "COSTUMES" }, { id = "gun", name = "GUN SKINS" }, { id = "pose", name = "POSES" }, { id = "title", name = "TITLES" },
+	{ id = "card", name = "PLAYER CARD" } }
 local tabBtns = {}
 for i, t in TABS do
 	local b = new("TextButton", { Text = t.name, TextSize = 24, FontFace = F.H, TextColor3 = K.dim, BackgroundTransparency = 1, AutoButtonColor = false,
@@ -635,8 +674,40 @@ end
 -- your own card data (used to preview a background on YOUR card)
 local function myCardData(bg)
 	local cd = PlayerCards.Read(player)
-	if bg then cd = { bg = bg, show = cd.show, pos = cd.pos } end
-	return { userId = player.UserId, name = player.DisplayName, username = player.Name, level = player:GetAttribute("Level"), card = cd }
+	if bg then cd = { bg = bg, show = cd.show, pos = cd.pos, poses = cd.poses, showTitle = cd.showTitle } end
+	return { userId = player.UserId, name = player.DisplayName, username = player.Name, level = player:GetAttribute("Level"), card = cd,
+		title = player:GetAttribute("Title") } -- v5.16: + the title
+end
+-- v5.16: a nameplate mock-up (title above LV + your name) for the TITLE preview / locker
+local function titlePreview(parent, w, h, titleId)
+	local f = box(parent, 0, 0, w, h, rgb(8, 9, 12), 0)
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(24, 28, 38), rgb(6, 7, 10)) }, f)
+	stroke(f, K.line, 1)
+	local t = Titles.ById[titleId]
+	local col = t and t.color or K.mute
+	local tl = lbl(f, t and t.text or "NO TITLE", 40, 0, h / 2 - 66, w, 48, col, F.H, Enum.TextXAlignment.Center)
+	new("UIStroke", { Color = BLACK, Thickness = 2, Transparency = 0.3 }, tl)
+	local row = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, h / 2 - 12), AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 56),
+		BackgroundTransparency = 1 }, f)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 14), SortOrder = Enum.SortOrder.LayoutOrder }, row)
+	local chipF = new("Frame", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 40), BackgroundColor3 = K.void, BackgroundTransparency = 0.25, BorderSizePixel = 0, LayoutOrder = 1 }, row)
+	stroke(chipF, K.red, 2)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, chipF)
+	new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 40), Text = "LV " .. tostring(player:GetAttribute("Level") or 1),
+		TextSize = 24, FontFace = F.MB, TextColor3 = K.text }, chipF)
+	local nm = new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 56), Text = string.upper(player.DisplayName),
+		TextSize = 44, FontFace = F.H, TextColor3 = K.text, LayoutOrder = 2 }, row)
+	new("UIStroke", { Color = BLACK, Thickness = 2, Transparency = 0.4 }, nm)
+	lbl(f, "HOW IT LOOKS ABOVE YOUR HEAD IN THE LOBBY", 12, 0, h - 40, w, 18, K.mute, F.MB, Enum.TextXAlignment.Center)
+	return f
+end
+-- v5.16: put a pose on the wheel (the first empty slot, else the last slot)
+local function poseToWheel(id)
+	local w = Poses.Wheel(player)
+	local slot = nil
+	for i = 1, Poses.WHEEL do if w[i] == "" then slot = i break end end
+	slot = slot or Poses.WHEEL
+	return EquipR:InvokeServer("wheel", slot, id)
 end
 
 function openPreview(item, keepView)
@@ -648,7 +719,13 @@ function openPreview(item, keepView)
 	if pvBody then pvBody:Destroy() end
 	pvBody = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 22 }, pvPanel)
 	if not reuse then
-		if item.kind == "banner" then
+		if item.kind == "title" then
+			-- v5.16: a title is shown the way it sits above your name
+			pvFlat = titlePreview(pvPanel, 960, 832, item.id)
+			pvFlat.Position = UDim2.fromOffset(24, 24)
+			pvFlat.ZIndex = 22
+			for _, d in pvFlat:GetDescendants() do if d:IsA("GuiObject") then d.ZIndex = 23 end end
+		elseif item.kind == "banner" then
 			-- v5.11: a background is shown on YOUR player card, big
 			pvFlat = box(pvPanel, 24, 24, 960, 832, rgb(8, 9, 12), 0)
 			pvFlat.ZIndex = 22
@@ -675,8 +752,15 @@ function openPreview(item, keepView)
 		d.LineHeight = 1.18
 		d.ZIndex = 23
 	end
-	if item.kind == "gun" then
-		local g = lbl(pvBody, "GOES ON:  " .. string.upper(item.gunName or ""), 16, X, 206, 576, 24, K.soulPale, F.MB)
+	if item.kind == "gun" then -- v5.16: "<GUN> SKIN" (was "GOES ON: <GUN>")
+		local g = lbl(pvBody, string.upper(item.gunName or "") .. " SKIN", 16, X, 206, 576, 24, K.soulPale, F.MB)
+		g.ZIndex = 23
+	elseif item.kind == "skin" then -- v5.16: the empty space under the name says which costume this is a colourway of
+		local sk = Skins.Get(item.id)
+		local g = lbl(pvBody, sk.base and ("COLORWAY FOR  " .. string.upper(baseName(item.id))) or "BASE COSTUME", 16, X, 206, 576, 24, K.soulPale, F.MB)
+		g.ZIndex = 23
+	elseif item.kind == "pose" then
+		local g = lbl(pvBody, "PRESS T IN A MATCH OR THE LOBBY TO OPEN YOUR POSE WHEEL", 13, X, 206, 576, 24, K.soulPale, F.MB)
 		g.ZIndex = 23
 	end
 	-- price + action
@@ -687,15 +771,20 @@ function openPreview(item, keepView)
 		local t = box(pvBody, X, 640, 576, 60, rgb(18, 52, 34))
 		stroke(t, K.green, 1)
 		t.ZIndex = 23
-		local tl = lbl(t, eq and ("EQUIPPED" .. (item.kind == "gun" and (" ON " .. string.upper(item.gunName or "")) or "")) or "YOU OWN THIS", 20, 0, 0, 576, 60, K.green, F.H, Enum.TextXAlignment.Center)
+		local eqText = item.kind == "pose" and ("ON YOUR WHEEL  //  SLOT " .. tostring(wheelSlotOf(item.id) or "")) or ("EQUIPPED" .. (item.kind == "gun" and (" ON " .. string.upper(item.gunName or "")) or ""))
+		local tl = lbl(t, eq and eqText or "YOU OWN THIS", 20, 0, 0, 576, 60, K.green, F.H, Enum.TextXAlignment.Center)
 		tl.ZIndex = 24
 		if not eq then
-			local e = new("TextButton", { Text = item.kind == "gun" and ("EQUIP ON " .. string.upper(item.gunName or "")) or "EQUIP", TextSize = 24, FontFace = F.H, TextColor3 = K.text, BackgroundColor3 = K.red,
+			local e = new("TextButton", { Text = item.kind == "gun" and ("EQUIP ON " .. string.upper(item.gunName or "")) or (item.kind == "pose" and "PUT ON YOUR WHEEL" or "EQUIP"), TextSize = 24, FontFace = F.H, TextColor3 = K.text, BackgroundColor3 = K.red,
 				AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(X, 716), Size = UDim2.fromOffset(576, 70), ZIndex = 23 }, pvBody)
 			hot(e, K.red, K.redHi, nil)
 			e.MouseButton1Click:Connect(function()
 				e.Text = "..."
-				local ok, res, msg = pcall(function() return EquipR:InvokeServer(item.kind == "banner" and "card" or item.kind, item.id, item.gun) end)
+				local ok, res, msg = pcall(function()
+					if item.kind == "pose" then return poseToWheel(item.id) end -- v5.16
+					if item.kind == "title" then return EquipR:InvokeServer("title", item.id) end
+					return EquipR:InvokeServer(item.kind == "banner" and "card" or item.kind, item.id, item.gun)
+				end)
 				toastText, toastGood = (ok and msg) or "Could not reach the server.", ok and res == true
 				refreshShop()
 			end)
@@ -769,6 +858,10 @@ end)
 local lockTab = "skin"            -- skin | gun | card
 local selectedLock = nil -- skin: { kind = "skin", base, variant }   gun: { kind = "gun", id, gun, item }  (id "STOCK" = the plain gun)
 local cardSlot = nil     -- PLAYER CARD tab: the showcase slot being filled (1..3) or nil (= choosing a background)
+local poseSlot = nil     -- v5.16 PLAYER CARD tab: the showcase slot whose COSTUME is getting a pose (ADD POSE), or nil
+local lockGun = nil      -- v5.16 GUN SKINS tab: the gun whose skins are shown (one tab per gun, like the shop)
+local selPose = nil      -- v5.16 POSES tab: the pose selected on the left (click a wheel slot on the right to put it there)
+local selTitle = nil     -- v5.16 TITLES tab: the title selected on the left
 local lockViewer, lockInfo
 local refreshLocker
 local closeLocker -- forward (a locked colourway / background jumps to the shop)
@@ -786,7 +879,7 @@ for i, t in LOCK_TABS do
 	u.Visible = false
 	lockTabBtns[t.id] = { b = b, u = u }
 end
-local shopLink = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel, BorderSizePixel = 0, Position = UDim2.fromOffset(1260, 148), Size = UDim2.fromOffset(300, 46) }, lockerRoot)
+local shopLink = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel, BorderSizePixel = 0, Position = UDim2.fromOffset(1556, 148), Size = UDim2.fromOffset(300, 46) }, lockerRoot) -- v5.16: further right (5 tabs now)
 do
 	local st = stroke(shopLink, ESS, 1.5)
 	local ic = UI.EssenceIcon(shopLink, 30)
@@ -833,7 +926,7 @@ local function lockCard(parent, item, order, w)
 	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(20, 24, 32), rgb(8, 9, 12)) }, well)
 	queueThumb(well, item)
 	lbl(b, string.upper(item.name), 22, 14, 206, w - 28, 28, K.text, F.H)
-	local sub = item.kind == "gun" and ("FOR  " .. string.upper(item.gunName or "")) or (item.sub or "")
+	local sub = item.kind == "gun" and (string.upper(item.gunName or "") .. " SKIN") or (item.sub or "") -- v5.16: "<GUN> SKIN"
 	lbl(b, sub, 11, 15, 234, w - 28, 14, item.kind == "gun" and K.soulPale or K.dim, F.MB)
 	if eq then
 		local txt = item.kind == "gun" and ("EQUIPPED ON " .. string.upper(item.gunName or "")) or "EQUIPPED"
@@ -917,9 +1010,9 @@ local function gunSide(item)
 	lockInfo = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, lockSide)
 	local isStock = item.id == "STOCK"
 	local eq = isStock and (equippedOn(item.gun) == nil) or ((not isStock) and isEquipped(item))
-	lbl(lockInfo, "GUN SKIN  //  FOR THE " .. string.upper(item.gunName or ""), 12, 4, 568, 680, 16, K.redHi, F.MB)
+	lbl(lockInfo, "GUN SKIN", 12, 4, 568, 680, 16, K.redHi, F.MB) -- v5.16 wording
 	lbl(lockInfo, string.upper(item.name), 46, 2, 586, 690, 54, K.text, F.H)
-	lbl(lockInfo, "GOES ON:  " .. string.upper(item.gunName or ""), 14, 4, 646, 690, 20, K.soulPale, F.MB)
+	lbl(lockInfo, string.upper(item.gunName or "") .. " SKIN", 14, 4, 646, 690, 20, K.soulPale, F.MB)
 	local label, action
 	if isStock then
 		label = eq and "ON STOCK" or ("BACK TO STOCK " .. string.upper(item.gunName or ""))
@@ -935,6 +1028,151 @@ local function gunSide(item)
 		local ok, res = pcall(action)
 		if not ok or res ~= true then b.Text = "COULD NOT EQUIP" end
 	end)
+end
+
+-- ----- v5.16 POSES: your poses on the left, the selected pose playing on your costume + the 6-slot WHEEL on the right -----
+local function poseCard(parent, id, order, w)
+	local pd = Poses.ById[id]
+	local slot = wheelSlotOf(id)
+	local on = selPose == id
+	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0, LayoutOrder = order, Size = UDim2.fromOffset(w, 270) }, parent)
+	local st = stroke(b, on and K.red or K.line, on and 2.5 or 1)
+	if not on then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
+	local well = box(b, 1, 1, w - 2, 196, K.void, 0.1)
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(20, 24, 32), rgb(8, 9, 12)) }, well)
+	queueThumb(well, { kind = "pose", id = id })
+	lbl(b, pd.name, 22, 14, 202, w - 28, 28, K.text, F.H)
+	lbl(b, pd.anim and "ANIMATED" or "STILL", 11, 15, 230, w - 28, 14, K.dim, F.MB)
+	if slot then chip(b, w - 104, 228, 90, 22, "SLOT " .. slot, rgb(14, 56, 36), K.green, K.green, 11) end
+	b.MouseButton1Click:Connect(function()
+		selPose = id
+		lockMsg = ""
+		refreshLocker()
+	end)
+	return b
+end
+local function poseSide()
+	lockInfo = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, lockSide)
+	local pd = selPose and Poses.ById[selPose]
+	lbl(lockInfo, pd and pd.name or "POSES", 30, 2, 372, 450, 38, K.text, F.H)
+	lbl(lockInfo, "POSE WHEEL  //  PRESS T IN A MATCH OR THE LOBBY", 11, 4, 408, 690, 16, K.redHi, F.MB)
+	lbl(lockInfo, pd and ("CLICK A SLOT TO PUT " .. pd.name .. " THERE") or "PICK A POSE ON THE LEFT, THEN CLICK A SLOT", 11, 4, 424, 690, 16, K.dim, F.MB)
+	-- the wheel (same layout as the in-game one: slot 1 at the top, clockwise)
+	local wheel = Poses.Wheel(player)
+	local WCX, WCY, WR, WD = 190, 622, 112, 92
+	local ring = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(WCX, WCY), Size = UDim2.fromOffset(WR * 2 + WD + 20, WR * 2 + WD + 20),
+		BackgroundColor3 = rgb(10, 11, 15), BackgroundTransparency = 0.1, BorderSizePixel = 0 }, lockInfo)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, ring)
+	stroke(ring, K.line, 1)
+	local mid = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(WCX, WCY), Size = UDim2.fromOffset(92, 92), BackgroundColor3 = K.panel,
+		BorderSizePixel = 0 }, lockInfo)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, mid)
+	stroke(mid, K.line2, 1)
+	lbl(mid, "T", 36, 0, 12, 92, 42, K.text, F.H, Enum.TextXAlignment.Center)
+	lbl(mid, "IN GAME", 9, 0, 56, 92, 12, K.dim, F.MB, Enum.TextXAlignment.Center)
+	for i = 1, Poses.WHEEL do
+		local a = math.rad(-90 + (i - 1) * 60)
+		local id = wheel[i]
+		local filled = id ~= ""
+		local isSel = filled and id == selPose
+		local b = new("TextButton", { Text = "", AutoButtonColor = false, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(WCX + math.cos(a) * WR, WCY + math.sin(a) * WR),
+			Size = UDim2.fromOffset(WD, WD), BackgroundColor3 = isSel and rgb(40, 22, 26) or K.panel2, BorderSizePixel = 0 }, lockInfo)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, b)
+		local st = stroke(b, isSel and K.red or (filled and K.line2 or K.line), isSel and 2.5 or 1.2)
+		hot(b, isSel and rgb(40, 22, 26) or K.panel2, rgb(36, 30, 36), st, isSel and K.red or (filled and K.line2 or K.line), K.red)
+		local well = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 6), Size = UDim2.fromOffset(60, 54), BackgroundTransparency = 1,
+			ClipsDescendants = true }, b)
+		if filled then queueThumb(well, { kind = "pose", id = id }) end
+		lbl(b, filled and Poses.ById[id].name or "EMPTY", 12, 6, 60, WD - 12, 16, filled and K.text or K.mute, F.H, Enum.TextXAlignment.Center).TextTruncate = Enum.TextTruncate.AtEnd
+		local n = new("TextLabel", { BackgroundColor3 = isSel and K.red or K.panel3, BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, math.cos(a) * 44, 0.5, math.sin(a) * 44), Size = UDim2.fromOffset(20, 20), Text = tostring(i), TextSize = 12, FontFace = F.H, TextColor3 = K.text }, b)
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, n)
+		b.MouseButton1Click:Connect(function()
+			if not selPose then lockMsg = "Pick a pose on the left first." refreshLocker() return end
+			local ok, res, msg = pcall(function() return EquipR:InvokeServer("wheel", i, selPose) end)
+			lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+			if lockMsg ~= "" then refreshLocker() end
+		end)
+	end
+	-- take the selected pose off the wheel
+	local slotNow = selPose and wheelSlotOf(selPose)
+	local clr = new("TextButton", { Text = slotNow and ("TAKE OFF THE WHEEL  (SLOT " .. slotNow .. ")") or "NOT ON THE WHEEL", TextSize = 18, FontFace = F.H,
+		TextColor3 = slotNow and K.text or K.mute, BackgroundColor3 = K.panel3, AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(392, 700),
+		Size = UDim2.fromOffset(300, 46), TextWrapped = true }, lockInfo)
+	local cst = stroke(clr, K.line2, 1)
+	if slotNow then
+		hot(clr, K.panel3, K.panel2, cst, K.line2, K.redHi)
+		clr.MouseButton1Click:Connect(function()
+			local ok, res, msg = pcall(function() return EquipR:InvokeServer("wheel", slotNow, "") end)
+			lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+			if lockMsg ~= "" then refreshLocker() end
+		end)
+	end
+	-- right column: what the selected pose is + where it sits
+	if pd then
+		lbl(lockInfo, pd.anim and "ANIMATED POSE" or "STILL POSE", 12, 394, 476, 298, 16, K.dim, F.MB)
+		lbl(lockInfo, slotNow and ("ON SLOT " .. slotNow) or "NOT ON THE WHEEL", 26, 392, 494, 300, 34, slotNow and K.green or K.mute, F.H)
+		lbl(lockInfo, "MOVING OR PULLING OUT AN ITEM ENDS A POSE", 11, 394, 540, 298, 30, K.mute, F.MB, nil, true)
+	end
+	if lockMsg ~= "" then lbl(lockInfo, lockMsg, 13, 392, 756, 300, 36, K.redHi, F.MB, nil, true) end
+end
+
+-- ----- v5.16 TITLES: your titles on the left, how it looks over your name + EQUIP / REMOVE + the player-card switch on the right -----
+local function titleCard(parent, id, order, w)
+	local t = Titles.ById[id]
+	local eq = player:GetAttribute("Title") == id
+	local on = selTitle == id
+	local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0, LayoutOrder = order, Size = UDim2.fromOffset(w, 170) }, parent)
+	local st = stroke(b, on and K.red or K.line, on and 2.5 or 1)
+	if not on then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
+	local well = box(b, 1, 1, w - 2, 110, K.void, 0.1)
+	Titles.Plate(well, id, 52)
+	lbl(b, string.upper(t.tier == "free" and "FREE" or t.tier == "souls" and "SOULS TITLE" or "PREMIUM TITLE"), 11, 15, 120, w - 28, 14, K.dim, F.MB)
+	if eq then chip(b, 14, 138, 100, 22, "EQUIPPED", rgb(14, 56, 36), K.green, K.green, 11) end
+	b.MouseButton1Click:Connect(function()
+		selTitle = id
+		lockMsg = ""
+		refreshLocker()
+	end)
+	return b
+end
+local function titleSide()
+	lockInfo = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, lockSide)
+	local prev = titlePreview(lockInfo, 694, 400, selTitle or player:GetAttribute("Title"))
+	prev.Position = UDim2.fromOffset(0, 0)
+	local cur = player:GetAttribute("Title") or ""
+	local t = selTitle and Titles.ById[selTitle]
+	lbl(lockInfo, t and t.text or "NO TITLE", 40, 2, 420, 690, 50, t and t.color or K.mute, F.H)
+	-- show on the player card (on / off)
+	local showT = PlayerCards.Read(player).showTitle ~= false
+	local tg = new("TextButton", { Text = "SHOW ON MY PLAYER CARD:  " .. (showT and "ON" or "OFF"), TextSize = 18, FontFace = F.H, TextColor3 = showT and K.green or K.text,
+		BackgroundColor3 = K.panel3, AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(2, 560), Size = UDim2.fromOffset(690, 50) }, lockInfo)
+	local tst = stroke(tg, showT and K.green or K.line2, 1)
+	hot(tg, K.panel3, K.panel2, tst, showT and K.green or K.line2, K.redHi)
+	tg.MouseButton1Click:Connect(function()
+		local ok, res, msg = pcall(function() return EquipR:InvokeServer("cardtitle", not showT) end)
+		lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+		if lockMsg ~= "" then refreshLocker() end
+	end)
+	if cur ~= "" then
+		local rm = bigButton(lockInfo, "REMOVE TITLE", 660, false, true)
+		rm.MouseButton1Click:Connect(function()
+			rm.Text = "..."
+			local ok, res = pcall(function() return EquipR:InvokeServer("title", "") end)
+			if not ok or res ~= true then rm.Text = "COULD NOT REMOVE" end
+		end)
+	end
+	if t then
+		local eq = cur == selTitle
+		local btn = bigButton(lockInfo, eq and "EQUIPPED" or "EQUIP", 740, eq)
+		btn.MouseButton1Click:Connect(function()
+			if eq then return end
+			btn.Text = "..."
+			local ok, res = pcall(function() return EquipR:InvokeServer("title", selTitle) end)
+			if not ok or res ~= true then btn.Text = "COULD NOT EQUIP" end
+		end)
+	end
+	if lockMsg ~= "" then lbl(lockInfo, lockMsg, 13, 2, 620, 690, 18, K.redHi, F.MB, Enum.TextXAlignment.Center) end
 end
 
 -- ----- PLAYER CARD: background + showcase + v5.12 free placement -----
@@ -1065,7 +1303,8 @@ local wireEditor -- v5.13: connects the editor's buttons (defined below, next to
 local repo = nil -- v5.13: the open REPOSITION view (or nil)
 local function buildEditor()
 	local d = myCard()
-	local key = d.card.bg .. "|" .. table.concat(d.card.show, ",") .. "|" .. tostring(d.level) .. "|" .. tostring(d.name)
+	local key = d.card.bg .. "|" .. table.concat(d.card.show, ",") .. "|" .. tostring(d.level) .. "|" .. tostring(d.name) .. "|" .. table.concat(d.card.poses or {}, ",")
+		.. "|" .. tostring(d.title) .. "|" .. tostring(d.card.showTitle) -- v5.16
 	if editor and editor.key == key and editor.root.Parent then
 		-- same background + same items: only move them (no rebuild, so nothing blinks)
 		for i, it in editor.items do it.apply(d.card.pos[i]) end
@@ -1307,7 +1546,8 @@ local function openRepo(slot)
 		R.BW, R.BH = BW, BH
 		local frame = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(CX, CY), Size = UDim2.fromOffset(BW, BH), BackgroundTransparency = 1 }, area)
 		stroke(frame, K.line, 1, 0.4) -- the shape of the showcase slot
-		local vp, cam = PlayerCards.MakeView(value, BW, BH, BW, BH, R.yaw, R.pitch)
+		R.pose = data.poses and data.poses[slot] or nil -- v5.16: a costume keeps its pose in the REPOSITION view
+		local vp, cam = PlayerCards.MakeView(value, BW, BH, BW, BH, R.yaw, R.pitch, R.pose)
 		if vp then
 			vp.AnchorPoint = Vector2.new(0.5, 0.5)
 			vp.Position = UDim2.fromOffset(CX, CY)
@@ -1322,7 +1562,7 @@ local function openRepo(slot)
 		if R.tilt then
 			R.tilt.set(R.yaw, R.pitch)
 		elseif R.cam then
-			local cf = PlayerCards.ViewCam(value, R.BW, R.BH, R.BW, R.BH, R.yaw, R.pitch)
+			local cf = PlayerCards.ViewCam(value, R.BW, R.BH, R.BW, R.BH, R.yaw, R.pitch, R.pose)
 			if cf then R.cam.CFrame = cf end
 		end
 		readout.Text = kind == "card" and ("LEFT / RIGHT %d    UP / DOWN %d"):format(math.floor(R.yaw + 0.5), math.floor(R.pitch + 0.5))
@@ -1385,7 +1625,7 @@ closeRepo = function()
 	updateHandles()
 end
 
-local FLEX_TABS = { { id = "skin", name = "PLAYER SKINS" }, { id = "gun", name = "GUN SKINS" }, { id = "card", name = "CARDS" } }
+local FLEX_TABS = { { id = "skin", name = "COSTUMES" }, { id = "gun", name = "GUN SKINS" }, { id = "card", name = "CARDS" } }
 local flexTab = "skin" -- v5.12: the picker under a showcase slot has three tabs instead of one long list
 
 local function cardSide()
@@ -1411,6 +1651,19 @@ local function cardSide()
 	resetAll.MouseButton1Click:Connect(function()
 		for i = 1, 3 do setPlace(i, PlayerCards.DefaultPlace(i)) commit(i) end
 	end)
+	-- v5.16: the title on your card (on / off) - only when you wear a title
+	if Titles.Is(player:GetAttribute("Title")) then
+		local showT = pcData.showTitle ~= false
+		local tb = new("TextButton", { Text = "TITLE ON CARD:  " .. (showT and "ON" or "OFF"), TextSize = 16, FontFace = F.H, TextColor3 = showT and K.green or K.text,
+			BackgroundColor3 = K.panel3, AutoButtonColor = false, BorderSizePixel = 0, Position = UDim2.fromOffset(322, 250), Size = UDim2.fromOffset(220, 36) }, lockInfo)
+		local tst = stroke(tb, showT and K.green or K.line2, 1)
+		hot(tb, K.panel3, K.panel2, tst, showT and K.green or K.line2, K.redHi)
+		tb.MouseButton1Click:Connect(function()
+			local ok, res, msg = pcall(function() return EquipR:InvokeServer("cardtitle", not showT) end)
+			lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+			if lockMsg ~= "" then refreshLocker() end
+		end)
+	end
 
 	lbl(lockInfo, "SHOWCASE", 28, 2, 300, 400, 40, K.text, F.H)
 	box(lockInfo, 2, 342, 690, 1, K.line)
@@ -1441,19 +1694,38 @@ local function cardSide()
 		rb.MouseButton1Click:Connect(function()
 			if has then openRepo(i) end
 		end)
+		-- v5.16 ADD POSE under REPOSITION when the slot holds a COSTUME: pick the pose it holds on your card
+		if PlayerCards.Parse(v) == "skin" then
+			local pz = pcData.poses[i] or ""
+			local onP = poseSlot == i
+			local pb = new("TextButton", { Text = pz ~= "" and ("POSE: " .. (Poses.ById[pz] and Poses.ById[pz].name or pz)) or "ADD POSE", TextSize = 16, FontFace = F.H,
+				TextColor3 = K.text, BackgroundColor3 = onP and rgb(40, 22, 26) or K.panel3, AutoButtonColor = false, BorderSizePixel = 0,
+				Position = UDim2.fromOffset(2 + (i - 1) * 236, 710), Size = UDim2.fromOffset(218, 36) }, lockInfo)
+			pb.TextTruncate = Enum.TextTruncate.AtEnd
+			local pst = stroke(pb, onP and K.red or K.line2, onP and 2 or 1)
+			if not onP then hot(pb, K.panel3, K.panel2, pst, K.line2, K.red) end
+			pb.MouseButton1Click:Connect(function()
+				poseSlot = (poseSlot == i) and nil or i
+				cardSlot = nil
+				lockMsg = ""
+				lockGrid.CanvasPosition = Vector2.zero
+				refreshLocker()
+			end)
+		end
 		b.MouseButton1Click:Connect(function()
 			if cardSlot == i then cardSlot = nil else cardSlot = i end
+			poseSlot = nil -- v5.16
 			editSel = PlayerCards.Parse(v) and i or editSel
 			lockMsg = ""
 			lockGrid.CanvasPosition = Vector2.zero
 			refreshLocker()
 		end)
 	end
-	if cardSlot then
-		local back = bigButton(lockInfo, "CHANGE BACKGROUND INSTEAD", 740, false, true)
-		back.MouseButton1Click:Connect(function() cardSlot = nil lockMsg = "" refreshLocker() end)
+	if cardSlot or poseSlot then
+		local back = bigButton(lockInfo, "CHANGE BACKGROUND INSTEAD", 754, false, true) -- v5.16: a bit lower (ADD POSE sits under REPOSITION)
+		back.MouseButton1Click:Connect(function() cardSlot = nil poseSlot = nil lockMsg = "" refreshLocker() end)
 	end
-	if lockMsg ~= "" then lbl(lockInfo, lockMsg, 13, 2, 818, 690, 18, K.redHi, F.MB, Enum.TextXAlignment.Center) end
+	if lockMsg ~= "" then lbl(lockInfo, lockMsg, 13, 2, 202, 690, 18, K.redHi, F.MB, Enum.TextXAlignment.Center) end
 end
 
 -- v5.12: the viewer on the right is KEPT between refreshes (it used to be destroyed and rebuilt after every click, so the model blinked);
@@ -1493,7 +1765,7 @@ function refreshLocker()
 			table.insert(items, { kind = "skin", id = showId, base = baseId, name = Skins.Get(baseId).name,
 				sub = (#cws > 0) and ("%d / %d COLOURWAYS"):format(n, #cws + 1) or "" })
 		end
-		lockSection("YOUR PLAYER SKINS", nil, 1)
+		lockSection("YOUR COSTUMES", nil, 1) -- v5.16: player skins are called COSTUMES
 		lockRow(2, items, 328)
 		if not (selectedLock and selectedLock.kind == "skin") then selectedLock = { kind = "skin", base = Cat.BaseOf(worn), variant = worn } end
 		if Cat.BaseOf(selectedLock.variant) ~= selectedLock.base or not Cat.OwnsSkin(player, selectedLock.variant) then selectedLock.variant = selectedLock.base end
@@ -1501,42 +1773,54 @@ function refreshLocker()
 		ensureViewer("skin", 1170, 214, 694, 430, { kind = "skin", id = selectedLock.variant }, "skin|" .. selectedLock.variant)
 		skinSide(selectedLock)
 	elseif lockTab == "gun" then
+		-- v5.16: one small TAB per gun side by side (like the shop's gun row) instead of every gun stacked under each other; click a gun = its skins
 		local ownedSet = {}
 		for _, id in Cat.OwnedGunSkins(player) do ownedSet[id] = true end
-		local order, any = 1, false
+		local counts = {}
 		for _, g in GunSkins.GunOrder do
-			local mine = {}
-			for _, sk in GunSkins.ForGun(g) do
-				if ownedSet[sk.id] then table.insert(mine, { kind = "gun", id = sk.id, name = sk.name, sub = sk.sub, gun = g, gunName = sk.gunName, glow = sk.glow }) end
-			end
-			if #mine > 0 then
-				any = true
-				local eqId = equippedOn(g)
-				local eqName = eqId and GunSkins.ById[eqId] and GunSkins.ById[eqId].name or "STOCK"
-				lockSection(GunSkins.GunNames[g], "ON THIS GUN NOW:  " .. eqName, order)
-				order += 1
-				table.insert(mine, 1, { kind = "gun", id = "STOCK", name = "STOCK", sub = GunSkins.GunNames[g], gun = g, gunName = GunSkins.GunNames[g] })
-				lockRow(order, mine, 328)
-				order += 1
-			end
+			counts[g] = 0
+			for _, sk in GunSkins.ForGun(g) do if ownedSet[sk.id] then counts[g] += 1 end end
 		end
-		if not any then
-			local e = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 120), LayoutOrder = 1 }, lockGrid)
-			lbl(e, "NO GUN SKINS YET", 34, 0, 20, 1040, 50, K.text, F.H)
-			selectedLock = nil
-		elseif not (selectedLock and selectedLock.kind == "gun") then
-			-- default: the gun you play with, or the first one you own skins for
-			local w = myWeapon()
-			local pick
-			for _, g in { w, table.unpack(GunSkins.GunOrder) } do
-				for _, sk in GunSkins.ForGun(g) do
-					if ownedSet[sk.id] and not pick then
-						local id = equippedOn(g) or sk.id
-						pick = { kind = "gun", id = id, gun = g, item = { kind = "gun", id = id, name = GunSkins.ById[id].name, sub = sk.sub, gun = g, gunName = sk.gunName, glow = sk.glow } }
-					end
-				end
-			end
-			selectedLock = pick
+		if not (lockGun and GunSkins.GunNames[lockGun]) then
+			lockGun = myWeapon()
+			if counts[lockGun] == 0 then for _, g in GunSkins.GunOrder do if counts[g] > 0 then lockGun = g break end end end
+		end
+		local bar = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 46), LayoutOrder = 1, AutomaticSize = Enum.AutomaticSize.Y }, lockGrid)
+		new("UIGridLayout", { CellSize = UDim2.fromOffset(122, 40), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder }, bar)
+		for i, g in GunSkins.GunOrder do
+			local on = g == lockGun
+			local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = on and K.panel3 or K.panel, BorderSizePixel = 0, LayoutOrder = i }, bar)
+			local st = stroke(b, on and K.red or K.line, on and 2 or 1)
+			if not on then hot(b, K.panel, K.panel2, st, K.line, K.line2) end
+			lbl(b, GunSkins.GunNames[g], 15, 10, 0, 84, 40, on and K.text or K.dim, F.H).TextTruncate = Enum.TextTruncate.AtEnd
+			lbl(b, tostring(counts[g]), 13, 92, 0, 22, 40, counts[g] > 0 and K.soulPale or K.mute, F.MB, Enum.TextXAlignment.Right)
+			b.MouseButton1Click:Connect(function()
+				if lockGun == g then return end
+				lockGun = g
+				selectedLock = nil
+				lockGrid.CanvasPosition = Vector2.zero
+				refreshLocker()
+			end)
+		end
+		local g = lockGun
+		local mine = { { kind = "gun", id = "STOCK", name = "STOCK", sub = GunSkins.GunNames[g], gun = g, gunName = GunSkins.GunNames[g] } }
+		for _, sk in GunSkins.ForGun(g) do
+			if ownedSet[sk.id] then table.insert(mine, { kind = "gun", id = sk.id, name = sk.name, sub = sk.sub, gun = g, gunName = sk.gunName, glow = sk.glow }) end
+		end
+		local eqId = equippedOn(g)
+		local eqName = eqId and GunSkins.ById[eqId] and GunSkins.ById[eqId].name or "STOCK"
+		lockSection(GunSkins.GunNames[g] .. " SKINS", "ON THIS GUN NOW:  " .. eqName, 2)
+		lockRow(3, mine, 328)
+		if #mine == 1 then
+			local e = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 60), LayoutOrder = 4 }, lockGrid)
+			lbl(e, "NO SKINS FOR THE " .. GunSkins.GunNames[g] .. " YET", 22, 0, 10, 1040, 36, K.mute, F.H)
+		end
+		if not (selectedLock and selectedLock.kind == "gun" and selectedLock.gun == g) then
+			local id = eqId or "STOCK"
+			local it = (id == "STOCK") and mine[1] or nil
+			if not it then for _, m in mine do if m.id == id then it = m end end end
+			it = it or mine[1]
+			selectedLock = { kind = "gun", id = it.id, gun = g, item = it }
 		end
 		lockGrid.CanvasPosition = keep
 		local sel = selectedLock and selectedLock.kind == "gun" and selectedLock.item
@@ -1547,9 +1831,67 @@ function refreshLocker()
 			lockViewer.destroy()
 			lockViewer = nil
 		end
+	elseif lockTab == "pose" then
+		-- v5.16 POSES
+		local list = Cat.OwnedPoses(player)
+		if not (selPose and Poses.Is(selPose)) then selPose = Poses.Wheel(player)[1] ~= "" and Poses.Wheel(player)[1] or list[1] end
+		lockSection("YOUR POSES", ("%d OWNED"):format(#list), 1)
+		lockRow(2, list, 250, poseCard, 270)
+		lockGrid.CanvasPosition = keep
+		if selPose then ensureViewer("pose", 1170, 214, 694, 350, { kind = "pose", id = selPose }, "pose|" .. selPose .. "|" .. wornSkin())
+		elseif lockViewer then lockViewer.destroy() lockViewer = nil end
+		poseSide()
+	elseif lockTab == "title" then
+		-- v5.16 TITLES
+		if lockViewer then lockViewer.destroy() lockViewer = nil end
+		local list = Cat.OwnedTitles(player)
+		if not (selTitle and Titles.Is(selTitle)) then
+			local cur = player:GetAttribute("Title")
+			selTitle = (Titles.Is(cur) and cur) or list[1]
+		end
+		lockSection("YOUR TITLES", ("%d OWNED"):format(#list), 1)
+		lockRow(2, list, 334, titleCard, 170)
+		lockGrid.CanvasPosition = keep
+		titleSide()
 	else -- card
 		if lockViewer then lockViewer.destroy() lockViewer = nil end
-		if cardSlot then
+		local pcNow = PlayerCards.Read(player)
+		if poseSlot and PlayerCards.Parse(pcNow.show[poseSlot]) ~= "skin" then poseSlot = nil end
+		if poseSlot then
+			-- v5.16 ADD POSE: the poses you own (+ NO POSE) for the costume in that slot
+			lockSection("POSE  //  SLOT " .. poseSlot .. "  //  " .. PlayerCards.ItemName(pcNow.show[poseSlot]), nil, 1)
+			local cur = pcNow.poses[poseSlot] or ""
+			local list = { "" }
+			for _, id in Cat.OwnedPoses(player) do table.insert(list, id) end
+			local slotNow = poseSlot
+			lockRow(2, list, 250, function(parent, id, order, w)
+				local on = cur == id
+				local b = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = K.panel2, BorderSizePixel = 0, LayoutOrder = order, Size = UDim2.fromOffset(w, 250) }, parent)
+				local st = stroke(b, on and K.green or K.line, on and 2 or 1)
+				if not on then hot(b, K.panel2, rgb(30, 33, 40), st, K.line, K.line2) end
+				local well = box(b, 1, 1, w - 2, 196, K.void, 0.1)
+				new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(20, 24, 32), rgb(8, 9, 12)) }, well)
+				local _, skinId = PlayerCards.Parse(pcNow.show[slotNow])
+				if id ~= "" then
+					task.defer(function()
+						if not well.Parent then return end
+						local vp = PlayerCards.MakeView(pcNow.show[slotNow], w - 2, 196, w - 2, 196, nil, nil, id)
+						if vp then vp.Parent = well end
+					end)
+				else
+					queueThumb(well, { kind = "skin", id = skinId })
+				end
+				lbl(b, id == "" and "NO POSE" or Poses.ById[id].name, 18, 12, 202, w - 24, 24, K.text, F.H)
+				if on then lbl(b, "ON THIS COSTUME", 10, 13, 226, w - 24, 14, K.green, F.MB) end
+				b.MouseButton1Click:Connect(function()
+					if on then return end
+					local ok, res, msg = pcall(function() return EquipR:InvokeServer("cardpose", slotNow, id) end)
+					lockMsg = (ok and res == true) and "" or ((ok and msg) or "Could not reach the server.")
+					if lockMsg ~= "" then refreshLocker() end
+				end)
+				return b
+			end, 250)
+		elseif cardSlot then
 			-- the slot, then three tabs (PLAYER SKINS / GUN SKINS / CARDS) and only the open tab's items (was one long list)
 			lockSection("SHOWCASE  //  SLOT " .. cardSlot, nil, 1)
 			local bar = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(1040, 56), LayoutOrder = 2 }, lockGrid)
@@ -1607,7 +1949,7 @@ for _, t in LOCK_TABS do
 	lockTabBtns[t.id].b.MouseButton1Click:Connect(function()
 		if lockTab == t.id then return end
 		lockTab = t.id
-		selectedLock, cardSlot, lockMsg, editSel = nil, nil, "", nil
+		selectedLock, cardSlot, lockMsg, editSel, poseSlot = nil, nil, "", nil, nil
 		lockGrid.CanvasPosition = Vector2.zero
 		refreshLocker()
 	end)
@@ -1631,7 +1973,8 @@ local function openShop()
 	pv.Visible = false
 	shopSide = "essence" -- v5.12: the shop always opens on the ESSENCE SHOP
 	for _, p in panels do p.scroll.CanvasPosition = Vector2.zero end
-	if pendingPreview then shopTab = (pendingPreview.kind == "gun" and "gun") or (pendingPreview.kind == "banner" and "banner") or "skin" end
+	if pendingPreview then shopTab = (pendingPreview.kind == "gun" and "gun") or (pendingPreview.kind == "banner" and "banner") or (pendingPreview.kind == "pose" and "pose")
+		or (pendingPreview.kind == "title" and "title") or "skin" end
 	refreshShop()
 	updateButton()
 	if pendingPreview then
@@ -1690,7 +2033,7 @@ player:GetAttributeChangedSignal("CosmeticsOpen"):Connect(function()
 		openShop()
 	elseif v == "card" then
 		if shopOpen then closeShop() end
-		lockTab, selectedLock, cardSlot, lockMsg, editSel = "card", nil, nil, "", nil
+		lockTab, selectedLock, cardSlot, lockMsg, editSel, poseSlot = "card", nil, nil, "", nil, nil
 		if lockerOpen then refreshLocker() else openLocker() end
 	elseif lockerOpen then closeLocker() elseif not shopOpen then openLocker() end
 end)
@@ -1712,13 +2055,14 @@ local function softRefresh()
 		if shopOpen then refreshShop() elseif lockerOpen then refreshLocker() end
 	end)
 end
-for _, a in { "Souls", "Essence", "Skin", "SkinsOwnedJson", "GunSkinsOwnedJson", "GunSkinsJson", "BannersOwnedJson", "CardsJson", "Level" } do
+for _, a in { "Souls", "Essence", "Skin", "SkinsOwnedJson", "GunSkinsOwnedJson", "GunSkinsJson", "BannersOwnedJson", "CardsJson", "Level",
+	"PosesOwnedJson", "PoseWheelJson", "TitlesOwnedJson", "Title" } do -- v5.16: + poses / wheel / titles
 	player:GetAttributeChangedSignal(a):Connect(softRefresh)
 end
 -- v5.12: when only the PLACEMENT of the showcase items changed (the server echoing a move), just move them on the editor card - no page rebuild
 local function cardSig()
 	local d = PlayerCards.Read(player)
-	return d.bg .. "|" .. table.concat(d.show, ",")
+	return d.bg .. "|" .. table.concat(d.show, ",") .. "|" .. table.concat(d.poses, ",") .. "|" .. tostring(d.showTitle) -- v5.16: + poses + title switch
 end
 local lastCardSig = cardSig()
 player:GetAttributeChangedSignal("PlayerCardJson"):Connect(function()
