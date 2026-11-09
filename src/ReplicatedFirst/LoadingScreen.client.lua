@@ -1,4 +1,5 @@
--- LoadingScreen v3.3 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- LoadingScreen v3.4 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
+-- v5.16: the match starts 10 s after the last player has loaded (MatchConfig.LOAD_HOLD 15 -> 10), so MIN_SHOW is 10 too.
 -- v5.15 FIX (owner: "the loading screen never goes away, it stays there even after the 15 seconds have passed and everyone has loaded in, the game
 --        goes on without you"): the wait loop at the end used `os.clock() - t0`, but `t0` only existed as a local inside the logo fade task, so here it
 --        was an undefined global (nil). While the phase was Waiting the check was skipped; the moment the server moved on to Pregame it ran
@@ -10,7 +11,7 @@
 --        and no push-in when the screen leaves (it just fades). It is shown as zoomed OUT as it can be while still filling the whole screen with no
 --        empty space: Size 1 x 1 + ScaleType Crop (before: 106 % and growing, so the edges were always cut off a bit more than needed).
 -- v5.10: (1) the picture is loaded with UIKit.LoadImage, which checks that it REALLY loaded and falls back to a thumbnail link of the same asset id (the black picture bug);
---        the link that worked is saved as the Player attribute MapImageSrc so the Warp reuses it. (2) the screen stays at least MIN_SHOW = 15 s, and once everybody has loaded
+--        the link that worked is saved as the Player attribute MapImageSrc so the Warp reuses it. (2) the screen stays at least MIN_SHOW = 10 s (v5.16, was 15), and once everybody has loaded
 --        it counts down the server's hold (MatchConfig.LOAD_HOLD) as MATCH STARTS IN n.
 -- LoadingScreen v3 (LocalScript in ReplicatedFirst) - BREAKLINE place only.
 -- v5.8: MAP LOADING SCREEN. Instead of the black logo screen, the picked map's own picture fills the whole screen (a watercolour +
@@ -41,7 +42,7 @@ gui.DisplayOrder = 1000
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = pg
 local shownAt = os.clock() -- v5.15: when the screen appeared (MIN_SHOW counts from here; this was the missing `t0`)
-local MIN_SHOW = 15 -- v5.10: at least 15 s on screen (was 3.5)
+local MIN_SHOW = 10 -- v5.16: at least 10 s on screen (v5.10: 15, before: 3.5) - matches MatchConfig.LOAD_HOLD
 local FAILSAFE = 3 -- v5.15: the screen is closed at the latest this many seconds after the phase left Waiting (once MIN_SHOW has passed)
 
 local root = Instance.new("CanvasGroup") -- everything lives in here so the whole screen can fade as one
