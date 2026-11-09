@@ -1,4 +1,7 @@
--- PlayerCards v3 (ModuleScript in ReplicatedStorage, named "PlayerCards") - LOBBY place only. NEW in v5.11, v2 in v5.12, v3 in v5.13.
+-- PlayerCards v4 (ModuleScript in ReplicatedStorage, named "PlayerCards") - LOBBY place only. NEW in v5.11, v2 in v5.12, v3 in v5.13, v4 in v5.16.
+-- v5.16: (1) a COSTUME in a showcase slot can hold a POSE (PlayerCard.poses = { 3 x pose id / "" }, set with ADD POSE in the cosmetics locker); the
+--   item pictures are cached per item + pose (PC.MakeView / ViewCam / BuildItem / ShowcaseItem take the pose as their last argument). (2) the TITLE
+--   the player wears (data.title, Titles module) sits above the name when PlayerCard.showTitle is on (default on). PC.Read returns poses + showTitle.
 -- v5.13 (owner Nov 7): (1) every showcase item also keeps the ANGLE the player gave it in the REPOSITION view: placement fields yaw / pitch (degrees).
 --   A skin / gun skin is turned any way (yaw all round, pitch up to PC.PITCH_MAX), exactly like the drag-to-turn in the cosmetics shop, and re-fitted
 --   into its box at that angle. A power-up card can only lean a little (PC.CARD_TILT degrees left / right / up / down): it is drawn as a real
@@ -281,7 +284,8 @@ function PC.CleanPlace(t, i, kind)
 end
 
 function PC.Read(player)
-	local out = { bg = PC.Default, show = { "", "", "" }, pos = { PC.DefaultPlace(1), PC.DefaultPlace(2), PC.DefaultPlace(3) } }
+	local out = { bg = PC.Default, show = { "", "", "" }, pos = { PC.DefaultPlace(1), PC.DefaultPlace(2), PC.DefaultPlace(3) },
+		poses = { "", "", "" }, showTitle = true } -- v5.16: + the pose each showcase COSTUME holds, + the title switch
 	local raw = player and player:GetAttribute("PlayerCardJson")
 	if type(raw) == "string" and raw ~= "" then
 		local ok, t = pcall(HttpService.JSONDecode, HttpService, raw)
@@ -293,6 +297,13 @@ function PC.Read(player)
 			if type(t.pos) == "table" then
 				for i = 1, 3 do out.pos[i] = PC.CleanPlace(t.pos[i], i, (PC.Parse(out.show[i]))) end
 			end
+			if type(t.poses) == "table" then -- v5.16
+				for i = 1, 3 do
+					local pz = t.poses[i]
+					if type(pz) == "string" and PC.Parse(out.show[i]) == "skin" then out.poses[i] = pz end
+				end
+			end
+			if type(t.showTitle) == "boolean" then out.showTitle = t.showTitle end
 		end
 	end
 	return out
@@ -332,7 +343,7 @@ end
 -- (a new background, an equip somewhere else, a party change) shows its models in the same frame - nothing blinks out and back in.
 local TPL_MAX = 60
 local tpl, tplOrder = {}, {}
-local function buildTemplate(value)
+local function buildTemplate(value, pose)
 	mods()
 	local kind, id = PC.Parse(value)
 	if kind ~= "skin" and kind ~= "gun" then return nil end
@@ -344,7 +355,10 @@ local function buildTemplate(value)
 	local dir, fov, pad
 	if kind == "skin" then
 		if not Skins.Is(id) then vp:Destroy() return nil end
-		local ok, fig = pcall(Skins.NewFigure, model, id, { static = true })
+		-- v5.16: a costume can hold a POSE on the card (an animated pose is shown at its picture moment, Poses.ById[pose].still)
+		local P = (pose and pose ~= "") and RS:FindFirstChild("Poses") and require(RS.Poses) or nil
+		local pd = P and P.ById[pose] or nil
+		local ok, fig = pcall(Skins.NewFigure, model, id, { static = true, pose = pd and pose or nil, poseT = pd and (pd.still or 0) or nil })
 		if ok and fig then pcall(fig.Update, fig, 0, 0) end
 		dir, fov, pad = Vector3.new(0.28, 0.1, 1), 22, 0.06
 	else
@@ -381,18 +395,19 @@ local function buildTemplate(value)
 	for i, q in pts do rel[i] = q - center end
 	return { vp = vp, rel = rel, center = center, rot = rot, fov = fov, pad = pad }
 end
-local function template(value)
-	local e = tpl[value]
+local function template(value, pose)
+	local key = value .. "|" .. tostring(pose or "") -- v5.16: one template per item + pose
+	local e = tpl[key]
 	if e then
-		local i = table.find(tplOrder, value)
+		local i = table.find(tplOrder, key)
 		if i then table.remove(tplOrder, i) end
-		table.insert(tplOrder, value)
+		table.insert(tplOrder, key)
 		return e
 	end
-	e = buildTemplate(value)
+	e = buildTemplate(value, pose)
 	if not e then return nil end
-	tpl[value] = e
-	table.insert(tplOrder, value)
+	tpl[key] = e
+	table.insert(tplOrder, key)
 	while #tplOrder > TPL_MAX do
 		local k = table.remove(tplOrder, 1)
 		local old = tpl[k]
@@ -432,15 +447,15 @@ local function fitCam(e, rot, boxW, boxH, vpW, vpH, pad)
 	return CFrame.new(e.center) * rot * CFrame.new(ox, oy, dist)
 end
 -- v5.13: just the camera for a skin / gun skin at a REPOSITION angle (the REPOSITION view calls it every frame while you turn the model)
-function PC.ViewCam(value, boxW, boxH, vpW, vpH, yaw, pitch)
-	local e = template(value)
+function PC.ViewCam(value, boxW, boxH, vpW, vpH, yaw, pitch, pose)
+	local e = template(value, pose)
 	if not e then return nil end
 	return fitCam(e, viewRot(e, yaw, pitch), boxW, boxH, vpW, vpH, e.pad)
 end
 -- a ViewportFrame (vpW x vpH) showing a skin / gun skin fitted into a boxW x boxH box in its middle. Returns vp, camera, base camera CFrame.
 -- v5.13: yaw / pitch = the REPOSITION angle (0, 0 = the old default view)
-function PC.MakeView(value, boxW, boxH, vpW, vpH, yaw, pitch)
-	local e = template(value)
+function PC.MakeView(value, boxW, boxH, vpW, vpH, yaw, pitch, pose)
+	local e = template(value, pose)
 	if not e then return nil end
 	local vp = e.vp:Clone()
 	local cam = vp:FindFirstChildOfClass("Camera")
@@ -453,7 +468,7 @@ function PC.MakeView(value, boxW, boxH, vpW, vpH, yaw, pitch)
 end
 
 -- one item fitted into a frame (shop / locker thumbnails)
-function PC.ShowcaseItem(slot, v, sw, sh)
+function PC.ShowcaseItem(slot, v, sw, sh, pose)
 	mods()
 	local kind, id = PC.Parse(v)
 	if not kind then return nil end
@@ -470,7 +485,7 @@ function PC.ShowcaseItem(slot, v, sw, sh)
 		end
 		return holder
 	end
-	local vp = PC.MakeView(v, w, hgt, w, hgt)
+	local vp = PC.MakeView(v, w, hgt, w, hgt, nil, nil, pose)
 	if not vp then return nil end
 	vp.AnchorPoint = Vector2.new(0.5, 0.5)
 	vp.Position = UDim2.fromScale(0.5, 0.5)
@@ -562,7 +577,7 @@ end
 -- Cards turn with the GUI Rotation. A ViewportFrame cannot be rotated, so a 3D item sits in a square viewport big enough for any turn
 -- (the diagonal of its box) and the CAMERA rolls instead - it looks exactly the same.
 -- Returns { holder, kind, apply(place), place } or nil.
-function PC.BuildItem(parent, v, place, z)
+function PC.BuildItem(parent, v, place, z, pose)
 	mods()
 	local kind, id = PC.Parse(v)
 	if not kind then return nil end
@@ -585,7 +600,7 @@ function PC.BuildItem(parent, v, place, z)
 	else
 		local p0 = place or PC.DefaultPlace(1)
 		local vp
-		vp, cam, base = PC.MakeView(v, SW, SH, D, D, p0.yaw, p0.pitch)
+		vp, cam, base = PC.MakeView(v, SW, SH, D, D, p0.yaw, p0.pitch, pose)
 		if not vp then holder:Destroy() return nil end
 		baseKey = tostring(p0.yaw or 0) .. ":" .. tostring(p0.pitch or 0)
 		vp.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -601,7 +616,7 @@ function PC.BuildItem(parent, v, place, z)
 			-- v5.13: a new REPOSITION angle = re-fit the model at that angle (only when it changed)
 			local key = tostring(p.yaw or 0) .. ":" .. tostring(p.pitch or 0)
 			if key ~= baseKey then
-				base = PC.ViewCam(v, SW, SH, D, D, p.yaw, p.pitch) or base
+				base = PC.ViewCam(v, SW, SH, D, D, p.yaw, p.pitch, pose) or base
 				baseKey = key
 			end
 			cam.CFrame = base * CFrame.Angles(0, 0, math.rad(p.r)) -- camera roll = the picture turns clockwise by r
@@ -663,7 +678,7 @@ function PC.Render(parent, data, width)
 		local v = cd.show and cd.show[i] or ""
 		if PC.Parse(v) then
 			local place = (cd.pos and cd.pos[i]) or PC.DefaultPlace(i)
-			local ok, it = pcall(PC.BuildItem, card, v, place, 2 + i)
+			local ok, it = pcall(PC.BuildItem, card, v, place, 2 + i, cd.poses and cd.poses[i] or nil) -- v5.16: + the pose of a costume
 			if ok and it then items[i] = it elseif not ok then warn("[PlayerCards] item", v, it) end
 		end
 	end
@@ -675,7 +690,17 @@ function PC.Render(parent, data, width)
 		Image = data.userId and ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(data.userId) or "" }, card)
 	new("UIStroke", { Color = Color3.new(1, 1, 1), Thickness = 2, Transparency = 0.55 }, av)
 	local right = avX - 14
-	local row = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 20), Size = UDim2.fromOffset(460, 46), BackgroundTransparency = 1, ZIndex = 10 }, card)
+	-- v5.16 TITLE above the name (data.title = the Titles id the player wears; shown when the card's showTitle switch is on)
+	local Tm = RS:FindFirstChild("Titles") and require(RS.Titles) or nil
+	local tdef = Tm and data.title and Tm.ById[data.title] or nil
+	local showT = tdef ~= nil and cd.showTitle ~= false
+	local TY = showT and 16 or 0
+	if showT then
+		local tl = new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 12), Size = UDim2.fromOffset(460, 20),
+			Text = tdef.text, TextSize = 17, FontFace = F.H, TextColor3 = tdef.color, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 11 }, card)
+		new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.35 }, tl)
+	end
+	local row = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 20 + TY), Size = UDim2.fromOffset(460, 46), BackgroundTransparency = 1, ZIndex = 10 }, card)
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right,
 		VerticalAlignment = Enum.VerticalAlignment.Bottom, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 10) }, row)
 	local nm = new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 46), Text = string.upper(data.name or ""),
@@ -688,7 +713,7 @@ function PC.Render(parent, data, width)
 		TextSize = 25, FontFace = F.H, TextColor3 = K.text, ZIndex = 11, LayoutOrder = 2 }, row)
 	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.4 }, lvT)
 	if data.username then
-		local un = new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 66), Size = UDim2.fromOffset(460, 20),
+		local un = new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 66 + TY), Size = UDim2.fromOffset(460, 20),
 			Text = "@" .. data.username, TextSize = 15, FontFace = F.MB, TextColor3 = K.dim, TextXAlignment = Enum.TextXAlignment.Right,
 			TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11 }, card)
 		new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1, Transparency = 0.45 }, un)
