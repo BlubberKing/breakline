@@ -1,4 +1,4 @@
--- MoveAnim v3.2 (v4.9: new grenade-ready hold pose + a real 3-beat throw - cock, whip, follow-through - and an underhand toss, timed to the release) (was v3.1 v4.7: crouch + slide GROUND CLEARANCE - the lowest part of the body is measured every frame and the body is lifted until nothing sinks into the floor; slide wobble removed (no more shaking right hand / swaying body)) (v3: v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
+-- MoveAnim v3.3 (v5.16: stands down while a character holds a POSE - PoseClient animates it) (v3.2 v4.9: new grenade-ready hold pose + a real 3-beat throw - cock, whip, follow-through - and an underhand toss, timed to the release) (was v3.1 v4.7: crouch + slide GROUND CLEARANCE - the lowest part of the body is measured every frame and the body is lifted until nothing sinks into the floor; slide wobble removed (no more shaking right hand / swaying body)) (v3: v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
 -- (v2 header:) MoveAnim v2 (v4.5: smooth distance-driven stride, big arm swing, new slide + dust) - was v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games. NEW in v4.1. Keep the two copies identical.
 -- Real animations for WALKING, RUNNING (sprint), CROUCHING (idle + crouch-walk) and SLIDING, for EVERY player (what you see on other people; in the
 -- Lobby you also see your own). It drives the R15 joint Transforms procedurally AFTER the Animator (RunService.Stepped), blending from whatever the
@@ -163,6 +163,7 @@ local function frame(st, dt)
 	-- arms belong to ThirdPersonClient's IK only while the gun is really in the hands
 	local hasGun = char:FindFirstChild("TPGun") ~= nil and not held and not soulCarry and not reviving and not boxCarry
 	local busy = dead or mode ~= nil or char:GetAttribute("Mantling") == true or hum.Sit
+		or char:GetAttribute("Pose") ~= nil -- v5.16: PoseClient owns every joint while the character holds a pose
 
 	-- weights (all eased, with a dead zone so they never flicker around a threshold)
 	local moving = grounded and hs > 2 and not busy
@@ -432,7 +433,10 @@ RunService.Stepped:Connect(function(_, dt)
 		local char = plr.Character
 		if char then
 			local st = getState(char)
-			if st then frame(st, dt) armPoses(st) end
+			if st then
+				frame(st, dt)
+				if char:GetAttribute("Pose") == nil then armPoses(st) end -- v5.16: not over a pose
+			end
 		end
 	end
 end)
