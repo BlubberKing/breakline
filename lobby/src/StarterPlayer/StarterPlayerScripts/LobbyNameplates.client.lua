@@ -1,3 +1,4 @@
+-- LobbyNameplates v2.2 (v5.16: the equipped TITLE (Titles module, Player attribute Title) shows as a small coloured line right above the name)
 -- LobbyNameplates v2.1 (v5.12: the crown sits close above the head (CROWN_Y 4.5 -> 1.45) and the nameplate moves up over it while a crown shows;
 --   the xN streak text is sized in STUDS now, so it always stays outside the crown at its upper right (in pixels it slid into the crown from far away)) (v2 v5.10: WIN-STREAK CROWN - a gold crown floats (bobbing + turning) well above the nameplate of everyone who is on a winning streak, with the streak
 --   (x2, x5 ...) in small text at its upper right, angled. The streak = Player attribute "Streak" (ProfileStore: +1 per win in any mode, back to 0 on a loss), so the crown
@@ -10,6 +11,7 @@ local RunService = game:GetService("RunService")
 local UI = require(RS:WaitForChild("UIKit"))
 local K, F = UI.C, UI.F
 local Crown = require(RS:WaitForChild("Crown"))
+local Titles = RS:FindFirstChild("Titles") and require(RS.Titles) or nil -- v5.16: the TITLE line above the name
 
 -- ===== v5.10: win-streak crown =====
 local CROWN_Y = 1.45 -- v5.12: studs above the head's centre = just over the head / helmet (was 4.5, floating far above the nameplate)
@@ -81,7 +83,7 @@ local function build(plr, char)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "Nameplate"
 	bb.Adornee = head
-	bb.Size = UDim2.fromOffset(300, 34)
+	bb.Size = UDim2.fromOffset(320, 84) -- v5.16: taller (the name row stays in the middle, the TITLE line sits above it)
 	bb.StudsOffsetWorldSpace = Vector3.new(0, 2.5, 0)
 	bb.AlwaysOnTop = false
 	bb.MaxDistance = 90
@@ -89,7 +91,18 @@ local function build(plr, char)
 	bb.ResetOnSpawn = false
 	bb.Parent = char
 
-	local row = UI.new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, bb)
+	local row = UI.new("Frame", { Position = UDim2.fromOffset(0, 25), Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1 }, bb)
+	-- v5.16 TITLE (the one the player equipped in the cosmetics locker), small and coloured by its tier, right above the name
+	local titleL = UI.new("TextLabel", { Name = "Title", BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 2), Size = UDim2.new(1, 0, 0, 22), Text = "",
+		TextSize = 18, FontFace = F.H, TextColor3 = K.text, Visible = false }, bb)
+	UI.new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.3 }, titleL)
+	local function updTitle()
+		local t = Titles and Titles.ById[plr:GetAttribute("Title")] or nil
+		titleL.Visible = t ~= nil
+		if t then titleL.Text, titleL.TextColor3 = t.text, t.color end
+	end
+	updTitle()
+	local c3 = plr:GetAttributeChangedSignal("Title"):Connect(updTitle)
 	UI.new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center,
 		VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8) }, row)
 
@@ -108,7 +121,7 @@ local function build(plr, char)
 	upd()
 	local c = plr:GetAttributeChangedSignal("Level"):Connect(upd)
 	local c2 = plr:GetAttributeChangedSignal("Streak"):Connect(function() updateCrown(plr, char, head) end)
-	bb.AncestryChanged:Connect(function(_, parent) if not parent then c:Disconnect() c2:Disconnect() end end)
+	bb.AncestryChanged:Connect(function(_, parent) if not parent then c:Disconnect() c2:Disconnect() c3:Disconnect() end end)
 	updateCrown(plr, char, head)
 	-- the profile can load a moment after the character: look again until the streak is known
 	task.spawn(function()
