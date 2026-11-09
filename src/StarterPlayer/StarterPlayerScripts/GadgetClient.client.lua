@@ -1,3 +1,4 @@
+-- GadgetClient (v5.16: a POSE puts the held gadget away and blocks gadgets until it ends)
 -- GadgetClient v2.1 (v4.9: STRONGER THROWS - fast flat throw with light in-flight gravity, released from the throwing hand, RIGHT CLICK = underhand toss;
 --   new first-person hold pose + keyframed throw: cock back, whip forward (item leaves the hand at the whip), follow-through, next one rises) (was v2: LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v4.0, reworked in v4.1.
 -- v4.1: gadgets are EQUIPPED (your gun is swapped for the item, like in Call of Duty / The Finals):
@@ -66,6 +67,7 @@ local function blockedNow()
 	if player:GetAttribute("Carrying") == true or player:GetAttribute("CarryingSoul") == true then return true end
 	if c:GetAttribute("AbilityMode") == "climb" or c:GetAttribute("Revealing") == true or c:GetAttribute("Reviving") == true then return true end
 	if player:GetAttribute("IsDead") == true then return true end
+	if c:GetAttribute("Pose") ~= nil then return true end -- v5.16: holding a pose puts the gadget away (and none can be pulled out)
 	if MatchState and MatchState:GetAttribute("Phase") ~= "Playing" then return true end
 	return false
 end
