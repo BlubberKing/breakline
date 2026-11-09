@@ -6,7 +6,7 @@ local C = {}
 C.MIN_PLAYERS  = 1   -- players needed to start a round (raise to 2-6 for live games; 1 lets you test alone)
 -- Flow: Waiting (loading screen) -> Pregame -> Warp (cutscene) -> Cards (v4.3: roll + pick a power-up card) -> Countdown -> Playing -> SlowMo -> Result (winner cutscene) -> Summary (souls screen)
 C.READY_TIMEOUT  = 40  -- seconds to wait for slow clients to finish loading before starting without them
-C.LOAD_HOLD      = 15  -- v5.10: the map loading screen stays up this many seconds AFTER everybody has loaded (so people can enjoy the picture). Clients also keep it at least this long since they joined.
+C.LOAD_HOLD      = 10  -- v5.16: 10 s (was 15). The map loading screen stays up this many seconds AFTER everybody has loaded, then the match starts. Clients also keep it at least this long since they joined.
 C.PREGAME_TIME   = 20  -- pre-game screen (loadout + clock)
 C.WARP_TIME      = 5.6 -- v5.9: soul flies through the map's watercolor painting + white flash (MatchFlow is timed to this: keep it at 5.6)
 C.COUNTDOWN_TIME = 3   -- 3-2-1 on the map, everybody frozen
@@ -20,6 +20,13 @@ C.SLOWMO_RAMP    = 0.5 -- seconds to ease from normal speed down to SLOWMO_SCALE
 C.RESULT_TIME    = 5   -- winner cutscene (winners sit on thrones) before the souls screen
 C.SUMMARY_MAX    = 60  -- the server never waits longer than this for players to press CONTINUE
 C.SUMMARY_AUTO   = 15  -- the client presses CONTINUE for you this many seconds after the soul count finished
+-- v5.16 MOUSE SENSITIVITY in the match (owner: "same Roblox sensitivity as other gun games, but here the guns move way too easily").
+-- UserInputService.MouseDeltaSensitivity is a multiplier ON TOP of the player's own Roblox sensitivity setting: 1 = raw Roblox, lower = slower.
+-- Applied every frame by GunClient (also while aiming / scoped) and when MatchFlow hands the camera back. Tune this one number.
+C.MOUSE_SENS     = 0.55
+-- v5.16: phases in which nobody can move, shoot, use a gadget or pose (loading, loadout screen, cutscene, card roll, 3-2-1). MatchServer anchors
+-- every character in these phases; GunClient ignores the mouse / R and plays no sound until the phase is Playing.
+C.LOCKED_PHASES  = { Waiting = true, Pregame = true, Warp = true, Cards = true, Countdown = true }
 
 -- ===== souls earned per match (multipliers stack on the base) =====
 C.REWARD = {
