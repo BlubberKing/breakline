@@ -1,0 +1,1134 @@
+-- GunClient (LOBBY copy, NEW in v5.17: the TRAINING ZONE) - the SAME file as Breakline's GunClient. It lives in ReplicatedStorage > TrainingClients (a LocalScript that does NOT run there);
+--   TrainingClient clones it into your character when you walk into the training zone and destroys it when you leave (GunClient cleans up after itself on destroy).
+-- GunClient (v5.17: SETTINGS - mouse + aim sensitivity, field of view and screen shake read from ReplicatedStorage.Settings) (v5.16: LOWER SENSITIVITY - MatchConfig.MOUSE_SENS multiplies your Roblox setting (0.55); NO SHOOTING before the match starts - clicks, R and
+--   aiming are ignored and no gun sound plays while loading / on the loadout screen / in the cutscene / card roll / 3-2-1 (MatchConfig.LOCKED_PHASES);
+--   POSES - while your character holds a pose (character attribute Pose, PoseClient) the gun is put away and your body is not hidden)
+-- GunClient (v5.14: DEEP POCKETS extra magazine at the start of every life + HOT BARREL fire rate after a kill, from ReplicatedStorage.CardEffects)
+-- GunClient v3.4 (GUN FEEL): Rivals-style recoil. Only guns with Recoil = "Climb" (WeaponConfig; the AK-47) really move your aim. Every other
+--       gun is "Kick": the bullet goes exactly where the crosshair was, while the viewmodel + camera still kick, flinch and settle for feel
+--       (the camera flinch and getting hit never move your aim any more). Also: stylish draw animations per gun (Swing / Flip / Twirl /
+--       Heavy), springy ADS in / out, sprint in / out swing, reload start / finish snap, crosshair pulse, a softer hitmarker (HitFX).
+-- GunClient v3.3: first-person gun for ANY weapon in WeaponConfig (models from GunModels).
+-- v3.3: never changes mouse sensitivity (your Roblox setting is used as-is, hip and aim); the old ammo panel is gone,
+--       ammo/weapon info is published as local Player attributes (HUDWeapon, HUDAmmo, HUDMag, HUDReload, HUDMode) for MatchHUD.
+-- Live weapon/sight switching via Player attributes "Weapon" / "Sight" (set by the server, see GunServer).
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local RS = game:GetService("ReplicatedStorage")
+local Debris = game:GetService("Debris")
+local CAS = game:GetService("ContextActionService")
+
+local player = Players.LocalPlayer
+local character = script.Parent
+local humanoid = character:WaitForChild("Humanoid")
+local root = character:WaitForChild("HumanoidRootPart")
+local camera = workspace.CurrentCamera
+
+local Weapons = require(RS:WaitForChild("WeaponConfig"))
+local GunMath = require(RS:WaitForChild("GunMath"))
+local Spring = require(RS:WaitForChild("Spring"))
+local GunModels = require(RS:WaitForChild("GunModels"))
+local GunSkins = RS:FindFirstChild("GunSkins") and require(RS.GunSkins) or nil -- v5.10: the skin you painted on this gun in the lobby
+local Sfx = require(RS:WaitForChild("Sfx"))
+local TimeScale = require(RS:WaitForChild("TimeScale"))
+local HitFX = require(RS:WaitForChild("HitFX"))
+local CardFx = require(RS:WaitForChild("CardEffects")) -- v5.14: DEEP POCKETS (extra magazine) + HOT BARREL (fire rate) match the server
+local pocketsReady = true -- DEEP POCKETS: this script runs once per life, the extra magazine is handed out once
+local gunUntouched = true -- no shot / reload yet this life (the card can arrive after the spawn)
+local Remotes = RS:WaitForChild("GunRemotes")
+local FireRemote, ReloadRemote = Remotes:WaitForChild("Fire"), Remotes:WaitForChild("Reload")
+local HitConfirm, ShotFX, DamagedRemote = Remotes:WaitForChild("HitConfirm"), Remotes:WaitForChild("ShotFX"), Remotes:WaitForChild("Damaged")
+
+local VM_SCALE = 0.78 -- viewmodel gun size (v3.7: 0.85 -> 0.78, guns read too big)
+-- v3.7 ADS fit: the sight now sits closer to your eye and the gun is pulled in tight, so you look DOWN the gun instead of seeing
+-- its whole length out in front of you. ADS_EYE_MULT scales the eye distance of irons / red dot / holo (zoom scopes keep theirs);
+-- lower = gun closer to your face. ADS_EYE_MIN keeps it out of the camera's near plane.
+local ADS_EYE_MULT, ADS_EYE_MIN = 0.7, 0.22
+local BASE_FOV, SPRINT_FOV, SLIDE_FOV_ADD = 75, 86, 7
+-- v5.6 SATISFYING ADS: while aiming the gun stays glued in place. 1 = same kick as the hip, 0 = none. Tune these.
+local ADS_KICK_SIDE = 0.07  -- viewmodel sideways / up-down shake (the left-right "centimeters")
+local ADS_KICK_BACK = 0.30  -- viewmodel push straight back (the tiny satisfying kick)
+local ADS_KICK_ROT = 0.06   -- viewmodel muzzle flip / twist (this is what used to swing the scope around)
+local ADS_CAM_PUNCH = 0.10  -- camera flinch
+local ADS_FOV_PUNCH = 0.25  -- zoom pulse per shot
+local RELOAD_SPRINT_HOLD = 0.85 -- 0..1: how much of the sprint pose a reload drops (1 = gun stays exactly at the hip hold)
+local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
+local MatchCfg = require(RS:WaitForChild("MatchConfig"))
+local function isCarrying() return player:GetAttribute("Carrying") == true end -- holding a Wall Push box: no guns/gadgets
+-- speed feel (all subtle on purpose)
+local SPEEDFX = {
+	FOV_FROM = 30, FOV_TO = 55, FOV_ADD = 6,      -- extra FOV when going faster than a sprint (slides, downhill)
+	LINES_FROM = 17, LINES_TO = 38,               -- speed lines fade in between these speeds (sprint = ~60% strength)
+	LINES_MAX_ALPHA = 0.55,                       -- 0 = invisible, 1 = solid white
+	LINE_COUNT = 30,
+	EDGE_MAX_ALPHA = 0.22,                        -- soft dark screen-edge vignette at speed (0 = off)
+	SHAKE_DEG = 0.22,                             -- camera rumble while sliding (degrees at full speed)
+	SLIDE_FOV_PUNCH = 40,                         -- quick FOV kick when a slide starts
+	WIND_FROM = 22, WIND_TO = 50, WIND_VOL = 0.5, -- looping wind (SoundBank "Wind", silent until an ID is pasted)
+}
+local BIND = "GunUpdate"
+local ACCENT = GunModels.Colors.Accent
+local rad = math.rad
+
+player.CameraMode = Enum.CameraMode.LockFirstPerson
+UIS.MouseIconEnabled = false
+-- v5.16: lower sensitivity (owner: the guns moved way too easily at the same Roblox setting as other games). MatchConfig.MOUSE_SENS multiplies the
+-- player's own Roblox sensitivity; set every frame (MatchFlow / menus can reset it), the same while aiming / scoped.
+local function mouseSens() local ok, m = pcall(function() return require(RS:WaitForChild("MatchConfig")).MOUSE_SENS end) return (ok and type(m) == "number") and m or 0.55 end
+local MOUSE_SENS = mouseSens()
+-- v5.17 SETTINGS (ReplicatedStorage.Settings, saved per player): mouse sensitivity, aim sensitivity, field of view, screen shake
+local SettingsMod = RS:FindFirstChild("Settings") and require(RS.Settings) or nil
+local function userSettings() return SettingsMod and SettingsMod.Get(player) or {} end
+local function sensNow(aiming)
+	local u = userSettings()
+	local s = (type(u.Sens) == "number") and u.Sens or MOUSE_SENS
+	if aiming and type(u.AdsSens) == "number" then s *= u.AdsSens end
+	return s
+end
+UIS.MouseDeltaSensitivity = sensNow(false)
+
+-- ================= HUD =================
+local gui = Instance.new("ScreenGui")
+gui.Name = "GunHUD"
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = true
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local vignettes = {}
+for _, rot in { 0, 90 } do
+	local f = Instance.new("Frame")
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundColor3 = Color3.fromRGB(210, 20, 20)
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	local g = Instance.new("UIGradient")
+	g.Rotation = rot
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.28, 1),
+		NumberSequenceKeypoint.new(0.72, 1), NumberSequenceKeypoint.new(1, 0),
+	})
+	g.Parent = f
+	f.Parent = gui
+	table.insert(vignettes, f)
+end
+
+-- speed lines: thin soft streaks around the screen edge that drift outward when moving fast
+local speedLayer = Instance.new("Frame")
+speedLayer.Name = "SpeedLines"
+speedLayer.Size = UDim2.fromScale(1, 1)
+speedLayer.BackgroundTransparency = 1
+speedLayer.Visible = false
+speedLayer.Parent = gui
+local speedLines = {}
+for i = 1, SPEEDFX.LINE_COUNT do
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.BackgroundColor3 = Color3.new(1, 1, 1)
+	f.BorderSizePixel = 0
+	local g = Instance.new("UIGradient")
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1),
+	})
+	g.Parent = f
+	f.Parent = speedLayer
+	speedLines[i] = {
+		f = f,
+		angle = (i / SPEEDFX.LINE_COUNT) * math.pi * 2 + (math.random() - 0.5) * 0.25,
+		r = 0.7 + math.random() * 0.45,
+		speed = 0.5 + math.random() * 0.6,
+		len = 60 + math.random() * 90,
+		w = math.random() < 0.35 and 3 or 2,
+	}
+end
+-- soft dark edges that close in a little at high speed (makes the speed lines pop)
+local speedEdges = {}
+for _, rot in { 0, 90 } do
+	local f = Instance.new("Frame")
+	f.Size = UDim2.fromScale(1, 1)
+	f.BackgroundColor3 = Color3.new(0, 0, 0)
+	f.BackgroundTransparency = 1
+	f.BorderSizePixel = 0
+	local g = Instance.new("UIGradient")
+	g.Rotation = rot
+	g.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.2, 1),
+		NumberSequenceKeypoint.new(0.8, 1), NumberSequenceKeypoint.new(1, 0),
+	})
+	g.Parent = f
+	f.Parent = speedLayer
+	table.insert(speedEdges, f)
+end
+
+-- full-screen sniper scope (black outside a circle, thin crosshair)
+local scope = Instance.new("Frame")
+scope.Name = "ScopeOverlay"
+scope.AnchorPoint = Vector2.new(0.5, 0.5)
+scope.Position = UDim2.fromScale(0.5, 0.5)
+scope.Size = UDim2.fromScale(0.86, 0.86)
+scope.BackgroundTransparency = 1
+scope.Visible = false
+scope.Parent = gui
+do
+	local ar = Instance.new("UIAspectRatioConstraint"); ar.Parent = scope
+	local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0.5, 0); c.Parent = scope
+	local s = Instance.new("UIStroke"); s.Thickness = 3000; s.Color = Color3.new(0, 0, 0); s.Parent = scope
+	local edge = Instance.new("Frame")
+	edge.Size = UDim2.fromScale(1, 1); edge.BackgroundTransparency = 1; edge.Parent = scope
+	local ec = Instance.new("UICorner"); ec.CornerRadius = UDim.new(0.5, 0); ec.Parent = edge
+	local es = Instance.new("UIStroke"); es.Thickness = 40; es.Color = Color3.new(0, 0, 0); es.Transparency = 0.5; es.Parent = edge
+	local function ln(size, pos)
+		local f = Instance.new("Frame")
+		f.AnchorPoint = Vector2.new(0.5, 0.5)
+		f.Size, f.Position = size, pos
+		f.BackgroundColor3 = Color3.new(0, 0, 0)
+		f.BorderSizePixel = 0
+		f.Parent = scope
+	end
+	ln(UDim2.new(1, 0, 0, 2), UDim2.fromScale(0.5, 0.5))
+	ln(UDim2.new(0, 2, 1, 0), UDim2.fromScale(0.5, 0.5))
+	ln(UDim2.new(0.3, 0, 0, 6), UDim2.fromScale(0.15, 0.5))
+	ln(UDim2.new(0.3, 0, 0, 6), UDim2.fromScale(0.85, 0.5))
+	ln(UDim2.new(0, 6, 0.3, 0), UDim2.fromScale(0.5, 0.85))
+	local dot = Instance.new("Frame")
+	dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	dot.Position = UDim2.fromScale(0.5, 0.5)
+	dot.Size = UDim2.fromOffset(5, 5)
+	dot.BackgroundColor3 = Color3.fromRGB(255, 45, 45)
+	dot.BorderSizePixel = 0
+	local dc = Instance.new("UICorner"); dc.CornerRadius = UDim.new(0.5, 0); dc.Parent = dot
+	dot.Parent = scope
+end
+
+-- hip crosshair (plain Frame, faded per line, hidden completely while aiming)
+local cross = Instance.new("Frame")
+cross.Name = "Crosshair"
+cross.AnchorPoint = Vector2.new(0.5, 0.5)
+cross.Position = UDim2.fromScale(0.5, 0.5)
+cross.Size = UDim2.fromOffset(240, 240)
+cross.BackgroundTransparency = 1
+cross.Parent = gui
+local crossAll = {}
+local function line(w, h)
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.Size = UDim2.fromOffset(w, h)
+	f.BackgroundColor3 = Color3.new(1, 1, 1)
+	f.BorderSizePixel = 0
+	local s = Instance.new("UIStroke"); s.Transparency = 0.55; s.Parent = f
+	f.Parent = cross
+	table.insert(crossAll, { f = f, s = s })
+	return f
+end
+local crossLines = {
+	{ f = line(2, 8), d = Vector2.new(0, -1) }, { f = line(2, 8), d = Vector2.new(0, 1) },
+	{ f = line(8, 2), d = Vector2.new(-1, 0) }, { f = line(8, 2), d = Vector2.new(1, 0) },
+}
+line(2, 2).Position = UDim2.fromScale(0.5, 0.5)
+
+local panel = Instance.new("Frame")
+panel.AnchorPoint = Vector2.new(1, 1)
+panel.Position = UDim2.new(1, -36, 1, -32)
+panel.Size = UDim2.fromOffset(250, 84)
+panel.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+panel.BackgroundTransparency = 0.35
+panel.BorderSizePixel = 0
+panel.Visible = false -- replaced by MatchHUD (bottom-right weapon block); kept so nothing else breaks
+panel.Parent = gui
+local stripe = Instance.new("Frame")
+stripe.Size = UDim2.new(0, 4, 1, 0); stripe.BackgroundColor3 = ACCENT; stripe.BorderSizePixel = 0; stripe.Parent = panel
+local function label(pos, size, font, textSize, color, xAlign)
+	local l = Instance.new("TextLabel")
+	l.Position, l.Size = pos, size
+	l.BackgroundTransparency = 1
+	l.Font, l.TextSize, l.TextColor3 = font, textSize, color
+	l.TextXAlignment = xAlign or Enum.TextXAlignment.Left
+	l.Parent = panel
+	return l
+end
+local nameL = label(UDim2.fromOffset(16, 8), UDim2.new(1, -24, 0, 16), Enum.Font.GothamBold, 13, Color3.fromRGB(200, 200, 210))
+local ammoL = label(UDim2.fromOffset(16, 22), UDim2.fromOffset(90, 46), Enum.Font.GothamBlack, 44, Color3.new(1, 1, 1), Enum.TextXAlignment.Right)
+local magL = label(UDim2.fromOffset(112, 38), UDim2.fromOffset(60, 24), Enum.Font.GothamBold, 18, Color3.fromRGB(150, 150, 160))
+local modeL = label(UDim2.new(1, -78, 0, 42), UDim2.fromOffset(66, 16), Enum.Font.GothamBold, 11, ACCENT, Enum.TextXAlignment.Right)
+local barBG = Instance.new("Frame")
+barBG.Position = UDim2.new(0, 16, 1, -12); barBG.Size = UDim2.new(1, -28, 0, 4)
+barBG.BackgroundColor3 = Color3.new(1, 1, 1); barBG.BackgroundTransparency = 0.85; barBG.BorderSizePixel = 0
+barBG.Parent = panel
+local barFill = Instance.new("Frame")
+barFill.BorderSizePixel = 0; barFill.Size = UDim2.fromScale(1, 1); barFill.Parent = barBG
+
+-- ================= STATE =================
+local WEAPON, cfg, INTERVAL, sight
+local built, partsList, cfList = nil, {}, {}
+local IDENT = CFrame.identity
+local CYL_TURN = CFrame.Angles(0, math.pi / 2, 0) -- v4.8: the left sleeve + cuff are cylinders now (their long axis is X), so they get this turn after lookAt
+local ReloadAnims = require(RS:WaitForChild("ReloadAnims"))
+local reloadAnim -- per-gun reload (ReloadAnims.lua), rebuilt on equip
+local OFFSCREEN = CFrame.new(0, -500, 0)
+local NEUTRAL_POSE
+local HIP, SPRINT, AIM = CFrame.identity, CFrame.identity, CFrame.identity
+local adsFov, adsSens = 58, 0.7
+
+local ammo, reloading, reloadStart, reloadEvents = 0, false, 0, {}
+-- v5.14 DEEP POCKETS: magazine size for a fresh equip (the extra magazine only once per life)
+local function deepMag()
+	if pocketsReady and CardFx.Has(player, "deep_pockets") then
+		pocketsReady = false
+		return cfg.MagSize * (1 + CardFx.DEEP_POCKETS_MAGS)
+	end
+	return cfg.MagSize
+end
+local reloadDur, magCenter = 2, Vector3.zero -- v7: seconds of the CURRENT reload (round-fed guns: depends on how many rounds are missing)
+local triggerDown, aimHeld, shiftHeld = false, false, false
+local sprintToggle, stillTime = false, 0 -- mobile button / gamepad L3 sprint (tap to toggle)
+local speedFov, speedLineAlpha, wasSliding, shakeRoll = 0, 0, false, 0
+local windSound = Sfx.Loop and Sfx.Loop("Wind") or nil
+local nextFireTime, bloom, sprayIndex, lastShotTime = 0, 0, 0, 0
+local burstQueue, semiPending = 0, nil
+local cycleStart = -10
+local aimAlpha, sprintAlpha, equipStart = 0, 0, os.clock()
+local lastHeldGadget = false
+local slideAlpha, mantleAlpha, crouchAlpha = 0, 0, 0
+local reloadHold = 0
+local bobT, bobAmt, strafeRoll = 0, 0, 0
+local wasGrounded, airVelY = true, 0
+local flashUntil, flashRoll, flashVisible = 0, 0, false
+local dmgAlpha = 0
+local gunCF = camera.CFrame
+local adsDropAng = 0
+local shotShift = CFrame.identity -- rotation from the camera center to where the sight/reticle really points (slides, crouch, mantle)
+local scoped = false
+local cleaned = false
+local cleanup -- defined at the bottom
+
+local recoilPos = Spring.new(400, 28)
+local recoilRot = Spring.new(380, 24)
+local camPunch = Spring.new(300, 26)
+local fovPunch = Spring.new(350, 28)
+local swaySpring = Spring.new(180, 18)
+local landSpring = Spring.new(220, 16)
+
+local climbTarget, climbOffset, applied = Vector2.zero, Vector2.zero, Vector2.zero
+local lastPitch = nil
+-- v3.4: the part of the camera rotation that is PURELY visual (camera flinch, being hit, slide rumble). Shots are fired from the camera
+-- with this part taken back out, so a flinch can never throw your aim off. Only real recoil (climbOffset) moves where you shoot.
+local visPitch, visYaw = 0, 0
+local rollSide, crossKick = 1, 0               -- alternating roll direction of the viewmodel kick; crosshair pulse
+local equipSettled, wasSprinting, wasAimDone, wasReloading = true, false, false, false
+local equipPivot = Vector3.zero -- the middle of the gun: flips / twirls turn about this point, not the model origin
+
+local fx = HitFX.new(gui)
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.FilterDescendantsInstances = { character, camera }
+
+-- ================= HELPERS =================
+local function approach(a, target, dt, time)
+	return a + (target - a) * (1 - math.exp(-dt * 4 / time))
+end
+local function seg(u, a, b) return math.clamp((u - a) / (b - a), 0, 1) end
+local function smooth(x) return x * x * (3 - 2 * x) end
+local function rnd() return math.random() * 2 - 1 end
+local function easeOutCubic(x) return 1 - (1 - x) ^ 3 end
+local function easeOutBack(x) -- overshoots a little, then settles (the "snap into place" of every draw)
+	local c1 = 1.70158
+	local c3 = c1 + 1
+	return 1 + c3 * (x - 1) ^ 3 + c1 * (x - 1) ^ 2
+end
+local function magFov(mag) -- zoomed FOV for a magnified optic
+	return math.deg(2 * math.atan(math.tan(rad(BASE_FOV / 2)) / mag))
+end
+
+local function modeText()
+	if cfg.FireMode == "Burst" then return cfg.BurstCount .. "-BURST" end
+	if cfg.Pellets > 1 then return "PUMP" end
+	return string.upper(cfg.FireMode)
+end
+
+local function updateHUD()
+	ammoL.Text = tostring(ammo)
+	ammoL.TextColor3 = (ammo <= cfg.MagSize * 0.25) and Color3.fromRGB(255, 80, 80) or Color3.new(1, 1, 1)
+	nameL.Text = reloading and "RELOADING" or cfg.Name
+	magL.Text = "/ " .. cfg.MagSize
+	modeL.Text = modeText() .. " · " .. (sight.Display or "Iron")
+	if not reloading then
+		barFill.BackgroundColor3 = Color3.new(1, 1, 1)
+		barFill.Size = UDim2.fromScale(math.clamp(ammo / cfg.MagSize, 0, 1), 1) -- (v5.14: DEEP POCKETS can hold more than one magazine)
+	end
+	-- local-only attributes (a client never replicates these) read by MatchHUD
+	player:SetAttribute("HUDWeapon", cfg.Name)
+	player:SetAttribute("HUDAmmo", ammo)
+	player:SetAttribute("HUDMag", cfg.MagSize)
+	player:SetAttribute("HUDReload", reloading)
+	player:SetAttribute("HUDMode", modeText() .. " / " .. string.upper(sight.Display or "Iron"))
+end
+
+local function enemyHumanoid(model)
+	local hum = model and model:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 or model == character then return nil end
+	local p = Players:GetPlayerFromCharacter(model)
+	if p and not player.Neutral and p.Team == player.Team then return nil end
+	return hum
+end
+
+local function currentSpread()
+	local s = cfg.SpreadHip + (cfg.SpreadADS - cfg.SpreadHip) * aimAlpha
+	if humanoid.FloorMaterial == Enum.Material.Air then s += cfg.SpreadAir
+	elseif humanoid.MoveDirection.Magnitude > 0.1 then
+		if cfg.SpreadMoveADS then s += cfg.SpreadMove + (cfg.SpreadMoveADS - cfg.SpreadMove) * aimAlpha
+		else s += cfg.SpreadMove * (1 - aimAlpha * 0.5) end
+	end
+	return s + bloom
+end
+
+local function spreadDirection(dir, deg)
+	if deg <= 0 then return dir end
+	local r = rad(deg) * math.sqrt(math.random())
+	local theta = math.random() * math.pi * 2
+	return (CFrame.lookAt(Vector3.zero, dir) * CFrame.Angles(0, 0, theta) * CFrame.Angles(r, 0, 0)).LookVector
+end
+
+-- own body is always invisible in first person (Roblox's own fade check fails at high fall speeds)
+local bodyParts = {}
+local function trackBody(d)
+	if d:IsA("BasePart") or d:IsA("Decal") then bodyParts[d] = true end
+end
+for _, d in character:GetDescendants() do trackBody(d) end
+local function hideBody()
+	for d in bodyParts do
+		if d.Parent and d:IsDescendantOf(character) then d.LocalTransparencyModifier = 1 else bodyParts[d] = nil end
+	end
+end
+
+local function rotateCamera(dPitch, dYaw)
+	local cf = camera.CFrame
+	if (cf.LookVector.Y > 0.97 and dPitch > 0) or (cf.LookVector.Y < -0.97 and dPitch < 0) then dPitch = 0 end
+	local pos = cf.Position
+	camera.CFrame = CFrame.Angles(0, rad(dYaw), 0) * (cf - pos) * CFrame.Angles(rad(dPitch), 0, 0) + pos
+end
+
+-- v3.4: where the player is really aiming = the camera with the visual flinch taken back out (real recoil climb stays in)
+local function aimLook()
+	local cf = camera.CFrame
+	if math.abs(visPitch) < 1e-4 and math.abs(visYaw) < 1e-4 then return cf.LookVector end
+	local rot = CFrame.Angles(0, rad(-visYaw), 0) * (cf - cf.Position) * CFrame.Angles(rad(-visPitch), 0, 0)
+	return rot.LookVector
+end
+
+local function ejectShell()
+	if not cfg.Shell then return end
+	local s = Instance.new("Part")
+	s.Size = cfg.Shell.Size
+	s.Color = cfg.Shell.Color
+	s.Material = Enum.Material.Metal
+	s.CanCollide, s.CanQuery, s.CanTouch, s.CastShadow = false, false, false, false
+	s.CFrame = gunCF * built.Points.Eject * CFrame.Angles(0, rad(90), 0)
+	s.Parent = workspace
+	local c = camera.CFrame
+	s.AssemblyLinearVelocity = root.AssemblyLinearVelocity + c.RightVector * (7 + math.random() * 3)
+		+ c.UpVector * (5 + math.random() * 3) - c.LookVector
+	s.AssemblyAngularVelocity = Vector3.new(rnd(), rnd(), rnd()) * 30
+	Debris:AddItem(s, 0.6)
+end
+
+-- ================= EQUIP (build viewmodel for the current weapon + sight) =================
+local function equip(id, sightId)
+	if cleaned then return end -- this character is gone: never build a new viewmodel
+	if built then built.Model:Destroy() end
+	WEAPON = Weapons.Weapons[id] and id or Weapons.Default
+	cfg = Weapons.Get(WEAPON)
+	if not Weapons.HasSight(cfg, sightId) then sightId = cfg.DefaultSight end
+	INTERVAL = 60 / cfg.RPM
+
+	built = GunModels.BuildViewmodel(cfg.Model, sightId, VM_SCALE, nil, GunSkins and GunSkins.Equipped(player, cfg.Id) or nil) -- v5.10: + equipped gun skin
+	sight = built.Sight
+	local ownerTag = Instance.new("ObjectValue") -- lets MatchClient tell whose viewmodel this is (and remove leftovers after a respawn)
+	ownerTag.Name = "Owner"
+	ownerTag.Value = character
+	ownerTag.Parent = built.Model
+	built.Model.Parent = camera
+	partsList, cfList = {}, {}
+	for _, g in { "gun", "cycle", "mag", "cover", "aux", "left", "flash" } do
+		for _, e in built.Groups[g] do
+			e.BaseSize = e.Part.Size
+			table.insert(partsList, e.Part)
+		end
+	end
+
+	do -- v7: where the fist closes on a mag = the centre of the mag parts (relative to the mag pivot, gun units)
+		local acc, cnt = Vector3.zero, 0
+		for _, g in built.Groups.mag do acc += g.Offset.Position; cnt += 1 end
+		magCenter = cnt > 0 and (acc / cnt / VM_SCALE) or Vector3.zero
+	end
+	reloadAnim = ReloadAnims.Make(cfg.Model, built.Points, VM_SCALE, { magCenter = magCenter, n = cfg.MagSize, rr = cfg.RoundReload,
+		T = Weapons.ReloadDuration(cfg, 0) })
+	equipPivot = built.Points.Fore.Position:Lerp(built.Points.Eject.Position, 0.5)
+	NEUTRAL_POSE = { tilt = IDENT, mag = IDENT, hand = built.Points.Fore.Position, grab = 0, fall = false }
+	local v = built.View or {}
+	HIP = CFrame.new(v.X or 0.6, v.Y or -1.0, v.Z or -1.15) * CFrame.Angles(0, rad(2.5), 0)
+	local sr = v.SprintRot or Vector3.new(-18, 48, 18)
+	SPRINT = CFrame.new((v.X or 0.6) - 0.2, (v.Y or -1.0) - 0.15, (v.Z or -1.15) + 0.25) * CFrame.Angles(rad(sr.X), rad(sr.Y), rad(sr.Z))
+	-- puts the sight's aim point exactly at screen center, Eye studs in front of the camera
+	local eye = built.Eye or 0.45
+	local vw = built.View or {}
+	-- v7: pistols / revolver sit too high + big when aimed: AdsEyeMult pushes the gun further out, AdsDrop lowers it on screen
+	-- (bullets still leave through the sight, see shotShift below). Both live in GunModels (k.view) per gun.
+	if not sight.Mag then eye = math.max(ADS_EYE_MIN, eye * ADS_EYE_MULT * (vw.AdsEyeMult or 1)) end
+	AIM = CFrame.new(0, -(vw.AdsDrop or 0), -eye) * built.Points.Aim:Inverse()
+	adsDropAng = math.atan((vw.AdsDrop or 0) / eye)
+
+	adsFov = sight.Mag and magFov(sight.Mag) or cfg.ADSFov
+	adsSens = cfg.ADSSensitivity * (sight.Mag and math.tan(rad(adsFov / 2)) / math.tan(rad(cfg.ADSFov / 2)) or 1)
+
+	ammo, reloading, reloadEvents = deepMag(), false, {} -- v5.14: DEEP POCKETS
+	nextFireTime, bloom, sprayIndex, burstQueue, semiPending = 0, 0, 0, 0, nil
+	cycleStart = -10
+	climbTarget = Vector2.zero
+	equipStart = os.clock()
+	equipSettled = false
+	flashVisible = true -- forces the flash refresh next frame
+	Sfx.Play("Equip", nil, nil, nil, WEAPON)
+	updateHUD()
+end
+
+-- ================= RELOAD =================
+
+local function reloadPose(u)
+	if u <= 0 or u >= 1 then return NEUTRAL_POSE end
+	return reloadAnim.Pose(u)
+end
+
+local function startReload()
+	if reloading or ammo >= cfg.MagSize or humanoid.Health <= 0 or isCarrying() or character:GetAttribute("HeldGadget") ~= nil then return end
+	reloading = true
+	gunUntouched = false
+	burstQueue, semiPending = 0, nil
+	reloadStart = os.clock()
+	reloadEvents = {}
+	-- v7: round-fed guns only play (and only take the time for) the rounds that are missing; mag guns always swap the whole mag
+	reloadDur = Weapons.ReloadDuration(cfg, ammo)
+	reloadAnim = ReloadAnims.Make(cfg.Model, built.Points, VM_SCALE, { magCenter = magCenter, n = Weapons.RoundsToLoad(cfg, ammo), rr = cfg.RoundReload,
+		T = reloadDur })
+	recoilRot:Impulse(Vector3.new(-30, 0, -18)) -- v3.4: the gun dips + rolls as the hands go for the mag (v5.6: softer, same spot as the hip)
+	recoilPos:Impulse(Vector3.new(0.4, -1.2, 1.0))
+	for _, e in reloadAnim.Events do
+		table.insert(reloadEvents, { at = e.at, fn = function()
+			Sfx.Play(e.snd, nil, e.pitch, e.vol, WEAPON)
+			if e.kick then recoilPos:Impulse(e.kick[1]); recoilRot:Impulse(e.kick[2]) end
+		end })
+	end
+	ReloadRemote:FireServer(WEAPON)
+	updateHUD()
+end
+
+-- ================= FIRE =================
+local function fire()
+	ammo -= 1
+	gunUntouched = false
+	local now = os.clock()
+	if now - lastShotTime > cfg.SprayResetTime then sprayIndex = 0 end
+	sprayIndex += 1
+	lastShotTime = now
+
+	local origin = camera.CFrame.Position
+	local baseDir = spreadDirection(shotShift:VectorToWorldSpace(aimLook()), currentSpread())
+	local pelletSpread = cfg.PelletSpread * (1 + (cfg.ADSPelletMult - 1) * aimAlpha)
+	local muzzlePos = (gunCF * built.Points.Muzzle).Position
+	local shots, hitModels = {}, {}
+
+	for i = 1, cfg.Pellets do
+		local dir = cfg.Pellets > 1 and spreadDirection(baseDir, pelletSpread) or baseDir
+		local result = workspace:Raycast(origin, dir * cfg.Range, rayParams)
+		local hitPos = result and result.Position or origin + dir * cfg.Range
+		local hitPart = result and result.Instance
+		shots[i] = { dir, hitPart, hitPos }
+		if i <= 4 or i % 2 == 0 then fx:Tracer(muzzlePos, hitPos) end
+		if hitPart then
+			local model = hitPart:FindFirstAncestorOfClass("Model")
+			if enemyHumanoid(model) then
+				local h = hitModels[model] or { pos = hitPos, dir = dir, head = false }
+				h.head = h.head or GunMath.IsHeadshot(hitPart)
+				hitModels[model] = h
+			elseif not (model and model:FindFirstChildOfClass("Humanoid")) then
+				fx:Impact(hitPos, result.Normal, hitPart)
+			end
+		end
+	end
+	for model, h in hitModels do fx:Hit(model, h.pos, -h.dir, 0, h.head) end
+
+	flashUntil = now + 0.035
+	flashRoll = math.random() * math.pi * 2
+	local fs = (0.8 + math.random() * 0.5) * (cfg.Pellets > 1 and 1.5 or 1)
+	for _, e in built.Groups.flash do e.Part.Size = e.BaseSize * fs end
+	if sprayIndex % 2 == 0 or cfg.FireMode ~= "Auto" then built.Smoke:Emit(1) end
+	if cfg.Cycle then
+		cycleStart = now
+		if cfg.Cycle ~= "Slide" then task.delay(cfg.CycleDelay, function() Sfx.Play("Cycle", nil, nil, nil, WEAPON) end) end
+	end
+	if cfg.Cycle ~= "Bolt" and cfg.Cycle ~= "Pump" then ejectShell()
+	else task.delay(cfg.CycleDelay + cfg.CycleTime * 0.4, function() if built then ejectShell() end end) end
+	Sfx.Play("Fire", nil, cfg.FirePitch, cfg.FireVolume, WEAPON)
+	Sfx.Play("FireTail", nil, cfg.FirePitch, cfg.FireVolume, WEAPON)
+	if ammo <= cfg.MagSize * 0.25 then Sfx.Play("LowAmmo", nil, nil, nil, WEAPON) end
+
+	FireRemote:FireServer(WEAPON, origin, shots)
+
+	-- v3.4 recoil. "Climb" (AK-47 only): the real aim climbs along RecoilPattern, you pull down to hold it. "Kick" (everything else): the aim
+	-- never moves; the shot only kicks the gun and flinches the camera (visual), which is why those guns feel crisp and laser-like.
+	local m = 1 + (cfg.ADSRecoilMult - 1) * aimAlpha
+	local climbs = cfg.Recoil == "Climb"
+	if climbs then
+		local pat = cfg.RecoilPattern[math.min(sprayIndex, #cfg.RecoilPattern)]
+		climbTarget += Vector2.new(pat.X, pat.Y + rnd() * cfg.RecoilJitter) * m
+	end
+	local fl = climbs and 1 or cfg.Flinch
+	local vk = climbs and cfg.ViewKick or cfg.ViewKick * (1 + 0.15 * math.min(sprayIndex, 6) / 6) -- long sprays kick a touch harder
+	rollSide = -rollSide                                                   -- the kick rolls left, right, left... (predictable + stylish)
+	local camAds = 1 + (ADS_CAM_PUNCH - 1) * aimAlpha -- v5.6: nearly no camera flinch while aiming
+	camPunch:Impulse(Vector3.new(cfg.CamPunch * fl, rnd() * cfg.CamPunch * 0.35 * fl, rollSide * (0.55 + math.random() * 0.45) * cfg.CamRoll * fl) * m * camAds)
+	fovPunch:Impulse(Vector3.new(cfg.FovPunch * (1 + (ADS_FOV_PUNCH - 1) * aimAlpha), 0, 0))
+	recoilPos:Impulse(Vector3.new(rnd() * 0.4 * vk, 0.3 * vk, cfg.KickBack * vk))
+	recoilRot:Impulse(Vector3.new(cfg.KickUp * vk * (0.85 + math.random() * 0.3), rnd() * cfg.KickYaw * vk, rollSide * (0.5 + math.random() * 0.5) * cfg.KickRoll * vk))
+	crossKick = math.min(crossKick + (climbs and 0.6 or 1), 1.4)
+	bloom = math.min(bloom + cfg.BloomPerShot, cfg.BloomMax)
+
+	updateHUD()
+	if ammo <= 0 then startReload() end
+end
+
+-- ================= EVENTS =================
+local conns = {}
+table.insert(conns, character.DescendantAdded:Connect(trackBody))
+
+-- sprint button: shows on mobile (next to jump), gamepad = click left stick. Tap to toggle, turns off when you stop.
+local SPRINT_ACTION = "SprintToggle"
+local function paintSprintButton()
+	local b = CAS:GetButton(SPRINT_ACTION)
+	if b then b.ImageColor3 = sprintToggle and ACCENT or Color3.new(1, 1, 1) end
+end
+local function setSprintToggle(on)
+	if sprintToggle == on then return end
+	sprintToggle = on
+	character:SetAttribute("SprintToggle", on)
+	paintSprintButton()
+end
+CAS:BindAction(SPRINT_ACTION, function(_, state)
+	if state == Enum.UserInputState.Begin then
+		setSprintToggle(not sprintToggle)
+		return Enum.ContextActionResult.Sink
+	end
+	return Enum.ContextActionResult.Pass
+end, true, Enum.KeyCode.ButtonL3)
+CAS:SetTitle(SPRINT_ACTION, "Sprint")
+CAS:SetPosition(SPRINT_ACTION, UDim2.new(1, -95, 1, -175)) -- above the jump button
+table.insert(conns, HitConfirm.OnClientEvent:Connect(function(model, head, killed, dmg, hitPos)
+	if model and dmg and hitPos then fx:Number(model, hitPos, dmg, head) end
+	if killed and model then
+		local p = Players:GetPlayerFromCharacter(model)
+		fx:Kill(model, p and p.DisplayName or model.Name)
+	end
+end))
+
+table.insert(conns, ShotFX.OnClientEvent:Connect(function(shooter, origin, ends)
+	if shooter == player then return end
+	local char = shooter.Character
+	local head = char and char:FindFirstChild("Head")
+	local tpGun = char and char:FindFirstChild("TPGun", true)
+	local muzzle = tpGun and tpGun:FindFirstChild("MuzzlePoint", true)
+	local start = (muzzle and muzzle:IsA("Attachment") and muzzle.WorldPosition)
+		or (head and head.Position + head.CFrame.LookVector) or origin
+	if typeof(ends) == "Vector3" then ends = { ends } end
+	if type(ends) ~= "table" then return end
+	for i, e in ends do
+		if typeof(e) == "Vector3" and i <= 6 then fx:Tracer(start, e) end
+	end
+	local wcfg = Weapons.Get(shooter:GetAttribute("Weapon"))
+	if head then
+		local wid = shooter:GetAttribute("Weapon")
+		Sfx.Play("Fire", head, wcfg.FirePitch, wcfg.FireVolume, wid)
+		Sfx.Play("FireTail", head, wcfg.FirePitch, wcfg.FireVolume, wid)
+	end
+end))
+
+table.insert(conns, DamagedRemote.OnClientEvent:Connect(function(dmg)
+	dmgAlpha = math.min(1, dmgAlpha + dmg / 35)
+	camPunch:Impulse(Vector3.new(-8, rnd() * 10, rnd() * 40))
+	Sfx.Play("Damaged")
+end))
+
+local function menuOpen() return player:GetAttribute("GunMenuOpen") == true end
+-- v5.16: no shooting / reloading / aiming (and no gun sounds) until the match has really started: loading in, the loadout screen, the cutscene,
+-- the card roll and the 3-2-1 are all locked (MatchConfig.LOCKED_PHASES). The server already refused the shots; now the client does not even try.
+local MatchStateF = RS:FindFirstChild("MatchState")
+local function phaseLocked()
+	MatchStateF = MatchStateF or RS:FindFirstChild("MatchState")
+	if not MatchStateF then return false end
+	local ph = MatchStateF:GetAttribute("Phase")
+	return MatchCfg.LOCKED_PHASES ~= nil and MatchCfg.LOCKED_PHASES[ph] == true
+end
+-- v5.16 POSES: while you hold a pose the gun is put away (like carrying a box) and your body is shown (PoseClient runs a third-person camera)
+local function posing() return character:GetAttribute("Pose") ~= nil end
+
+table.insert(conns, UIS.InputBegan:Connect(function(input, gpe)
+	if gpe or menuOpen() or phaseLocked() or posing() then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		triggerDown = true
+		semiPending = os.clock()
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then aimHeld = true
+	elseif input.KeyCode == Enum.KeyCode.R then startReload()
+	elseif input.KeyCode == Enum.KeyCode.LeftShift then shiftHeld = true end
+end))
+table.insert(conns, UIS.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then triggerDown = false
+	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then aimHeld = false
+	elseif input.KeyCode == Enum.KeyCode.LeftShift then shiftHeld = false end
+end))
+
+local swapQueued = false
+local function onLoadoutChanged() -- deferred so Weapon + Sight changing together = one rebuild
+	if swapQueued then return end
+	swapQueued = true
+	task.defer(function()
+		swapQueued = false
+		if cleaned then return end
+		local id, s = player:GetAttribute("Weapon"), player:GetAttribute("Sight")
+		if id ~= WEAPON or s ~= (built and built.SightId) then equip(id, s) end
+	end)
+end
+table.insert(conns, player:GetAttributeChangedSignal("Weapon"):Connect(onLoadoutChanged))
+table.insert(conns, player:GetAttributeChangedSignal("Sight"):Connect(onLoadoutChanged))
+equip(player:GetAttribute("Weapon"), player:GetAttribute("Sight"))
+-- v5.14 DEEP POCKETS: the card is picked after this life started; load the extra magazine if the gun was not used yet
+table.insert(conns, player:GetAttributeChangedSignal("MatchCard"):Connect(function()
+	if gunUntouched and not reloading and ammo == cfg.MagSize and pocketsReady and CardFx.Has(player, "deep_pockets") then
+		ammo = deepMag()
+		updateHUD()
+	end
+end))
+
+-- ================= FIRE CONTROL =================
+local lastDry, wasAiming = 0, false
+local function fireControl(now, canFire)
+	if menuOpen() then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
+	-- a click slightly early (e.g. during a bolt/pump cycle) is buffered for 0.2s
+	if semiPending and now - semiPending > 0.2 then semiPending = nil end
+	if not canFire then
+		if (triggerDown or semiPending) and ammo <= 0 and not reloading then startReload() end
+		-- v5.7: empty mag + trigger while the reload is still running = a dry click (SoundBank slot DryFire), at most every 0.4 s
+		if (triggerDown or semiPending) and ammo <= 0 and reloading and now - (lastDry or 0) > 0.4 then
+			lastDry = now
+			Sfx.Play("DryFire", nil, nil, nil, WEAPON)
+		end
+		return
+	end
+	if cfg.FireMode == "Auto" then
+		if triggerDown then
+			local iv = INTERVAL * CardFx.FireIntervalMult(player) / TimeScale.Get() -- slow motion: fewer shots per second; v5.14: HOT BARREL
+			if nextFireTime < now - iv then nextFireTime = now end
+			while nextFireTime <= now and ammo > 0 do
+				fire()
+				nextFireTime += iv
+			end
+		end
+	elseif cfg.FireMode == "Semi" then
+		-- one shot per click
+		if semiPending and now >= nextFireTime then
+			semiPending = nil
+			fire()
+			nextFireTime = now + INTERVAL * CardFx.FireIntervalMult(player) / TimeScale.Get()
+		end
+	else -- Burst (holding keeps bursting)
+		if burstQueue == 0 and (triggerDown or semiPending) and now >= nextFireTime then
+			burstQueue = math.min(cfg.BurstCount, ammo)
+			semiPending = nil
+			nextFireTime = now
+		end
+		while burstQueue > 0 and nextFireTime <= now and ammo > 0 do
+			fire()
+			burstQueue -= 1
+			nextFireTime += (burstQueue > 0 and 60 / cfg.BurstRPM or cfg.BurstDelay) * CardFx.FireIntervalMult(player) / TimeScale.Get()
+		end
+		if ammo <= 0 then burstQueue = 0 end
+	end
+end
+
+-- ================= FRAME =================
+local function onRender(dt)
+	if cleaned then return end
+	if not character:IsDescendantOf(workspace) then cleanup() return end -- respawned/teleported: this character is gone
+	dt = math.min(dt, 0.1)
+	local now = os.clock()
+	local alive = humanoid.Health > 0
+	local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
+	local vel = root.AssemblyLinearVelocity
+	local flatSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+	local moving = humanoid.MoveDirection.Magnitude > 0.1
+	-- v3.7: first-person run-in at match start (MatchFlow). The real character is frozen, so MatchFlow tells us how fast the
+	-- camera is running and the viewmodel plays the sprint pose + bob as if you were really running.
+	local cutRun = player:GetAttribute("CutsceneRun")
+	if type(cutRun) == "number" then
+		flatSpeed, grounded, moving = cutRun, true, cutRun > 1
+	end
+	local sliding = character:GetAttribute("Sliding") == true
+	local mantling = character:GetAttribute("Mantling") == true
+	local crouching = character:GetAttribute("Crouching") == true
+	-- sprint key is POLLED, not event-driven: a Shift press that Roblox marked "game processed" (a focused button, shift lock,
+	-- chat) used to be lost, which could leave you unable to sprint for a whole match. Same for a stuck fire button.
+	shiftHeld = (UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift)) and UIS:GetFocusedTextBox() == nil
+	if triggerDown and not UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then triggerDown = false end
+	if menuOpen() then shiftHeld = false; setSprintToggle(false) end
+	if sprintToggle then -- auto-off after standing still for a moment
+		stillTime = moving and 0 or stillTime + dt
+		if stillTime > 0.3 or not alive then setSprintToggle(false) end
+	end
+	UIS.MouseDeltaSensitivity = sensNow(aimAlpha > 0.5) -- v5.16 (kept every frame: menus / cutscenes may reset it to 1); v5.17: + the sensitivity settings
+	local isPosing = posing()
+	if alive and not character:GetAttribute("Revealing") and not isPosing then hideBody() end -- (RespawnReveal shows your body during the reveal; v5.16: PoseClient while posing)
+
+	-- states
+	-- v3.8: wall-climbing (and the respawn reveal) put the gun away too, exactly like carrying a box
+	local abilityMode = character:GetAttribute("AbilityMode")
+	local revealing = character:GetAttribute("Revealing") == true
+	-- v4.1: holding a gadget (grenade / sentry / ...), carrying a soul, rezzing someone or being dead also puts the gun away
+	local heldGadget = character:GetAttribute("HeldGadget") ~= nil
+	local carryingBox = isCarrying() or abilityMode == "climb" or revealing or heldGadget
+		or player:GetAttribute("CarryingSoul") == true or character:GetAttribute("Reviving") == true
+		or isPosing or phaseLocked() -- v5.16: a pose puts the gun away; nothing fires before the match starts
+	if carryingBox then triggerDown, aimHeld, semiPending, burstQueue = false, false, nil, 0 end
+	if heldGadget ~= lastHeldGadget then -- coming back to the gun: the usual equip animation plays again
+		if lastHeldGadget and not heldGadget then equipStart = os.clock() end
+		lastHeldGadget = heldGadget
+	end
+	local aiming = aimHeld and not reloading and alive and not mantling and not carryingBox
+	if aiming ~= wasAiming then -- v5.7: sound hooks AimIn / AimOut (per gun, optional)
+		wasAiming = aiming
+		if alive then Sfx.Play(aiming and "AimIn" or "AimOut", nil, nil, nil, WEAPON) end
+	end
+	local wantsSprint = (shiftHeld or sprintToggle) and moving and not aiming and not triggerDown and not crouching
+	local sprinting = (wantsSprint and not sliding and not mantling) or (type(cutRun) == "number" and cutRun > 10)
+	local baseSpeed = (crouching and CROUCH_SPEED) or (wantsSprint and SPRINT_SPEED) or WALK_SPEED
+	humanoid.WalkSpeed = baseSpeed * ((isCarrying()) and MatchCfg.CARRY_SPEED_MULT or cfg.MoveSpeed) * TimeScale.Get() * (character:GetAttribute("AbilitySlow") or 1) * (character:GetAttribute("Reviving") == true and 0 or 1) -- slow motion at the end of a round; v4.1: rooted while reviving
+	aimAlpha = approach(aimAlpha, aiming and 1 or 0, dt, cfg.ADSTime)
+	sprintAlpha = approach(sprintAlpha, sprinting and 1 or 0, dt, 0.18)
+	slideAlpha = approach(slideAlpha, sliding and 1 or 0, dt, 0.12)
+	mantleAlpha = approach(mantleAlpha, mantling and 1 or 0, dt, 0.1)
+	reloadHold = approach(reloadHold, reloading and 1 or 0, dt, 0.14)
+
+	-- v3.4 transition accents (small impulses through the viewmodel springs, so every state change has a little snap to it)
+	if sprinting ~= wasSprinting and alive then
+		wasSprinting = sprinting
+		local rq = reloading and 0.25 or 1 -- v5.6: no big swing while the reload is playing
+		if sprinting then -- gun swings up into the carry
+			recoilRot:Impulse(Vector3.new(-70, 50, 80) * rq)
+			recoilPos:Impulse(Vector3.new(3, -3, 2) * rq)
+		else              -- gun drops back into the hip hold
+			recoilRot:Impulse(Vector3.new(55, -35, -60) * rq)
+			recoilPos:Impulse(Vector3.new(-2, 2.5, -1.5) * rq)
+		end
+	end
+	local adsDone = aimAlpha > 0.97
+	if adsDone ~= wasAimDone then
+		wasAimDone = adsDone
+		if adsDone then -- the sight settles onto your eye
+			recoilRot:Impulse(Vector3.new(26, 0, 0))
+			recoilPos:Impulse(Vector3.new(0, 0, 1.4))
+		elseif alive then
+			recoilRot:Impulse(Vector3.new(-18, 0, 14))
+		end
+	end
+	if wasReloading and not reloading and alive then -- reload finished: the gun snaps back up
+		recoilRot:Impulse(Vector3.new(48, 0, 16))
+		recoilPos:Impulse(Vector3.new(0, -1, -3))
+	end
+	wasReloading = reloading
+	crossKick = math.max(0, crossKick - dt * 9)
+
+	-- firing
+	local cycling = cfg.Cycle and cfg.Cycle ~= "Slide" and (now - cycleStart) < (cfg.CycleDelay + cfg.CycleTime)
+	local canFire = alive and not carryingBox and not reloading and ammo > 0 and sprintAlpha < 0.3 and mantleAlpha < 0.4
+		and (now - equipStart) > cfg.EquipTime and not cycling
+	fireControl(now, canFire)
+	bloom = math.max(0, bloom - cfg.BloomRecovery * dt * (triggerDown and 0.25 or 1))
+
+	-- reload progress
+	local reloadU = 0
+	if reloading then
+		local t = now - reloadStart
+		reloadU = t / reloadDur
+		for _, ev in reloadEvents do
+			if not ev.done and reloadU >= ev.at then ev.done = true; ev.fn() end
+		end
+		barFill.BackgroundColor3 = ACCENT
+		barFill.Size = UDim2.fromScale(math.clamp(reloadU, 0, 1), 1)
+		player:SetAttribute("HUDReloadU", math.clamp(reloadU, 0, 1))
+		if t >= reloadDur then
+			reloading = false
+			ammo = cfg.MagSize
+			updateHUD()
+		end
+	end
+
+	-- camera: real climb + visual punch
+	local pitch = math.deg(math.asin(math.clamp(camera.CFrame.LookVector.Y, -1, 1)))
+	if lastPitch then
+		local userDelta = pitch - lastPitch
+		if userDelta < 0 and climbTarget.X > 0 then
+			local c = math.min(-userDelta, climbTarget.X)
+			climbTarget -= Vector2.new(c, 0)
+			climbOffset -= Vector2.new(c, 0)
+			applied -= Vector2.new(c, 0)
+		end
+	end
+	if now - lastShotTime > cfg.RecoverDelay then
+		climbTarget = climbTarget:Lerp(Vector2.zero, 1 - math.exp(-cfg.RecoverSpeed * dt))
+	end
+	climbOffset = climbOffset:Lerp(climbTarget, 1 - math.exp(-cfg.ClimbSnap * dt))
+	local cp = camPunch:Update(dt)
+	-- slide rumble: tiny low-frequency noise, scales with speed, mostly gone while aiming
+	local shakeAmt = SPEEDFX.SHAKE_DEG * slideAlpha * math.clamp(flatSpeed / 40, 0, 1.3) * (1 - aimAlpha * 0.85) * (userSettings().Shake or 1) -- v5.17: screen shake setting
+	local shakeP = math.noise(now * 9, 0.3) * shakeAmt
+	local shakeY = math.noise(0.7, now * 9) * shakeAmt * 0.6
+	shakeRoll = math.noise(now * 7, 5.1) * shakeAmt * 1.5
+	local desired = climbOffset + Vector2.new(cp.X + shakeP, cp.Y + shakeY)
+	visPitch, visYaw = cp.X + shakeP, cp.Y + shakeY -- v3.4: the visual-only part of the rotation (taken back out of every shot, see aimLook)
+	local d = desired - applied
+	applied = desired
+	rotateCamera(d.X, d.Y)
+	lastPitch = math.deg(math.asin(math.clamp(camera.CFrame.LookVector.Y, -1, 1)))
+	local slideRoll = -3 * slideAlpha * (1 - aimAlpha * 0.6)
+	camera.CFrame *= CFrame.Angles(0, 0, rad(cp.Z + slideRoll + shakeRoll))
+
+	-- slide start: short FOV kick + small dip
+	if sliding and not wasSliding then
+		fovPunch:Impulse(Vector3.new(SPEEDFX.SLIDE_FOV_PUNCH * (1 - aimAlpha * 0.8), 0, 0))
+		landSpring:Impulse(Vector3.new(0, -1.6, 0))
+	end
+	wasSliding = sliding
+
+	local fp = fovPunch:Update(dt)
+	local fast = math.clamp((flatSpeed - SPEEDFX.FOV_FROM) / (SPEEDFX.FOV_TO - SPEEDFX.FOV_FROM), 0, 1)
+	speedFov = approach(speedFov, fast * SPEEDFX.FOV_ADD, dt, 0.35)
+	local fov = BASE_FOV + (SPRINT_FOV - BASE_FOV) * sprintAlpha + SLIDE_FOV_ADD * slideAlpha + speedFov + ((userSettings().Fov or BASE_FOV) - BASE_FOV) * (1 - aimAlpha) -- v5.17: field of view setting (hip only)
+	local zoomFp = sight.Mag and fp.X / sight.Mag or fp.X
+	camera.FieldOfView = fov + (adsFov - fov) * aimAlpha + zoomFp
+
+	-- ===== viewmodel =====
+	local camCF = camera.CFrame
+	local md = UIS:GetMouseDelta()
+	local swayMult = 1 - aimAlpha * 0.85
+	swaySpring.Target = Vector3.new(
+		math.clamp(md.Y * 0.35, -5, 5), math.clamp(md.X * 0.35, -5, 5), math.clamp(md.X * 0.25, -4, 4)
+	) * swayMult
+	local sw = swaySpring:Update(dt)
+
+	local localVel = camCF:VectorToObjectSpace(vel)
+	strafeRoll = approach(strafeRoll, -localVel.X * 0.22 * swayMult * (1 - slideAlpha), dt, 0.2)
+
+	if not grounded then airVelY = vel.Y end
+	if grounded and not wasGrounded then
+		landSpring:Impulse(Vector3.new(0, -math.clamp(-airVelY * 0.1, 0.6, 4), 0))
+	elseif not grounded and wasGrounded then
+		landSpring:Impulse(Vector3.new(0, -1, 0))
+	end
+	wasGrounded = grounded
+	local lp = landSpring:Update(dt)
+
+	local bobTarget = (grounded and math.clamp(flatSpeed / 16, 0, 1.6) or 0) * (1 - aimAlpha * 0.85) * (1 - slideAlpha) * (1 - mantleAlpha)
+	bobAmt = approach(bobAmt, bobTarget, dt, 0.15)
+	bobT += dt * flatSpeed * 0.62
+	local b = bobAmt
+	local bob = CFrame.new(math.sin(bobT) * 0.035 * b, -math.abs(math.cos(bobT)) * 0.04 * b + 0.02 * b, 0)
+		* CFrame.Angles(rad(math.abs(math.cos(bobT)) * 0.8 * b), 0, rad(math.sin(bobT) * 1.4 * b))
+	local br = 1 - aimAlpha * 0.8
+	local breathe = CFrame.new(0, math.sin(now * 1.7) * 0.01 * br, 0) * CFrame.Angles(rad(math.sin(now * 1.7) * 0.3 * br), 0, 0)
+
+	-- v6: no draw / swing-in animation any more (it looked bad): the gun is simply there when you equip it
+	local equipCF = IDENT
+	equipSettled = true
+
+	local sk = smooth(slideAlpha)
+	local skPos = sk * (1 - aimAlpha * 0.9)
+	local skRoll = sk * (1 - aimAlpha * 0.75)
+	local slideCF = CFrame.new(-0.1 * skPos, -0.05 * skPos, 0.12 * skPos)
+		* CFrame.Angles(rad(3 * skPos), rad(4 * skPos), rad(-16 * skRoll))
+
+	crouchAlpha = approach(crouchAlpha, crouching and 1 or 0, dt, 0.15)
+	local ck = smooth(crouchAlpha) * (1 - aimAlpha)
+	local crouchCF = CFrame.new(-0.04 * ck, -0.04 * ck, 0.03 * ck) * CFrame.Angles(0, 0, rad(-4 * ck))
+
+	local mk = smooth(mantleAlpha)
+	local mantleCF = CFrame.new(0.15 * mk, -0.75 * mk, 0.3 * mk)
+		* CFrame.Angles(rad(-38 * mk), rad(22 * mk), rad(32 * mk))
+
+	local rpose = reloadPose(reloading and reloadU or 0)
+	local tiltCF, handPos, grab = rpose.tilt, rpose.hand, rpose.grab
+
+	local rp, rr = recoilPos:Update(dt), recoilRot:Update(dt)
+	-- v5.6: aiming scales the viewmodel kick right down so the gun/scope stays put (tiny side shake + a small push back)
+	local kpS = 1 + (ADS_KICK_SIDE - 1) * aimAlpha
+	local kpZ = 1 + (ADS_KICK_BACK - 1) * aimAlpha
+	local kr = 1 + (ADS_KICK_ROT - 1) * aimAlpha
+	local recoilCF = CFrame.new(rp.X * kpS, rp.Y * kpS, rp.Z * kpZ) * CFrame.Angles(rad(rr.X * kr), rad(rr.Y * kr), rad(rr.Z * kr))
+
+	local ea = smooth(aimAlpha)
+	local base = HIP:Lerp(AIM, ea):Lerp(SPRINT, sprintAlpha * (1 - aimAlpha) * (1 - reloadHold * RELOAD_SPRINT_HOLD))
+
+	do -- bullets follow the sight: if a slide/crouch/mantle pushes the reticle off screen center, shoot through the reticle
+		local aimLocal = CFrame.new(built.Points.Aim.Position)
+		local vN = (camCF * base * aimLocal).Position - camCF.Position
+		local vF = (camCF * base * mantleCF * slideCF * crouchCF * aimLocal).Position - camCF.Position
+		local a, b = vN.Unit, vF.Unit
+		local axis = a:Cross(b)
+		local angle = math.min(math.acos(math.clamp(a:Dot(b), -1, 1)), rad(25)) * aimAlpha
+		shotShift = axis.Magnitude > 1e-5 and CFrame.fromAxisAngle(axis.Unit, angle) or CFrame.identity
+		if adsDropAng > 0 then -- v7: the ADS pose sits a little low on screen (pistols): the shot still leaves through the sight
+			shotShift = CFrame.fromAxisAngle(camCF.RightVector, -adsDropAng * aimAlpha) * shotShift
+		end
+	end
+	local adsArc = math.sin(math.pi * math.clamp(aimAlpha, 0, 1)) -- v3.4: the gun rolls through a small arc on the way in / out of ADS
+	gunCF = camCF * base * CFrame.Angles(0, 0, rad(-3.5 * adsArc)) * mantleCF * slideCF * crouchCF * equipCF * CFrame.new(0, lp.Y, 0) * CFrame.Angles(rad(-lp.Y * 20), 0, 0)
+		* breathe * bob * CFrame.Angles(rad(sw.X), rad(sw.Y), rad(sw.Z + strafeRoll))
+		* tiltCF * recoilCF
+
+	-- bolt / pump / slide travel
+	local cycleZ = 0
+	if cfg.Cycle then
+		local u = (now - cycleStart - cfg.CycleDelay) / cfg.CycleTime
+		if u > 0 and u < 1 then cycleZ = math.sin(math.pi * u) * cfg.CycleDist * VM_SCALE end
+	end
+
+	-- sniper scope: hide the gun and show the full-screen scope when fully aimed
+	local wantScope = sight.Overlay == true and aimAlpha > 0.9
+	if wantScope ~= scoped then
+		scoped = wantScope
+		scope.Visible = scoped
+	end
+	-- gun is put away while carrying a box, and during scripted camera shots (except the first-person run-in)
+	local cutscene = camera.CameraType == Enum.CameraType.Scriptable and type(cutRun) ~= "number"
+	local vmParent = (not scoped and not carryingBox and not cutscene) and camera or nil
+	if built.Model.Parent ~= vmParent then built.Model.Parent = vmParent end
+
+	if not scoped then
+		local i = 0
+		for _, g in built.Groups.gun do i += 1; cfList[i] = gunCF * g.Offset end
+		local rz = rpose.cycleZ or cycleZ
+		local cycleCF = gunCF * CFrame.new(0, 0, rz)
+		for _, g in built.Groups.cycle do i += 1; cfList[i] = cycleCF * g.Offset end
+		local magCF = gunCF * built.Points.MagPivot * rpose.mag
+		for _, g in built.Groups.mag do i += 1; cfList[i] = rpose.fall and OFFSCREEN or (magCF * g.Offset) end
+		local coverCF = gunCF * (rpose.cover or CFrame.identity)
+		for _, g in built.Groups.cover do i += 1; cfList[i] = coverCF * g.Offset end
+		for _, g in built.Groups.aux do
+			i += 1
+			local ac = rpose.aux and rpose.aux[g.Aux]
+			cfList[i] = ac and (gunCF * ac * g.Offset.Rotation) or OFFSCREEN
+		end
+		if cfg.Cycle == "Pump" and grab == 0 then handPos += Vector3.new(0, 0, cycleZ) end
+		-- v3.1: drop the whole left hand so it wraps UNDER the handguard instead of floating above it (tune HAND_DROP)
+		local HAND_DROP = ReloadAnims.HAND_DROP
+		handPos += Vector3.new(0, -HAND_DROP * (1 - (rpose.hold or 0)), 0) -- v7: no drop while the hand is carrying / holding something
+		local leftCF = gunCF * CFrame.new(handPos) * CFrame.Angles(rad(-20 * grab), 0, rad(-35 * grab))
+		-- left arm: sleeve + cuff point from the hand to a fixed shoulder point below + behind the camera, so when the hand
+		-- goes up to cock the gun the arm tilts down off screen instead of its back end showing
+		local shoulder = built.Points.Fore.Position + Vector3.new(-1.3, -3.4, 3.0)
+		local armDir = (shoulder - handPos).Unit
+		for _, g in built.Groups.left do
+			i += 1
+			if g.Dyn == "sleeve" then
+				local len = built.SleeveLen
+				cfList[i] = gunCF * CFrame.lookAt(handPos + armDir * (0.15 + len / 2), handPos + armDir * (1 + len / 2)) * (g.Cyl and CYL_TURN or IDENT)
+			elseif g.Dyn == "cuff" then
+				cfList[i] = gunCF * CFrame.lookAt(handPos + armDir * 0.2, handPos + armDir) * (g.Cyl and CYL_TURN or IDENT)
+			else
+				cfList[i] = leftCF * g.Offset
+			end
+		end
+		local flashCF = gunCF * built.Points.Muzzle * CFrame.Angles(0, 0, flashRoll)
+		for _, g in built.Groups.flash do i += 1; cfList[i] = flashCF * g.Offset end
+		workspace:BulkMoveTo(partsList, cfList, Enum.BulkMoveMode.FireCFrameChanged)
+	end
+
+	local flashOn = now < flashUntil
+	if flashOn ~= flashVisible then
+		flashVisible = flashOn
+		for _, g in built.Groups.flash do g.Part.Transparency = flashOn and 0 or 1 end
+		built.Light.Brightness = flashOn and 4 or 0
+	end
+
+	-- crosshair: spread gap, fades out fast and is fully hidden while aiming down sights
+	local spread = currentSpread() + (cfg.Pellets > 1 and cfg.PelletSpread or 0)
+	local gap = math.tan(rad(spread)) / math.tan(rad(camera.FieldOfView / 2)) * (camera.ViewportSize.Y / 2) + 5
+	gap = math.min(gap + crossKick * 3, 110) -- v3.4: the crosshair pulses outward on every shot
+	for _, c in crossLines do
+		c.f.Position = UDim2.new(0.5, c.d.X * (gap + 4), 0.5, c.d.Y * (gap + 4))
+	end
+	local hide = math.clamp(math.max(aimAlpha * 3, sprintAlpha * 1.3, mantleAlpha * 1.3), 0, 1)
+	cross.Visible = hide < 0.99 and alive and not menuOpen() and not carryingBox
+	for _, c in crossAll do
+		c.f.BackgroundTransparency = hide
+		c.s.Transparency = 0.55 + 0.45 * hide
+	end
+	if menuOpen() then -- v3.8: a menu (pregame loadout, summary...) is up: the cursor must be visible
+		if not UIS.MouseIconEnabled then UIS.MouseIconEnabled = true end
+	elseif UIS.MouseIconEnabled then UIS.MouseIconEnabled = false end
+
+	-- speed lines + wind
+	local fwdSpeed = math.max(-localVel.Z, 0) * 0.6 + flatSpeed * 0.4 -- mostly forward motion
+	local lineTarget = math.clamp((fwdSpeed - SPEEDFX.LINES_FROM) / (SPEEDFX.LINES_TO - SPEEDFX.LINES_FROM), 0, 1)
+	lineTarget *= (1 - aimAlpha) * (alive and 1 or 0) * (scoped and 0 or 1)
+	speedLineAlpha = approach(speedLineAlpha, lineTarget, dt, lineTarget > speedLineAlpha and 0.25 or 0.15)
+	speedLayer.Visible = speedLineAlpha > 0.01
+	for _, f in speedEdges do f.BackgroundTransparency = 1 - SPEEDFX.EDGE_MAX_ALPHA * speedLineAlpha end
+	if speedLayer.Visible then
+		local vp = camera.ViewportSize
+		local half = vp * 0.5
+		local reach = math.sqrt(half.X * half.X + half.Y * half.Y)
+		for _, L in speedLines do
+			L.r += dt * L.speed * (0.6 + speedLineAlpha * 0.9)
+			if L.r > 1.15 then
+				L.r = 0.68 + math.random() * 0.1
+				L.angle += (math.random() - 0.5) * 0.4
+				L.len = 60 + math.random() * 90
+			end
+			local dx, dy = math.cos(L.angle), math.sin(L.angle)
+			local px, py = half.X + dx * reach * L.r, half.Y + dy * reach * L.r
+			L.f.Position = UDim2.fromOffset(px, py)
+			L.f.Size = UDim2.fromOffset(L.len * (0.6 + 0.4 * speedLineAlpha), L.w)
+			L.f.Rotation = math.deg(math.atan2(dy, dx))
+			local edgeFade = math.clamp((L.r - 0.68) / 0.12, 0, 1) * math.clamp((1.15 - L.r) / 0.15, 0, 1)
+			L.f.BackgroundTransparency = 1 - SPEEDFX.LINES_MAX_ALPHA * speedLineAlpha * edgeFade
+		end
+	end
+	if windSound then
+		local w = math.clamp((flatSpeed - SPEEDFX.WIND_FROM) / (SPEEDFX.WIND_TO - SPEEDFX.WIND_FROM), 0, 1)
+		windSound.Volume = approach(windSound.Volume, w * SPEEDFX.WIND_VOL * (alive and 1 or 0), dt, 0.3)
+		windSound.PlaybackSpeed = 0.85 + w * 0.35
+	end
+
+	-- damage vignette
+	dmgAlpha = math.max(0, dmgAlpha - dt * 2.2)
+	local hpFrac = humanoid.Health / math.max(humanoid.MaxHealth, 1) -- v4.4: relative (max health is 200 now)
+	local low = hpFrac < 0.5 and (1 - hpFrac / 0.5) * 0.5 or 0
+	local va = math.max(dmgAlpha, low)
+	for _, f in vignettes do f.BackgroundTransparency = 1 - va * 0.6 end
+end
+
+pcall(function() RunService:UnbindFromRenderStep(BIND) end)
+RunService:BindToRenderStep(BIND, Enum.RenderPriority.Camera.Value + 1, onRender)
+
+cleanup = function()
+	if cleaned then return end
+	cleaned = true
+	pcall(function() RunService:UnbindFromRenderStep(BIND) end)
+	for _, c in conns do c:Disconnect() end
+	fx:Destroy()
+	if built then built.Model:Destroy() end
+	UIS.MouseDeltaSensitivity = sensNow(false)
+	camera.FieldOfView = BASE_FOV
+	if windSound then windSound:Destroy() end
+	pcall(function() CAS:UnbindAction(SPRINT_ACTION) end)
+end
+humanoid.Died:Connect(cleanup)
+character.AncestryChanged:Connect(function(_, parent) if not parent then cleanup() end end)
+script.Destroying:Connect(function() cleanup() end)
