@@ -1,3 +1,6 @@
+-- LobbyClient v6.3 (v5.16: home-screen CARD INDEX button (above PLAY) - the three-card fan is centred on the button's height (it sat too low) and a bit
+--   further right, CARD INDEX + the DECK line moved right to make room; a gadget and a reserve slot can no longer hold the same item; the player cards
+--   show the equipped TITLE; "skin" wording -> COSTUME)
 -- LobbyClient v6.2 (v5.14: play-screen CARD INDEX button - the three-card fan sits further right and higher inside its space, CARD INDEX + DECK n / 32
 --   moved right with it, the DECK line is bigger (about 18 px Oswald) and brighter)
 -- LobbyClient v6.1 (v5.12, owner Nov 7): the player cards have the new PlayerCards v2 layout (no EDIT CARD button, LEAVE PARTY bottom left, the cards are
@@ -279,9 +282,13 @@ local function cardIndexButton(parent, x, y, w, h, opts)
 		sub = lbl(b, deckCountText(), math.floor(h * 0.22), tx + 1, math.floor(h * 0.56), w - tx - 44, math.floor(h * 0.3), C.text, "HM")
 		sub.TextTransparency = 0.12
 	else
-		cardFanIcon(b, 34, h / 2, math.floor(h * 0.62))
-		lbl(b, "CARD INDEX", math.floor(h * 0.42), 66, math.floor(h * 0.08), w - 110, math.floor(h * 0.5), C.text, "H")
-		sub = lbl(b, deckCountText(), 11, 67, math.floor(h * 0.6), w - 110, 14, C.dim, "M")
+		-- v5.16 (home screen, above PLAY): the fan is CENTRED on the button's height (it hung low: its maths put the cards 0.62 x size below the
+		-- middle) and sits a bit further right; CARD INDEX + the DECK line moved right (x 66 -> 92) to make room for it
+		local fs = math.floor(h * 0.62)
+		cardFanIcon(b, 44, h / 2 - 1, fs, true)
+		local tx = 92
+		lbl(b, "CARD INDEX", math.floor(h * 0.42), tx, math.floor(h * 0.08), w - tx - 44, math.floor(h * 0.5), C.text, "H")
+		sub = lbl(b, deckCountText(), 11, tx + 1, math.floor(h * 0.6), w - tx - 44, 14, C.dim, "M")
 	end
 	table.insert(cardBtnSubs, sub)
 	chevron(b, w - 30, h / 2 - 8, 8, C.dim, 2)
@@ -1021,7 +1028,7 @@ local pickScroll = new("ScrollingFrame", { Position = UDim2.fromOffset(24, 112),
 local pickGrid = new("UIGridLayout", { CellSize = UDim2.fromOffset(312, 208), CellPadding = UDim2.fromOffset(16, 16), SortOrder = Enum.SortOrder.LayoutOrder }, pickScroll)
 new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingBottom = UDim.new(0, 16) }, pickScroll)
 
-local PICK_TITLES = { move = "MOVEMENT", weapon = "PRIMARY", gadget = "GADGET", reserve = "RESERVE", skin = "SKIN CATALOG" }
+local PICK_TITLES = { move = "MOVEMENT", weapon = "PRIMARY", gadget = "GADGET", reserve = "RESERVE", skin = "COSTUME CATALOG" } -- v5.16: player skins are called COSTUMES
 local PICK_SUBS = { -- v5.9: filler lines removed; only the reserve keeps one (it says how the reserve works)
 	reserve = "SWAP WITH YOUR ACTIVE LOADOUT WHILE DEAD",
 }
@@ -1060,6 +1067,11 @@ local function setSlot(kind, idx, id)
 			end
 		end
 		arr[idx] = id
+		-- v5.16: an item is EITHER a gadget OR in the reserve, never both: picking it for one row takes it out of the other
+		if id ~= "" then
+			local other = (kind == "gadget") and loadout.Reserve or loadout.Gadgets
+			for j = 1, 3 do if other[j] == id then other[j] = "" end end
+		end
 	end
 	pushLoadout()
 end
@@ -1436,9 +1448,10 @@ local function renderCards()
 			local d = {
 				userId = m.id, name = p and p.DisplayName or m.name, username = p and p.Name or m.name, level = p and p:GetAttribute("Level") or nil,
 				leader = n > 1 and m.id == leader, ready = rm[tostring(m.id)] ~= nil, card = PlayerCards.Read(p), me = m.me,
+				title = p and p:GetAttribute("Title") or nil, -- v5.16: the equipped TITLE (shown on the card when card.showTitle is on)
 			}
 			datas[i] = d
-			table.insert(key, ("%d:%s:%s:%s:%s:%s"):format(m.id, tostring(d.level), tostring(d.leader), tostring(d.ready), tostring(d.name), HttpService:JSONEncode(d.card)))
+			table.insert(key, ("%d:%s:%s:%s:%s:%s:%s"):format(m.id, tostring(d.level), tostring(d.leader), tostring(d.ready), tostring(d.name), HttpService:JSONEncode(d.card), tostring(d.title)))
 		else
 			table.insert(key, "-")
 		end
@@ -1705,14 +1718,14 @@ end
 for _, k in { "Queued", "Teleporting", "QueuedAt", "QueuedMode" } do player:GetAttributeChangedSignal(k):Connect(refreshQueue) end
 -- v5.11: ready states, levels and player cards repaint the cards / podium names / modes screen
 player:GetAttributeChangedSignal("PartyReadyJson"):Connect(function() refreshQueue() renderCards() rebuildSquadSoon() end)
-for _, k in { "Level", "PlayerCardJson" } do player:GetAttributeChangedSignal(k):Connect(renderCards) end
+for _, k in { "Level", "PlayerCardJson", "Title" } do player:GetAttributeChangedSignal(k):Connect(renderCards) end -- v5.16: + Title
 for _, k in { "PartyId", "PartyLeader", "PartyMembers" } do
 	player:GetAttributeChangedSignal(k):Connect(function() renderParty() refreshQueue() rebuildSquadSoon() end)
 end
 local function watchOther(p)
 	p:GetAttributeChangedSignal("Skin"):Connect(function() rebuildSquadSoon() if screenOpen then renderParty() end end)
 	p:GetAttributeChangedSignal("LoadoutJson"):Connect(rebuildSquadSoon)
-	for _, k in { "Level", "PlayerCardJson", "DisplayName" } do p:GetAttributeChangedSignal(k):Connect(renderCards) end -- v5.11
+	for _, k in { "Level", "PlayerCardJson", "DisplayName", "Title" } do p:GetAttributeChangedSignal(k):Connect(renderCards) end -- v5.11 (v5.16: + Title)
 end
 for _, p in Players:GetPlayers() do if p ~= player then watchOther(p) end end
 Players.PlayerAdded:Connect(watchOther)
