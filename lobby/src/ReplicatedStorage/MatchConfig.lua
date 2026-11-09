@@ -1,0 +1,179 @@
+-- MatchConfig: every tuning number for the Wall Push mode (GDD 2.1) in one place.
+-- Items marked PROPOSAL are not owner-approved yet - change them freely while playtesting.
+local C = {}
+
+-- ===== match flow =====
+C.MIN_PLAYERS  = 1   -- players needed to start a round (raise to 2-6 for live games; 1 lets you test alone)
+-- Flow: Waiting (loading screen) -> Pregame -> Warp (cutscene) -> Cards (v4.3: roll + pick a power-up card) -> Countdown -> Playing -> SlowMo -> Result (winner cutscene) -> Summary (souls screen)
+C.READY_TIMEOUT  = 40  -- seconds to wait for slow clients to finish loading before starting without them
+C.LOAD_HOLD      = 10  -- v5.16: 10 s (was 15). The map loading screen stays up this many seconds AFTER everybody has loaded, then the match starts. Clients also keep it at least this long since they joined.
+C.PREGAME_TIME   = 20  -- pre-game screen (loadout + clock)
+C.WARP_TIME      = 5.6 -- v5.9: soul flies through the map's watercolor painting + white flash (MatchFlow is timed to this: keep it at 5.6)
+C.COUNTDOWN_TIME = 3   -- 3-2-1 on the map, everybody frozen
+-- v4.3 card pick (phase "Cards", right after the run-in): the 3 reels pop in 0.5 s apart and roll, then you have CARD_PICK seconds.
+C.CARD_REVEAL    = 2.8 -- roll time: CardRoll lands the reels at about 1.65 / 2.15 / 2.65 s (do not go below 2.7)
+C.CARD_PICK      = 10  -- seconds to pick once the last reel has landed. No pick = the middle card.
+C.CARD_OUTRO     = 1.0 -- after the pick: the card flies to your HUD, then the countdown starts
+C.SLOWMO_TIME    = 2.6 -- the moment the round is decided everything slows down (movement, shooting, falling) for this long, then the winner cutscene
+C.SLOWMO_SCALE   = 0.1 -- how slow it gets (0.1 = ten times slower)
+C.SLOWMO_RAMP    = 0.5 -- seconds to ease from normal speed down to SLOWMO_SCALE
+C.RESULT_TIME    = 5   -- winner cutscene (winners sit on thrones) before the souls screen
+C.SUMMARY_MAX    = 60  -- the server never waits longer than this for players to press CONTINUE
+C.SUMMARY_AUTO   = 15  -- the client presses CONTINUE for you this many seconds after the soul count finished
+-- v5.16 MOUSE SENSITIVITY in the match (owner: "same Roblox sensitivity as other gun games, but here the guns move way too easily").
+-- UserInputService.MouseDeltaSensitivity is a multiplier ON TOP of the player's own Roblox sensitivity setting: 1 = raw Roblox, lower = slower.
+-- Applied every frame by GunClient (also while aiming / scoped) and when MatchFlow hands the camera back. Tune this one number.
+C.MOUSE_SENS     = 0.55
+-- v5.16: phases in which nobody can move, shoot, use a gadget or pose (loading, loadout screen, cutscene, card roll, 3-2-1). MatchServer anchors
+-- every character in these phases; GunClient ignores the mouse / R and plays no sound until the phase is Playing.
+C.LOCKED_PHASES  = { Waiting = true, Pregame = true, Warp = true, Cards = true, Countdown = true }
+
+-- ===== souls earned per match (multipliers stack on the base) =====
+C.REWARD = {
+	Base = 50,
+	Win = 1.5, Loss = 0.75, Draw = 1.0,   -- set multiplier for how the match ended
+	PerKill = 0.10,                       -- + this per kill
+	PerPlugged = 0.05,                    -- + this per box you plugged into a hole
+	PerDestroyed = 0.08,                  -- + this per enemy box you destroyed
+	PerThousandDamage = 0.02,             -- + this per 1000 damage dealt to players (tiny)
+}
+-- v3.8: player XP earned per match (one number on the summary screen, the bar fills while the stat rows are revealed).
+-- XP = Base + outcome + kills + boxes plugged + boxes destroyed + damage. Level curve lives in ReplicatedStorage.Levels.
+C.XP = {
+	Base = 40,
+	Win = 60, Draw = 30, Loss = 20,
+	PerKill = 12, PerPlugged = 8, PerDestroyed = 10,
+	PerHundredDamage = 2,
+}
+C.RESPAWN_TIME = 5   -- (no longer used since v4.1: see DEAD_TIME / WIPE_TIME below; kept so old scripts do not break)
+-- v4.1 respawn reveal: your camera hovers behind + above your body while souls build it (REVEAL_BUILD), then a fast rush puts you back
+-- into it (REVEAL_DIVE) and you play instantly. Total frozen time = REVEAL_BUILD + REVEAL_DIVE.
+C.REVEAL_BUILD = 1.75
+C.REVEAL_DIVE  = 0.3
+C.REVEAL_TIME  = C.REVEAL_BUILD + C.REVEAL_DIVE
+C.REZ_FINISH   = 0.55 -- after a revive the body is already ~85% built (it was building the whole 8 s), this is the rest + the dive
+
+-- ===== v4.1 death screen + souls =====
+C.DEAD_TIME = 25  -- seconds you are dead (you spectate a living teammate). v4.4: 25 (was 15)
+C.WIPE_TIME = 10  -- team wipe (nobody left to spectate): EVERYONE on the team is dead for this long and free-roams the map
+C.REZ_TIME  = 8   -- seconds a teammate has to hold the revive prompt on your soul
+C.SOUL = {
+	CarryTime  = 0.3,   -- hold E this long to pick a soul up
+	ThrowSpeed = 70,    -- studs/s when you throw a soul (left click), Q drops it
+	Reach      = 8,     -- prompt distance
+	HoldRange  = 3.2,   -- the rezzing player must stay this close to where they started (and keep holding)
+}
+
+-- ===== v5 MAP FOLDERS (MatchServer) =====
+-- One folder per game mode. Each folder holds one sub-folder per map, named <mapname>_map (example: test_map). Every <name>_map folder
+-- holds the whole map (its MapBounds part + all its parts / models). The server picks ONE map of the mode's folder at random (one map = always
+-- that one, two maps = 50/50 ...), clones it into Workspace and fits the match pieces inside its MapBounds. The text before "_map" is
+-- the map name shown on the loadout screen (test_map -> TEST).
+-- The folders are looked for in ServerStorage (best: players never see the unused maps), then ReplicatedStorage, then Workspace (moved to ServerStorage at start).
+C.MAPS = {
+	Folders = { Breakline = "breaklineMaps", ["1v1"] = "1v1Maps" }, -- mode -> folder name (matched ignoring upper / lower case)
+	Suffix = "_map",                                                -- a map folder's name ends with this
+	StudioMode = "1v1",                                       -- the mode used when you press Play in Studio (live servers get it from the lobby queue)
+	-- v5.8: per-map LOADING ART + display name. Key = the map folder's name without "_map", lower case (test_map -> test).
+	--   Name  = the name shown big on the loading screen + under the loadout clock (empty = made from the folder name: test_map -> TEST).
+	--   Image = the uploaded loading picture (rbxassetid://<number>). "" or rbxassetid://0 = no picture yet (dark screen with the name).
+	-- A map folder can also carry its own attributes instead: DisplayName (string) and LoadingImage (string). Those win over this table.
+	-- The same map name works in both mode folders (a test_map in breaklineMaps AND in 1v1Maps both use Info.test).
+	Info = {
+		-- v5.11: keys are matched loosely (case / spaces / _ ignored, and an entry whose Name equals the map name counts too), so the
+		-- folder "testing grounds_map" uses this entry. A new map: add a line like  ["my map"] = { Name = "MY MAP", Image = "rbxassetid://..." },
+		["testing grounds"] = { Name = "TESTING GROUNDS", Image = "rbxassetid://102949066481332" }, -- the uploaded LoadingArt_TestingGrounds image
+		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://102949066481332" },
+	},
+	-- v5.9: the watercolor wash texture laid over the 3D fly-through of the map during the Warp (tileable, upload WarpWash.png).
+	-- "" = no texture (the fly-through still works: plain translucent washes + ink edges).
+	WashTexture = "rbxassetid://71891832579574",
+}
+
+-- ===== v4.1 modes =====
+C.MODES = { Breakline = "Breakline", OneVOne = "1v1" }
+C.V1 = {
+	KillsToWin = 5,  -- first player to this many kills wins the round
+	MinPlayers = 1,  -- players needed to start a 1v1 (2 for live games; 1 lets you test alone in Studio)
+	RespawnTime = 3, -- seconds you are out after a death in a 1v1 (you spectate your opponent). Keep equal to ResetDelay so both players come back together.
+	RoundTime = 90,  -- v4.2: one 1v1 round lasts a minute and a half. A kill, a death or the timer ends it and both players go back to their sides.
+	ResetDelay = 3,  -- seconds between the end of a round and both players being put back on their sides
+}
+
+-- Team 1 (Red) defends one end of the map, team 2 (Blue) the other. See MAP.SwapEnds.
+C.Teams = {
+	{ Name = "Red",  Color = BrickColor.new("Bright red") },
+	{ Name = "Blue", Color = BrickColor.new("Bright blue") },
+}
+
+-- ===== map fitting =====
+-- The map size comes from YOUR part named "MapBounds" in Workspace (anchored, fully transparent, as big as the playable area).
+--   * MapBounds X size = map width, Z size = map length, Y size = map height. Its BOTTOM is the ground level.
+--   * Red's end is the Front (-Z) end of MapBounds, Blue's end is the Back (+Z) end. Rotate MapBounds, or set SwapEnds, to change it.
+-- MatchServer builds only: invisible boundary walls + ceiling, the 2 finish lines, the 6 invisible team spawns, the wall, and the boxes.
+C.MAP = {
+	FinishInset     = 12,                -- studs the finish lines + spawns sit in from each end of MapBounds
+	WallThickness   = 6,
+	WallHeightMax   = 60,                -- the wall is as tall as MapBounds, but never taller than this
+	HoleXFrac       = { -0.28, 0, 0.28 }, -- 3 holes per side; positions as a fraction of MapBounds width (0 = center)
+	HoleY           = 3,                 -- height of a plugged box's center above the ground
+	SpawnXFrac      = { -0.14, 0, 0.14 }, -- 3 spawns per team; fraction of MapBounds width
+	GroundOffset    = 0,                 -- raise (+) or lower (-) the ground level if your floor is not at the bottom of MapBounds
+	SwapEnds        = false,             -- true = Red at the Back (+Z) end instead
+	ShowFinishLines = true,              -- thin glowing line in each team's color (false = invisible)
+}
+
+-- ===== wall =====
+-- studs/second by how many MORE plugged boxes the pushing team has: [1] = one box ahead, [2] = two ahead, [3] = three ahead.
+-- (Slowed down Oct 25: was 1.5 / 3.0 / 4.5.) Tie = wall stands still.
+C.WALL_SPEED = { 0.8, 1.5, 2.1 }
+
+-- ===== boxes =====
+C.BOX = {
+	Size            = 2.8,
+	Health          = 5000, -- plugged-box health (owner)
+	DamageMult      = 1,    -- gun damage multiplier against boxes
+	PushDrainPerSec = 10,   -- owner: boxes of the team that is currently PUSHING the wall take this much damage every second
+	SpawnInterval   = 60,   -- every minute, one new box on EACH side of the wall (owner)
+	StartPerSide    = 1,    -- boxes on each side when a round starts (owner)
+}
+
+C.PICKUP_TIME   = 0.25 -- hold time (s) to pick up a loose box
+C.EXTRACT_TIME  = 1.5  -- hold time (s) to extract an ENEMY plugged box
+C.PLUG_RADIUS   = 7    -- a box this close to an empty hole of its team's side floats in by itself
+C.PLUG_ANIM     = 0.45 -- seconds the box floats into the hole
+C.CATCH_RADIUS  = 6    -- teammates auto-catch a thrown box this close to them
+C.THROW_SPEED   = 120  -- studs/second (roughly 40-70 studs of range depending on angle)
+C.THROW_UP      = 0.3  -- extra upward angle added to your aim
+C.CARRY_SPEED_MULT = 0.85 -- PROPOSAL: carrier is a little slower (used by GunClient)
+
+-- first-person carry model (MatchClient). Smaller BoxSize / lower Y = less of your screen taken up.
+C.CARRY_VM = {
+	BoxSize   = 0.95,
+	Pos       = Vector3.new(0, -0.8, -2.1), -- camera space
+	RaiseTime = 0.3,
+}
+
+-- ===== v5.7 AI BOTS (queue fill) =====
+-- When nobody else queues with you for PlaceConfig.BOT_WAIT seconds, the lobby matchmaker starts a match with bots in the empty slots.
+-- The roster carries { Bots = { Red = n, Blue = n } }. BotServer spawns them. All numbers here; bots are meant to be "good enough", not smart.
+C.BOTS = {
+	StudioRed = 0, StudioBlue = 0,     -- TEST IN STUDIO: how many bots Red / Blue get when you press Play (live servers read the roster instead)
+	Weapons = { "VX9", "KR47", "HX3", "WASP", "LONGSHOT", "V9" }, -- each bot gets one of these at random
+	Skin = nil,                         -- nil = the default skin
+	Health = 250,
+	WalkSpeed = 15.5,
+	ReactTime = 0.45,                   -- seconds between first seeing an enemy and the first shot
+	Sight = 150,                        -- studs they can see enemies at (needs a clear line)
+	Spread = 3.2,                       -- degrees of random aim error (bigger = worse aim)
+	DamageMult = 0.55,                  -- their damage = the gun's damage x this
+	FireRateMult = 0.7,                 -- they shoot at this fraction of the gun's fire rate
+	BurstTime = { 0.5, 1.1 },           -- seconds of firing, then...
+	PauseTime = { 0.35, 0.9 },          -- ...seconds of not firing
+	MaxFireRange = 110,                 -- they will not shoot farther than this (or the gun's own range, if shorter)
+	RespawnTime = 14,                   -- seconds a dead bot stays down in a Breakline match (1v1 uses V1.RespawnTime)
+	SpawnShield = 1,                    -- v5.8: seconds a bot is unhittable after a mid-round respawn (a 1v1 round reset: only while frozen, like you)
+	BuilderPerTeam = 1,                 -- Breakline only: this many bots per team carry boxes to the holes instead of roaming
+}
+
+return C
