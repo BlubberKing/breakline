@@ -1,4 +1,11 @@
--- CosmeticsServer v3.1 (Script in ServerScriptService) - LOBBY place only. NEW in v5.10.
+-- CosmeticsServer v4 (Script in ServerScriptService) - LOBBY place only. NEW in v5.10.
+-- v5.16: POSES + TITLES.
+--     Buy("pose", id) / Buy("title", id)          (souls via Increment, essence only via SpendEssence; saved in PosesOwned / TitlesOwned)
+--     Equip("wheel", slot 1..6, poseId | "")      a slot of the pose wheel (T in game + lobby), saved in PoseWheel (the same pose never sits in two slots)
+--     Equip("title", id | "")                     the title over your name ("" = none), saved in Title
+--     Equip("cardpose", slot 1..3, poseId | "")   the pose a COSTUME in a showcase slot of your player card holds (saved in PlayerCard.poses)
+--     Equip("cardtitle", true | false)            show your title on your player card (PlayerCard.showTitle, default on)
+--   Putting a new item into a showcase slot clears that slot's pose. Wording: player skins are called COSTUMES in every message.
 -- v5.13: Equip("place") also keeps the REPOSITION angle (yaw / pitch, degrees; a power-up card is limited to PlayerCards.CARD_TILT), and putting a
 --        NEW item into a showcase slot resets that slot's angle to straight (the old angle belonged to the old item). Spot / size / turn stay.
 -- v5.12: the 3 showcase items on the player card are free to move / resize / turn:
@@ -24,6 +31,8 @@ local GunSkins = require(RS:WaitForChild("GunSkins"))
 local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
 local PlayerCards = require(RS:WaitForChild("PlayerCards")) -- v5.11
 local Cards = require(RS:WaitForChild("Cards"))
+local Poses = require(RS:WaitForChild("Poses"))   -- v5.16
+local Titles = require(RS:WaitForChild("Titles")) -- v5.16
 
 local folder = RS:FindFirstChild("CosmeticsRemotes") or Instance.new("Folder")
 folder.Name = "CosmeticsRemotes"
@@ -49,12 +58,14 @@ BuyR.OnServerInvoke = function(player, kind, id)
 	if busy[player] then return false, "One moment." end
 	if os.clock() - (lastCall[player] or 0) < 0.4 then return false, "Slow down." end
 	lastCall[player] = os.clock()
-	if (kind ~= "skin" and kind ~= "gun" and kind ~= "banner") or type(id) ~= "string" then return false, "Unknown item." end
+	if (kind ~= "skin" and kind ~= "gun" and kind ~= "banner" and kind ~= "pose" and kind ~= "title") or type(id) ~= "string" then return false, "Unknown item." end
 	local item = Cat.Find(kind, id)
 	if not item or not item.currency then return false, "That item is not for sale." end
 	if not loaded(player) then return false, "Your data is still loading." end
 	local owned
-	if kind == "skin" then owned = Cat.OwnsSkin(player, id) elseif kind == "gun" then owned = Cat.OwnsGunSkin(player, id) else owned = Cat.OwnsBanner(player, id) end
+	if kind == "skin" then owned = Cat.OwnsSkin(player, id) elseif kind == "gun" then owned = Cat.OwnsGunSkin(player, id)
+	elseif kind == "pose" then owned = Cat.OwnsPose(player, id) elseif kind == "title" then owned = Cat.OwnsTitle(player, id)
+	else owned = Cat.OwnsBanner(player, id) end
 	if owned then return false, "You already own this." end
 
 	busy[player] = true
@@ -68,7 +79,8 @@ BuyR.OnServerInvoke = function(player, kind, id)
 			if (player:GetAttribute("Essence") or 0) < item.amount then ok, msg = false, "Not enough essence." return end
 			if not Profiles.SpendEssence(player, item.amount) then ok, msg = false, "Not enough essence." return end -- saved to the DataStore before it returns true
 		end
-		appendOwned(player, (kind == "skin" and "SkinsOwned") or (kind == "gun" and "GunSkinsOwned") or "BannersOwned", id)
+		appendOwned(player, (kind == "skin" and "SkinsOwned") or (kind == "gun" and "GunSkinsOwned") or (kind == "pose" and "PosesOwned")
+			or (kind == "title" and "TitlesOwned") or "BannersOwned", id)
 		task.spawn(Profiles.Save, player) -- written right away, so a crash or a teleport can never lose a purchase
 		ok, msg = true, "Bought " .. item.name .. "."
 	end)
@@ -88,8 +100,8 @@ EquipR.OnServerInvoke = function(player, kind, id, gunId)
 	end
 	if not loaded(player) then return false, "Your data is still loading." end
 	if kind == "skin" then
-		if type(id) ~= "string" or not Skins.Is(id) then return false, "Unknown skin." end
-		if not Cat.OwnsSkin(player, id) then return false, "You do not own this skin." end
+		if type(id) ~= "string" or not Skins.Is(id) then return false, "Unknown costume." end
+		if not Cat.OwnsSkin(player, id) then return false, "You do not own this costume." end
 		Profiles.Set(player, "Skin", id)
 		task.spawn(Profiles.Save, player)
 		return true, "Equipped " .. Skins.Get(id).name .. "."
@@ -145,6 +157,11 @@ EquipR.OnServerInvoke = function(player, kind, id, gunId)
 			for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i, (PlayerCards.Parse(show[i]))) end
 			pos[slot].yaw, pos[slot].pitch = 0, 0
 			pc.pos = pos
+			-- v5.16: and without a pose (the pose belonged to the old costume; only costumes can hold one)
+			local poses = type(pc.poses) == "table" and table.clone(pc.poses) or {}
+			for i = 1, 3 do if type(poses[i]) ~= "string" then poses[i] = "" end end
+			poses[slot] = ""
+			pc.poses = poses
 		end
 		Profiles.Set(player, "PlayerCard", pc)
 		task.spawn(Profiles.Save, player)
@@ -163,6 +180,48 @@ EquipR.OnServerInvoke = function(player, kind, id, gunId)
 		Profiles.Set(player, "PlayerCard", pc)
 		task.spawn(Profiles.Save, player)
 		return true, "Placed."
+	elseif kind == "wheel" then -- v5.16: a slot of the pose wheel. id = slot 1..6, gunId = pose id or ""
+		local slot, poseId = tonumber(id), gunId
+		if not slot or slot < 1 or slot > Poses.WHEEL or slot % 1 ~= 0 then return false, "Unknown slot." end
+		if type(poseId) ~= "string" then return false, "Unknown pose." end
+		if poseId ~= "" and not Cat.OwnsPose(player, poseId) then return false, "You do not own this pose." end
+		local saved = Profiles.Get(player, "PoseWheel")
+		local wheel = (type(saved) == "table" and #saved > 0) and Poses.CleanWheel(saved, function(p) return Cat.OwnsPose(player, p) end) or table.clone(Poses.DefaultWheel)
+		if poseId ~= "" then for i = 1, Poses.WHEEL do if wheel[i] == poseId then wheel[i] = wheel[slot] end end end -- already on the wheel: the two slots swap
+		wheel[slot] = poseId
+		Profiles.Set(player, "PoseWheel", wheel)
+		task.spawn(Profiles.Save, player)
+		return true, poseId == "" and "Slot emptied." or (Poses.ById[poseId].name .. " is on slot " .. slot .. ".")
+	elseif kind == "title" then -- v5.16: the title over your name. id = title id or ""
+		if type(id) ~= "string" then return false, "Unknown title." end
+		if id ~= "" then
+			if not Titles.Is(id) then return false, "Unknown title." end
+			if not Cat.OwnsTitle(player, id) then return false, "You do not own this title." end
+		end
+		Profiles.Set(player, "Title", id)
+		task.spawn(Profiles.Save, player)
+		return true, id == "" and "Title removed." or ("Title set: " .. Titles.ById[id].text .. ".")
+	elseif kind == "cardpose" then -- v5.16: the pose a costume in a showcase slot holds. id = slot 1..3, gunId = pose id or ""
+		local slot, poseId = tonumber(id), gunId
+		if not slot or slot < 1 or slot > 3 or slot % 1 ~= 0 then return false, "Unknown slot." end
+		if type(poseId) ~= "string" then return false, "Unknown pose." end
+		local pc = table.clone(Profiles.Get(player, "PlayerCard") or {})
+		local show = type(pc.show) == "table" and pc.show or {}
+		if PlayerCards.Parse(show[slot]) ~= "skin" then return false, "Only a costume can hold a pose." end
+		if poseId ~= "" and not Cat.OwnsPose(player, poseId) then return false, "You do not own this pose." end
+		local poses = type(pc.poses) == "table" and table.clone(pc.poses) or {}
+		for i = 1, 3 do if type(poses[i]) ~= "string" then poses[i] = "" end end
+		poses[slot] = poseId
+		pc.poses = poses
+		Profiles.Set(player, "PlayerCard", pc)
+		task.spawn(Profiles.Save, player)
+		return true, poseId == "" and "Pose removed." or "Pose set."
+	elseif kind == "cardtitle" then -- v5.16: show the title on the player card (on / off)
+		local pc = table.clone(Profiles.Get(player, "PlayerCard") or {})
+		pc.showTitle = id == true
+		Profiles.Set(player, "PlayerCard", pc)
+		task.spawn(Profiles.Save, player)
+		return true, pc.showTitle and "Title shown on your card." or "Title hidden on your card."
 	end
 	return false, "Unknown request."
 end
@@ -189,7 +248,21 @@ Players.PlayerAdded:Connect(function(p)
 		local pos = {} -- v5.12: placements of the showcase items (checked / defaults); v5.13: + the REPOSITION angle
 		for i = 1, 3 do pos[i] = PlayerCards.CleanPlace(type(pc.pos) == "table" and pc.pos[i] or nil, i, (PlayerCards.Parse(pc.show[i]))) end
 		pc.pos = pos
+		-- v5.16: showcase poses (only a costume slot keeps one, and only an owned pose) + the title switch (default on)
+		local poses = {}
+		for i = 1, 3 do
+			local pz = type(pc.poses) == "table" and pc.poses[i] or ""
+			poses[i] = (type(pz) == "string" and PlayerCards.Parse(pc.show[i]) == "skin" and Cat.OwnsPose(p, pz)) and pz or ""
+		end
+		pc.poses = poses
+		if type(pc.showTitle) ~= "boolean" then pc.showTitle = true end
 		Profiles.Set(p, "PlayerCard", pc)
+		-- v5.16: the pose wheel (defaults for a new save, owned poses only) + a title that is no longer owned is taken off
+		local wheel = Profiles.Get(p, "PoseWheel")
+		local cleanW = (type(wheel) == "table" and #wheel > 0) and Poses.CleanWheel(wheel, function(id) return Cat.OwnsPose(p, id) end) or table.clone(Poses.DefaultWheel)
+		Profiles.Set(p, "PoseWheel", cleanW)
+		local title = Profiles.Get(p, "Title")
+		if type(title) ~= "string" or (title ~= "" and not Cat.OwnsTitle(p, title)) then Profiles.Set(p, "Title", "") end
 	end)
 end)
 
