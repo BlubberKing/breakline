@@ -363,10 +363,13 @@ local botCarry = {} -- v5.7: bot character model -> box record (a bot carries a 
 local nextSpawnAt = 0
 local v1 = { round = 1, endsAt = 0, lastTotal = 0, resetting = false } -- v4.2: 1v1 round state
 
+local setFrozenAll -- v5.16 (defined further down, next to setFrozen)
 local function setPhase(name, duration)
 	phase = name
 	stateFolder:SetAttribute("PhaseEnds", workspace:GetServerTimeNow() + (duration or 0))
 	stateFolder:SetAttribute("Phase", name)
+	-- v5.16: nobody can move / shoot / pose before the match really starts (loading, loadout screen, cutscene, cards, 3-2-1)
+	if C.LOCKED_PHASES and C.LOCKED_PHASES[name] and setFrozenAll then setFrozenAll(true) end
 end
 
 -- slow motion: gravity scales with the square of the time scale, so jumps and falls take 1/scale as long (clients slow walking + shooting)
@@ -956,6 +959,7 @@ local function setFrozen(on)
 		if root then root.Anchored = on end
 	end
 end
+setFrozenAll = setFrozen -- v5.16: setPhase freezes everybody in the locked phases (C.LOCKED_PHASES)
 local function beginWarp()
 	clearBoxes()
 	wallZ = 0
@@ -1129,6 +1133,7 @@ local function onCharacter(player, char)
 		end
 		if rezCF ~= nil then player:SetAttribute("RezCF", nil) end
 		if root and (phase == "Warp" or phase == "Cards" or phase == "Countdown") then root.Anchored = true end -- frozen until the countdown ends (v4.3: + the card pick)
+		if root and C.LOCKED_PHASES and C.LOCKED_PHASES[phase] then root.Anchored = true end -- v5.16: + while loading in and on the loadout screen
 		-- v3.8: respawning in the middle of a round: you are frozen + untouchable while souls reveal your body bottom-up (RespawnReveal client)
 		if root and char.Parent and phase == "Playing" then
 			local ff = Instance.new("ForceField")
