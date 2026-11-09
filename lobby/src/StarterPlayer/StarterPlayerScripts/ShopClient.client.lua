@@ -1,4 +1,4 @@
--- ShopClient v1.2 (v5.14: new CARDS tab - daily card shop + card packs with their own layout, built by the CardShopUI module; ESC closes the pack
+-- ShopClient v1.3 (v5.17: GADGETS + MOVEMENT tabs - no small line under the item name (the name is bigger), no red "GADGET // ..." line in the detail view, bigger WHAT IT DOES / STATS headings) (v1.2 (v5.14: new CARDS tab - daily card shop + card packs with their own layout, built by the CardShopUI module; ESC closes the pack
 --   view first and does nothing while a pack is opening) (v1.1 v5.9: cart icon, Essence next to the souls, clear CLOSE button, no filler line) (v1) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.7.
 -- 1) SHOP. Opens from the SHOP button (left side of the screen, halfway down) or from the shop NPC (ShopServer adds the prompt; the server then fires
 --    ShopRemotes.Open). Three tabs at the top: GUNS / GADGETS / MOVEMENT. Click an item = a panel on the right: guns show their real stats (WeaponConfig),
@@ -224,8 +224,12 @@ local function buildGrid()
 		local well = box(b, 1, 1, 278, 150, K.void, 0.2)
 		local pic = new("Frame", { Position = UDim2.fromOffset(12, 10), Size = UDim2.new(1, -24, 1, -18), BackgroundTransparency = 1 }, well)
 		itemPicture(pic, item, 76)
-		lbl(b, string.upper(item.name), 22, 14, 158, 252, 28, K.text, F.H)
-		lbl(b, string.upper(item.sub), 11, 15, 186, 252, 14, K.dim, F.M)
+		if item.kind == "weapon" then
+			lbl(b, string.upper(item.name), 22, 14, 158, 252, 28, K.text, F.H)
+			lbl(b, string.upper(item.sub), 11, 15, 186, 252, 14, K.dim, F.M)
+		else -- v5.17 gadgets + movement: no small line under the name, the name is bigger and fills that space
+			lbl(b, string.upper(item.name), 32, 14, 160, 258, 44, K.text, F.H)
+		end
 		if isOwned then
 			local tag = box(b, 14, 214, 88, 22, rgb(24, 70, 44))
 			stroke(tag, K.green, 1)
@@ -303,19 +307,20 @@ local function renderDetail()
 	local pic = new("Frame", { Position = UDim2.fromOffset(30, 10), Size = UDim2.new(1, -60, 1, -20), BackgroundTransparency = 1 }, well)
 	itemPicture(pic, item, 120)
 	lbl(detailBody, string.upper(item.name), 40, 28, 224, 508, 48, K.text, F.H)
-	local kindName = item.kind == "weapon" and "GUN" or (item.kind == "gadget" and "GADGET" or "MOVEMENT")
-	lbl(detailBody, kindName .. "  //  " .. string.upper(item.sub), 12, 29, 272, 508, 16, K.redHi, F.MB)
+	if item.kind == "weapon" then -- v5.17: gadgets + movement have no red "GADGET // ..." / "MOVEMENT // ..." line under the name
+		lbl(detailBody, "GUN  //  " .. string.upper(item.sub), 12, 29, 272, 508, 16, K.redHi, F.MB)
+	end
 	box(detailBody, 28, 298, 508, 1, K.line)
 	local y = 312
 	if item.kind == "weapon" then
 		y = gunStats(detailBody, y, item.id)
 	else
-		lbl(detailBody, "WHAT IT DOES", 11, 28, y, 300, 14, K.dim, F.M)
-		local d = lbl(detailBody, Catalog.Desc[item.id] or "", 15, 28, y + 20, 508, 120, K.text, F.B, nil, true)
+		lbl(detailBody, "WHAT IT DOES", 22, 28, y, 400, 28, K.text, F.H) -- v5.17: bigger + brighter
+		local d = lbl(detailBody, Catalog.Desc[item.id] or "", 15, 28, y + 34, 508, 120, K.text, F.B, nil, true)
 		d.LineHeight = 1.15
-		y += 150
-		lbl(detailBody, "STATS", 11, 28, y, 300, 14, K.dim, F.M)
-		y += 22
+		y += 160
+		lbl(detailBody, "STATS", 22, 28, y, 400, 28, K.text, F.H)
+		y += 38
 		local lines = item.kind == "gadget" and gadgetLines(item.id) or Catalog.MoveStats[item.id] or {}
 		for _, row in lines do y = statLine(detailBody, y, row[1], row[2]) end
 	end
