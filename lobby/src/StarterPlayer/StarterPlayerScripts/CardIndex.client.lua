@@ -1,6 +1,7 @@
 -- CardIndex v1.6 (v5.14: the DECK title above the n / 32 counter is much bigger (46 px); the collection is read with Cards.Owned - CardsJson is already
 --   the full collection, running Cards.Collection on it again added the starter copies twice)
 -- CardIndex v1.5 (v5.12: the (?) DECK RULES button is just a ring now - no grey fill - with a bigger, centred question mark)
+-- CardIndex v1.7 (v5.17: inspect view - no placeholder line, no "CARD n OF m", a big rarity line, "IN DECK: n / m  |  OWNED: n", no right-click line, bigger BROWSE; deck - bigger RARITY MIX, "/ 32" hugs the number, bottom hint moved next to the COLLECTION title; RIGHT CLICK no longer takes a card out)
 -- CardIndex v1.4 (v5.9: clear BACK / CLOSE buttons, no filler line under DECK) (v1.3 v4.9b: the collection grid really uses static cards now - it built fresh ANIMATED cards before, which was the lag - and baked sprite-sheet cards when CardArt.SHEETS is filled in) (was v1.2 v4.9: PERFORMANCE - only the cards on screen exist. Collection cells are filled when they scroll into view and emptied when they leave, card art comes from a shared template cache (CardArt) and the deck minis are built the same way, so hundreds of cards stay smooth even on a tablet) (was v1.1 v4.4: deck panel shows mini CARDS instead of stacked name rows; no "x1" badge on collection cards; only OWNED text, bigger; smaller +/-)
 -- (was v1.0) (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v4.3 (GDD section 4.1).
 -- The CARD INDEX page: your card collection on the left, your 32-card DECK on the right.
@@ -255,7 +256,9 @@ end
 local LX, LY, LW, LH = 56, 120, 1180, 904
 local left = frame(cv, LX, LY, LW, LH, C.bg, 0.12)
 border(left, C.line, 1)
-lbl(left, "COLLECTION", 24, 20, 12, 300, 32, C.text, "H")
+local collTitle = lbl(left, "COLLECTION", 24, 20, 12, 300, 32, C.text, "H")
+local collHint = lbl(left, "-  CLICK A CARD TO INSPECT", 15, 20 + 150, 19, 400, 20, C.dim or C.mute, "MB")
+task.defer(function() collHint.Position = UDim2.fromOffset(20 + collTitle.TextBounds.X + 14, 19) end)
 local ownedLbl = lbl(left, "", 11, LW - 420, 22, 400, 14, C.mute, "M", Enum.TextXAlignment.Right)
 frame(left, 20, 50, LW - 40, 1, C.line, 0)
 
@@ -354,7 +357,6 @@ local function fillCell(rec)
 	local own = lbl(content, "", 17, 36, y + 15, CELL_W - 72, 20, C.text, "H", Enum.TextXAlignment.Center) -- v4.4: only OWNED, bigger
 	rec.content, rec.btn, rec.slot, rec.pips, rec.own, rec.minus, rec.plus = content, btn, holderSlot, pips, own, minus, plus
 	btn.MouseButton1Click:Connect(function() openInspect(c.id) end)
-	btn.MouseButton2Click:Connect(function() removeCard(c.id) end)
 	plus.MouseButton1Click:Connect(function() addCard(c.id) end)
 	minus.MouseButton1Click:Connect(function() if not removeCard(c.id) then say("That card is not in your deck.") end end)
 	paintCell(rec)
@@ -434,7 +436,7 @@ local statusStroke = border(status, C.line2, 1)
 local statusT = lbl(status, "", 14, 0, 0, 210, 34, C.text, "H", Enum.TextXAlignment.Center)
 local barTrack = frame(deckP, 20, 152, DW - 40, 6, C.panel3, 0)
 local barFill = frame(barTrack, 0, 0, DW - 40, 6, WHITE, 0)
-lbl(deckP, "RARITY MIX", 10, 20, 172, 200, 13, C.mute, "MB")
+lbl(deckP, "RARITY MIX", 18, 20, 166, 300, 22, C.text, "H")
 local mixBar = frame(deckP, 20, 190, DW - 40, 14, C.panel, 0)
 border(mixBar, C.line, 1)
 local mixLegend = new("Frame", { Position = UDim2.fromOffset(20, 210), Size = UDim2.fromOffset(DW - 40, 16), BackgroundTransparency = 1 }, deckP)
@@ -449,7 +451,6 @@ local list = new("ScrollingFrame", { Position = UDim2.fromOffset(12, 246), Size 
 new("UIGridLayout", { CellSize = UDim2.fromOffset(MINI_W, MINI_H), CellPadding = UDim2.fromOffset(9, 12), SortOrder = Enum.SortOrder.LayoutOrder,
 	HorizontalAlignment = Enum.HorizontalAlignment.Center }, list)
 new("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 12) }, list)
-lbl(deckP, "CLICK A CARD TO INSPECT   //   RIGHT CLICK OR [-] TO TAKE ONE OUT", 11, 20, DH - 80, DW - 40, 14, C.mute, "M")
 local emptyHint = lbl(deckP, "YOUR DECK IS EMPTY\nADD CARDS FROM YOUR COLLECTION", 16, 0, 420, DW, 60, C.mute, "HM", Enum.TextXAlignment.Center)
 
 local fillBtn = button(deckP, "AUTO FILL", 20, DH - 58, 176, 42, "ghost", 16)
@@ -478,7 +479,6 @@ local function miniCell(id)
 	btn.MouseEnter:Connect(function() tween(cellScale, GROW, { Scale = 1.05 }) end)
 	btn.MouseLeave:Connect(function() tween(cellScale, GROW, { Scale = 1 }) end)
 	btn.MouseButton1Click:Connect(function() openInspect(id) end)
-	btn.MouseButton2Click:Connect(function() removeCard(id) end)
 	mb.MouseButton1Click:Connect(function() removeCard(id) end)
 	m = { id = id, cell = cell, slot = slot, pill = pill, pillT = pillT, artOn = false }
 	miniCells[id] = m
@@ -507,6 +507,7 @@ local function paintDeck()
 	countBig.Text = tostring(n)
 	countBig.TextColor3 = (n == Cards.DECK_SIZE) and C.text or C.redHi
 	countOf.Text = "/ " .. Cards.DECK_SIZE
+	countOf.Position = UDim2.fromOffset(18 + countBig.TextBounds.X + 6, 96) -- v5.17: right next to the number (it sat a big gap away)
 	barFill.Size = UDim2.new(math.clamp(n / Cards.DECK_SIZE, 0, 1), 0, 1, 0)
 	barFill.BackgroundColor3 = (n == Cards.DECK_SIZE) and WHITE or C.red
 	if n < Cards.DECK_SIZE then
@@ -562,24 +563,22 @@ local ip = frame(insp, 330, 170, 1260, 700, C.bg, 0)
 border(ip, C.line2, 1)
 frame(ip, 0, 0, 1260, 3, C.red, 0)
 local ipCardSlot = new("Frame", { Position = UDim2.fromOffset(60, 52), Size = UDim2.fromOffset(426, 596), BackgroundTransparency = 1 }, ip)
-local ipRar = lbl(ip, "", 14, 560, 70, 600, 18, C.text, "MB")
+local ipRar = lbl(ip, "", 40, 560, 44, 600, 46, C.text, "H") -- v5.17: big (it also fills the space the "CARD n OF m" text had)
 local ipName = lbl(ip, "", 64, 556, 92, 660, 80, C.text, "H")
 ipName.TextScaled = true
 new("UITextSizeConstraint", { MaxTextSize = 64 }, ipName)
 local ipDesc = lbl(ip, "", 20, 560, 190, 620, 90, C.text, "B")
 ipDesc.TextWrapped = true
 ipDesc.TextYAlignment = Enum.TextYAlignment.Top
-lbl(ip, "PLACEHOLDER CARD  //  THE ABILITY DOES NOTHING YET", 11, 560, 290, 620, 14, C.mute, "MB")
 frame(ip, 560, 320, 640, 1, C.line, 0)
 local ipStats = lbl(ip, "", 18, 560, 338, 640, 26, C.text, "HM")
 local ipPips = new("Frame", { Position = UDim2.fromOffset(560, 376), Size = UDim2.fromOffset(300, 22), BackgroundTransparency = 1 }, ip)
 local ipAdd = button(ip, "ADD TO DECK", 560, 430, 300, 58, "primary", 22)
 local ipRem = button(ip, "TAKE ONE OUT", 876, 430, 300, 58, "ghost", 22)
 grow(ipAdd, 1.04) grow(ipRem, 1.04)
-lbl(ip, "RIGHT CLICK A CARD IN THE COLLECTION TO TAKE ONE OUT QUICKLY", 11, 560, 504, 640, 14, C.mute, "M")
 local ipPrev = button(ip, "<", 560, 600, 58, 48, "ghost", 26)
 local ipNext = button(ip, ">", 630, 600, 58, 48, "ghost", 26)
-lbl(ip, "BROWSE", 11, 700, 617, 200, 14, C.mute, "MB")
+lbl(ip, "BROWSE", 24, 706, 608, 200, 32, C.text, "H")
 local ipClose = UI.CloseButton(ip, "CLOSE", { Position = UDim2.fromOffset(1088, 22) }) -- v5.9
 local ipCard, ipId, ipToken = nil, nil, 0
 local ipBlock = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, ip) -- clicks on the panel do not close it
@@ -590,11 +589,11 @@ local function paintInspect()
 	local R = Cards.RarityById[c.rarity]
 	local inDeck = Cards.Counts(draft)[ipId] or 0
 	local cap = maxFor(ipId)
-	ipRar.Text = R.name .. "  //  CARD " .. string.format("%02d", c.order) .. " OF " .. #Cards.List
+	ipRar.Text = R.name
 	ipRar.TextColor3 = rarityTint(R)
 	ipName.Text = string.upper(c.name)
 	ipDesc.Text = c.desc
-	ipStats.Text = ("IN DECK  %d / %d          OWNED  %d"):format(inDeck, cap, collection[ipId] or 0)
+	ipStats.Text = ("IN DECK:  %d / %d        |        OWNED:  %d"):format(inDeck, cap, collection[ipId] or 0)
 	for _, ch in ipPips:GetChildren() do ch:Destroy() end
 	for i = 1, Cards.MAX_COPIES do
 		local p = frame(ipPips, (i - 1) * 30, 0, 22, 22, i <= inDeck and C.red or C.panel, i <= cap and 0 or 0.8)
