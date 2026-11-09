@@ -1,4 +1,4 @@
--- PoseClient v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.16 (GDD 5.10).
+-- PoseClient v1.1 (v5.17 FIXES: (1) the lobby cursor stayed stuck in the middle of the screen after a pose (the pose camera locked the mouse every frame and never gave it back; now the mouse is only locked while you really look around, it is freed whenever a menu opens and handed back (Default) the moment the pose ends); (2) in a match your body turned to face away from the camera, so you could never see your front (Roblox first-person auto-rotates the body to the camera; AutoRotate is now OFF while you pose); (3) poses did not show on the lobby character: the default Animator tracks are now stopped on a posing character and the joints are written in Stepped AND again at render time; (4) one line in the Output says what the pose found (motors / tracks) if something is still wrong) (v1 LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.16 (GDD 5.10).
 -- POSES (emotes):
 --   * T opens the POSE WHEEL (the 6 poses you put on it in the cosmetics locker, POSES tab). Move the mouse over a slot (it follows the direction of
 --     the mouse from the middle) and click, or press 1 - 6. T / ESC closes it. Breakline: only while the round is Playing.
@@ -29,7 +29,8 @@ local rgb = Color3.fromRGB
 local WHITE, BLACK = Color3.new(1, 1, 1), Color3.new(0, 0, 0)
 local function tween(o, t, goal, style) TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quint, Enum.EasingDirection.Out), goal):Play() end
 local function serverNow() return workspace:GetServerTimeNow() end
-local isBreakline = RS:FindFirstChild("MatchState") ~= nil or RS:FindFirstChild("MatchConfig") ~= nil
+local isBreakline = RS:FindFirstChild("MatchState") ~= nil -- (v5.17: not MatchConfig any more - the lobby TRAINING ZONE has a MatchConfig copy too)
+local function gunSystemOn() return isBreakline or player:GetAttribute("InTraining") == true end -- GunClient / GadgetClient exist (match, or the lobby training zone)
 
 -- ======================================================================================
 -- 1) ANIMATE every posing character (Motor6D.Transform after the Animator, like MoveAnim / AbilityPose)
@@ -63,6 +64,18 @@ local function apply(st, J, w, out)
 		end
 	end
 end
+local function stopAnimTracks(char)
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	local animator = hum and hum:FindFirstChildOfClass("Animator")
+	if not animator then return 0 end
+	local n = 0
+	for _, tr in animator:GetPlayingAnimationTracks() do
+		n += 1
+		pcall(function() tr:Stop(0.1) end)
+	end
+	return n
+end
+local reported = {} -- char -> pose id we already printed a line for
 RunService.Stepped:Connect(function(_, dt)
 	dt = math.min(dt, 0.1)
 	local now = serverNow()
@@ -78,12 +91,23 @@ RunService.Stepped:Connect(function(_, dt)
 					char.AncestryChanged:Connect(function(_, parent) if not parent then states[char] = nil end end)
 				end
 				if st.id ~= id then st.id, st.at = id, char:GetAttribute("PoseAt") or now end
+				local tracks = stopAnimTracks(char) -- the default idle / walk tracks would overwrite our joints
+				if reported[char] ~= id then
+					reported[char] = id
+					local mc = 0
+					for _ in st.motors do mc += 1 end
+					print(("[PoseClient] %s holds pose %s: %d joints found, %d default tracks stopped"):format(plr.Name, id, mc, tracks))
+					if mc < 10 then st.motors = motorsOf(char) end -- the rig was not complete yet: look again
+				end
 				st.out = false
 				st.w = math.min(1, st.w + dt / FADE)
 				local J = Poses.Sample(id, now - st.at)
 				st.last = J
+				st.now = J
 				apply(st, J, st.w, false)
 			elseif st then
+				reported[char] = nil
+				st.now = nil
 				st.w -= dt / FADE
 				if st.w <= 0 or not st.last then
 					for _, mot in st.motors do if mot.Parent then mot.Transform = CFrame.identity end end
@@ -91,6 +115,19 @@ RunService.Stepped:Connect(function(_, dt)
 				else
 					apply(st, st.last, st.w, true)
 				end
+			end
+		end
+	end
+end)
+
+-- v5.17: write the held pose again at render time (after the Animator on every frame order), only once fully blended in so it is idempotent
+RunService.RenderStepped:Connect(function()
+	local now = serverNow()
+	for char, st in states do
+		if char.Parent and st.now and st.w >= 1 then
+			local J = Poses.Sample(st.id, now - st.at)
+			for key, mot in st.motors do
+				if mot.Parent and J[key] then mot.Transform = target(key, J[key], st.sc) end
 			end
 		end
 	end
@@ -116,6 +153,11 @@ local CANCEL_KEYS = {
 local wheelOpen = false
 
 local camOn, camYaw, camPitch, savedSubject = false, 0, 0.18, nil
+local mouseLocked, autoRotateWas = false, nil
+local function menuOpen()
+	return wheelOpen or player:GetAttribute("LobbyMenuOpen") == true or player:GetAttribute("CosmeticsShown") == true or player:GetAttribute("CardIndexOpen") == true
+		or player:GetAttribute("GunMenuOpen") == true or player:GetAttribute("SettingsOpen") == true or player:GetAttribute("TrainingMenu") == true
+end
 local CAM_DIST, CAM_UP = 10, 1.3
 local rayP = RaycastParams.new()
 rayP.FilterType = Enum.RaycastFilterType.Exclude
@@ -132,6 +174,12 @@ local function camStart(char)
 	camPitch = 0.18
 	savedSubject = camera.CameraSubject
 	camera.CameraType = Enum.CameraType.Scriptable
+	-- the body must not follow the camera while you look at yourself (first-person lock auto-rotates it towards the camera look)
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		autoRotateWas = hum.AutoRotate
+		hum.AutoRotate = false
+	end
 end
 local function camStop()
 	if not camOn then return end
@@ -139,6 +187,12 @@ local function camStop()
 	camera.CameraType = Enum.CameraType.Custom
 	local hum = myChar() and myChar():FindFirstChildOfClass("Humanoid")
 	camera.CameraSubject = hum or savedSubject
+	if hum and autoRotateWas ~= nil then hum.AutoRotate = autoRotateWas end
+	autoRotateWas = nil
+	-- give the mouse back (the lobby cursor used to stay locked in the middle for good)
+	mouseLocked = false
+	UIS.MouseBehavior = Enum.MouseBehavior.Default
+	UIS.MouseIconEnabled = not gunSystemOn()
 end
 RunService:BindToRenderStep("BreaklinePoseCam", Enum.RenderPriority.Camera.Value + 60, function(dt)
 	local char = myChar()
@@ -154,11 +208,15 @@ RunService:BindToRenderStep("BreaklinePoseCam", Enum.RenderPriority.Camera.Value
 		stopMine()
 	end
 	-- look around with the mouse (no button needed)
-	if not wheelOpen then
+	if not menuOpen() then
+		if not mouseLocked then mouseLocked = true end
 		UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
 		local d = UIS:GetMouseDelta()
 		camYaw -= d.X * 0.006
 		camPitch = math.clamp(camPitch + d.Y * 0.005, -0.35, 1.1)
+	elseif mouseLocked then -- a menu opened while you pose: free the cursor so it can be used
+		mouseLocked = false
+		UIS.MouseBehavior = Enum.MouseBehavior.Default
 	end
 	local focus = root.Position + Vector3.new(0, CAM_UP, 0)
 	local dir = Vector3.new(math.sin(camYaw) * math.cos(camPitch), math.sin(camPitch), math.cos(camYaw) * math.cos(camPitch))
@@ -306,7 +364,7 @@ local function closeWheel()
 	if not wheelOpen then return end
 	wheelOpen = false
 	hovered = nil
-	if isBreakline then player:SetAttribute("GunMenuOpen", nil) end
+	if gunSystemOn() then player:SetAttribute("GunMenuOpen", nil) end
 	player:SetAttribute("PoseWheelOpen", nil)
 	tween(wScale, 0.12, { Scale = 0.9 })
 	tween(dimBg, 0.12, { BackgroundTransparency = 1 })
@@ -315,7 +373,7 @@ end
 local function openWheel()
 	if wheelOpen or not canOpen() then return end
 	wheelOpen = true
-	if isBreakline then player:SetAttribute("GunMenuOpen", true) end -- GunClient + GadgetClient ignore clicks / keys meanwhile
+	if gunSystemOn() then player:SetAttribute("GunMenuOpen", true) end -- GunClient + GadgetClient ignore clicks / keys meanwhile
 	player:SetAttribute("PoseWheelOpen", true)
 	fillSlots()
 	hovered = nil
