@@ -1,4 +1,5 @@
--- CosmeticsCatalog v2 (ModuleScript in ReplicatedStorage) - LOBBY place only. NEW in v5.10. v5.11: player card BANNERS (kind "banner", from PlayerCards) + colourway helpers.
+-- CosmeticsCatalog v3 (ModuleScript in ReplicatedStorage) - LOBBY place only. NEW in v5.10. v5.11: player card BANNERS (kind "banner", from PlayerCards) + colourway helpers.
+-- v5.16: POSES (kind "pose", from Poses) and TITLES (kind "title", from Titles) are sold too; Cat.OwnsPose / OwnsTitle / OwnedPoses / OwnedTitles.
 -- One list of everything the cosmetics shop sells + the ownership helpers, used by CosmeticsServer (checks every purchase / equip) and CosmeticsClient (the shop + the locker).
 -- Data lives in the two cosmetic modules: Skins (player skin EDITIONS, `price`) and GunSkins (gun skins, `price`). A price is { souls = n } (free currency) or { essence = n } (premium).
 --   Cat.Items(kind)       kind = "skin" | "gun"  -> { { kind, id, name, sub, gun?, price, currency = "souls" | "essence", amount, card? ... } ... }  sorted cheapest first
@@ -10,6 +11,8 @@ local HttpService = game:GetService("HttpService")
 local Skins = require(RS:WaitForChild("Skins"))
 local GunSkins = require(RS:WaitForChild("GunSkins"))
 local PlayerCards = require(RS:WaitForChild("PlayerCards")) -- v5.11
+local Poses = require(RS:WaitForChild("Poses"))   -- v5.16
+local Titles = require(RS:WaitForChild("Titles")) -- v5.16
 
 local Cat = {}
 
@@ -33,6 +36,15 @@ local function bannerItem(b)
 	return { kind = "banner", id = b.id, name = b.name, anim = b.anim, price = b.price, currency = cur, amount = amt }
 end
 
+local function poseItem(p) -- v5.16
+	local cur, amt = currencyOf(p.price)
+	return { kind = "pose", id = p.id, name = p.name, anim = p.anim, price = p.price, currency = cur, amount = amt }
+end
+local function titleItem(t) -- v5.16
+	local cur, amt = currencyOf(t.price)
+	return { kind = "title", id = t.id, name = t.text, tier = t.tier, color = t.color, price = t.price, currency = cur, amount = amt }
+end
+
 local function sorted(list)
 	table.sort(list, function(a, b)
 		if a.amount ~= b.amount then return a.amount < b.amount end
@@ -41,9 +53,9 @@ local function sorted(list)
 	return list
 end
 
-Cat.byKind = { skin = {}, gun = {}, banner = {} }
+Cat.byKind = { skin = {}, gun = {}, banner = {}, pose = {}, title = {} }
 do
-	local sk, gu, ba = {}, {}, {}
+	local sk, gu, ba, po, ti = {}, {}, {}, {}, {}
 	for _, s in Skins.List do
 		if s.price then
 			local it = skinItem(s)
@@ -61,7 +73,17 @@ do
 		Cat.byKind.banner[b.id] = it
 		if b.price then table.insert(ba, it) end
 	end
-	Cat.lists = { skin = sorted(sk), gun = sorted(gu), banner = sorted(ba) }
+	for _, p in Poses.List do -- v5.16
+		local it = poseItem(p)
+		Cat.byKind.pose[p.id] = it
+		if p.price then table.insert(po, it) end
+	end
+	for _, t in Titles.List do
+		local it = titleItem(t)
+		Cat.byKind.title[t.id] = it
+		if t.price then table.insert(ti, it) end
+	end
+	Cat.lists = { skin = sorted(sk), gun = sorted(gu), banner = sorted(ba), pose = sorted(po), title = sorted(ti) }
 end
 
 function Cat.Items(kind) return Cat.lists[kind] or {} end
@@ -126,5 +148,11 @@ function Cat.Colourways(baseId)
 	return out
 end
 function Cat.BaseOf(id) local s = Skins.Get(id); return s.base or s.id end
+
+-- v5.16 poses + titles
+function Cat.OwnsPose(player, id) return Poses.Owns(player, id) end
+function Cat.OwnedPoses(player) return Poses.Owned(player) end
+function Cat.OwnsTitle(player, id) return Titles.Owns(player, id) end
+function Cat.OwnedTitles(player) return Titles.Owned(player) end
 
 return Cat
