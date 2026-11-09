@@ -1,4 +1,4 @@
--- CosmeticsClient v4 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
+-- CosmeticsClient v4.1 (v5.17: the shop costume preview says "COLORWAY FOR: <BASE>" - one space, a colon right after FOR) (v4 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. NEW in v5.10.
 -- v5.16 (owner Nov 8):
 --   * PLAYER SKINS are called COSTUMES everywhere (tabs, labels, the showcase picker). The shop preview of a costume says COLORWAY FOR <base costume>.
 --   * gun skins say "<GUN> SKIN" (was "FOR THE <GUN>" on the cards and "GOES ON <GUN>" in the preview + locker).
@@ -757,7 +757,7 @@ function openPreview(item, keepView)
 		g.ZIndex = 23
 	elseif item.kind == "skin" then -- v5.16: the empty space under the name says which costume this is a colourway of
 		local sk = Skins.Get(item.id)
-		local g = lbl(pvBody, sk.base and ("COLORWAY FOR  " .. string.upper(baseName(item.id))) or "BASE COSTUME", 16, X, 206, 576, 24, K.soulPale, F.MB)
+		local g = lbl(pvBody, sk.base and ("COLORWAY FOR: " .. string.upper(baseName(item.id))) or "BASE COSTUME", 16, X, 206, 576, 24, K.soulPale, F.MB)
 		g.ZIndex = 23
 	elseif item.kind == "pose" then
 		local g = lbl(pvBody, "PRESS T IN A MATCH OR THE LOBBY TO OPEN YOUR POSE WHEEL", 13, X, 206, 576, 24, K.soulPale, F.MB)
