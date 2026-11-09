@@ -1803,6 +1803,7 @@ UIS.InputBegan:Connect(function(input, gpe)
 	if gpe or UIS:GetFocusedTextBox() then return end
 	if player:GetAttribute("CardIndexOpen") then return end -- v4.3: the card index handles its own keys
 	if player:GetAttribute("CosmeticsShown") then return end -- v5.11: the cosmetics shop / locker handle their own keys
+	if player:GetAttribute("SettingsOpen") or player:GetAttribute("InTraining") then return end -- v5.17: the settings panel handles ESC itself; no lobby menus inside the training zone
 	if input.KeyCode == Enum.KeyCode.Tab then
 		if inviteOpen then closeInvite() end
 		toggleSkins()
