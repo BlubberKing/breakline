@@ -28,7 +28,7 @@ add(K.Weapons, "weapon", "MAGNUM", ".44 Magnum", "Revolver", ".44", W(200, 160, 
 
 -- gadgets (v4.0: REAL, built in Breakline: GadgetServer / GadgetClient, numbers in GadgetConfig; keys 2 / 3 / 4 in a match)
 add(K.Gadgets, "gadget", "FRAG", "Frag Grenade", "Explosive, 2 charges", "FG", W(235, 90, 70))
-add(K.Gadgets, "gadget", "SMOKE", "Smoke", "Blocks sight, 2 charges", "SM", W(150, 165, 190))
+add(K.Gadgets, "gadget", "SMOKE", "Smoke Grenade", "Blocks sight, 2 charges", "SM", W(150, 165, 190))
 add(K.Gadgets, "gadget", "FLASH", "Flashbang", "Blinds who looks, 2 charges", "FL", W(250, 235, 140))
 add(K.Gadgets, "gadget", "SENTRY", "Sentry", "Auto turret, 1 charge", "SN", W(90, 190, 255))
 add(K.Gadgets, "gadget", "SHIELD", "Bubble Shield", "Throw: grows a dome, 1 charge", "SH", W(100, 220, 230))
