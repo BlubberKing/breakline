@@ -1,0 +1,426 @@
+-- MatchHUD (LOBBY copy, NEW in v5.17: the TRAINING ZONE) - Breakline's MatchHUD; its ScreenGui is only enabled while the Player attribute InTraining is true.
+-- MatchHUD v3.5 (v5.9: no corner shades, weapon name under the ammo, reload ring at the crosshair, fitted gun picture) (v3.4 v4.7: shield bar removed, 250 white health) (v3.3: v4.4: blue SHIELD bar above your health bar, hit flash + shake on both bars when they lose points, bars follow MaxHealth 200)
+-- (v3.2) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
+-- v3.2 polish: rounded health segments with a white 'damage trail' that drains behind the real value, low-health pulse, team-colored
+-- name tick, soft corner shading so white text reads on any map, rounded selected gun slot, ammo that pops on change, reload bar that
+-- glows. Same Finals layout + same attributes as v3.1.
+-- (v3.1)
+-- In-match HUD styled after THE FINALS: no boxes or panels, white condensed text with a soft shadow, segmented health bars.
+--   * bottom-left: your squad. YOU are always at the bottom and big (name, segmented health, "HP / MAX");
+--     teammates are stacked above you, smaller (name + small health pips). Dead teammates go grey with a skull mark.
+--   * bottom-right: item selection. Weapon name + ammo above a row of slots: [1] your lobby gun (picture of the real model,
+--     selected = white square with a dark gun), [2][3][4] your lobby gadgets (dim until gadgets exist in Breakline).
+--     Reload shows as a small ring around the crosshair (v5.9).
+-- Reads: GunClient's local attributes (HUDWeapon, HUDAmmo, HUDMag, HUDReload, HUDReloadU, HUDMode), the Player attributes
+-- Weapon + LoadoutJson (GunServer), and teammates' Humanoids. Needs ReplicatedStorage: GunModels, LobbyCatalog (copy of the lobby's).
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local GunModels = require(RS:WaitForChild("GunModels"))
+local GM = require(RS:WaitForChild("GadgetModels")) -- v4.1: real gadget pictures
+local Catalog = RS:FindFirstChild("LobbyCatalog") and require(RS.LobbyCatalog) or nil
+local UI = require(RS:WaitForChild("UIKit")) -- v5.9: FitViewport (gun picture framing)
+
+pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false) end)
+
+local WHITE = Color3.fromRGB(245, 245, 242)
+local DIM = Color3.fromRGB(170, 170, 166)
+local DARK = Color3.fromRGB(18, 18, 18)
+local RED = Color3.fromRGB(230, 50, 50)
+local FAM = Font.fromEnum(Enum.Font.RobotoCondensed).Family
+local F_BOLD = Font.new(FAM, Enum.FontWeight.Bold)
+local F_MED = Font.new(FAM, Enum.FontWeight.Medium)
+
+local function new(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in props do o[k] = v end
+	o.Parent = parent
+	return o
+end
+-- white text with the soft dark shadow The Finals uses (no outline boxes)
+local function text(parent, str, size, x, y, w, h, font, align, color)
+	local l = new("TextLabel", { BackgroundTransparency = 1, Text = str, TextSize = size, FontFace = font or F_BOLD, TextColor3 = color or WHITE,
+		Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), TextXAlignment = align or Enum.TextXAlignment.Left }, parent)
+	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.55 }, l)
+	return l
+end
+local function rect(parent, x, y, w, h, color, transp)
+	return new("Frame", { Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = color or WHITE,
+		BackgroundTransparency = transp or 0, BorderSizePixel = 0 }, parent)
+end
+
+local gui = new("ScreenGui", { Name = "MatchHUD2", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 4 }, player:WaitForChild("PlayerGui"))
+-- LOBBY: the in-round HUD is only shown while you are inside the training zone (it replaces the lobby UI there)
+gui.Enabled = player:GetAttribute("InTraining") == true
+player:GetAttributeChangedSignal("InTraining"):Connect(function() gui.Enabled = player:GetAttribute("InTraining") == true end)
+-- design at 1920x1080, scaled to the screen
+local root = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(1920, 1080), BackgroundTransparency = 1 }, gui)
+local scale = new("UIScale", {}, root)
+local function rescale()
+	local vs = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+	scale.Scale = math.max(0.45, math.min(vs.X / 1920, vs.Y / 1080))
+end
+rescale()
+if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale) end
+
+-- v5.9: the dark corner shades behind the squad + item row are gone (owner: no boxes behind the HUD)
+local TWEEN = game:GetService("TweenService")
+local function teamColor3()
+	return (player.Team and not player.Neutral) and player.TeamColor.Color or WHITE
+end
+
+-- ================= bottom-left: squad =================
+local squad = new("Frame", { Position = UDim2.fromOffset(48, 0), Size = UDim2.fromOffset(460, 1080 - 44), BackgroundTransparency = 1 }, root)
+
+-- segmented bar: n segments, fills left to right. Each segment has a faint white "ghost" that drains slowly behind the real fill
+-- (shows how much you just lost). Returns set(frac, color) and tick(dt) which must be called every frame.
+local function segBar(parent, x, y, n, segW, segH, gap)
+	local segs = {}
+	local ghostFrac, targetFrac = 1, 1
+	local flashAmt = 0
+	local baseColor = WHITE
+	for i = 1, n do
+		local back = rect(parent, x + (i - 1) * (segW + gap), y, segW, segH, Color3.new(0, 0, 0), 0.5)
+		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, back)
+		local ghost = rect(back, 0, 0, segW, segH, WHITE, 0.55)
+		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, ghost)
+		local fill = rect(back, 0, 0, segW, segH, WHITE, 0)
+		new("UICorner", { CornerRadius = UDim.new(0, math.max(2, math.floor(segH / 4))) }, fill)
+		segs[i] = { back = back, ghost = ghost, fill = fill, w = segW, x = x + (i - 1) * (segW + gap), y = y }
+	end
+	local function paint(frac, color)
+		for i, sg in segs do
+			local f = math.clamp(frac * n - (i - 1), 0, 1)
+			sg.fill.Size = UDim2.fromOffset(math.floor(sg.w * f + 0.5), sg.fill.Size.Y.Offset)
+			sg.fill.BackgroundColor3 = (color or WHITE):Lerp(Color3.new(1, 1, 1), flashAmt * 0.85) -- v4.4: hit flash
+			local g = math.clamp(ghostFrac * n - (i - 1), 0, 1)
+			sg.ghost.Size = UDim2.fromOffset(math.floor(sg.w * g + 0.5), sg.ghost.Size.Y.Offset)
+		end
+	end
+	local lastColor = WHITE
+	local function set(frac, color)
+		frac = math.clamp(frac, 0, 1)
+		if frac > ghostFrac then ghostFrac = frac end -- healing: ghost snaps up
+		targetFrac = frac
+		lastColor = color or WHITE
+		paint(frac, lastColor)
+	end
+	local function tick(dt)
+		local dirty = false
+		if ghostFrac > targetFrac then
+			ghostFrac = math.max(targetFrac, ghostFrac - dt * 0.35)
+			dirty = true
+		end
+		if flashAmt > 0 then
+			flashAmt = math.max(0, flashAmt - dt * 3.2)
+			dirty = true
+			-- little shake of the whole bar while the hit flash fades
+			local k = math.sin(os.clock() * 70) * flashAmt * 2.5
+			for _, sg in segs do sg.back.Position = UDim2.fromOffset(sg.x + k, sg.y) end
+		end
+		if dirty then paint(targetFrac, lastColor) end
+	end
+	local function flash() flashAmt = 1 end
+	return set, tick, flash
+end
+
+-- you (bottom, large)
+local SH_BLUE = Color3.fromRGB(80, 170, 255)
+local meName = text(squad, player.DisplayName, 30, 0, 1080 - 44 - 150, 420, 34, F_BOLD)
+local meHP = text(squad, "250", 34, 0, 1080 - 44 - 108, 80, 36, F_BOLD)
+local meMax = text(squad, "/ 250", 22, 66, 1080 - 44 - 100, 80, 28, F_MED, nil, DIM)
+-- v4.4: SHIELD (100) = the thin blue bar right above the health bar
+local function noop() end -- v4.7: the shield is gone (250 white health for everybody)
+local meShBar, meShTick, meShFlash = noop, noop, noop
+local meShNum = { Text = "", TextTransparency = 1 }
+local meBar, meTick, meFlash = segBar(squad, 0, 1080 - 44 - 38, 10, 38, 22, 4)
+local meTick_ = function(dt) meTick(dt) meShTick(dt) end
+-- team-colored tick left of your name + a thin underline that pulses when you are low
+local meAccent = rect(squad, -16, 1080 - 44 - 146, 6, 28, WHITE, 0)
+new("UICorner", { CornerRadius = UDim.new(0, 3) }, meAccent)
+local meGlow = rect(squad, 0, 1080 - 44 - 12, 10 * 42 - 4, 3, RED, 1)
+new("UICorner", { CornerRadius = UDim.new(0, 2) }, meGlow)
+
+-- teammates (above you)
+local mateRows = {}
+local function mateRow(i)
+	if mateRows[i] then return mateRows[i] end
+	local y = 1080 - 44 - 150 - i * 62
+	local row = new("Frame", { Position = UDim2.fromOffset(0, y), Size = UDim2.fromOffset(420, 58), BackgroundTransparency = 1 }, squad)
+	local name = text(row, "", 22, 0, 0, 360, 26, F_BOLD)
+	local dead = text(row, "DOWN", 14, 0, 0, 360, 26, F_BOLD, Enum.TextXAlignment.Right, RED)
+	local bar, tick = segBar(row, 0, 30, 10, 14, 10, 3)
+	local tick_ = rect(row, -12, 4, 4, 20, WHITE, 0)
+	new("UICorner", { CornerRadius = UDim.new(0, 2) }, tick_)
+	mateRows[i] = { row = row, name = name, bar = bar, tick = tick, accent = tick_, dead = dead }
+	return mateRows[i]
+end
+
+local function teammates()
+	local list = {}
+	if not player.Team or player.Neutral then return list end
+	for _, p in Players:GetPlayers() do
+		if p ~= player and p.Team == player.Team then table.insert(list, p) end
+	end
+	table.sort(list, function(a, b) return a.UserId < b.UserId end)
+	return list
+end
+
+local function hpOf(p)
+	local ch = p.Character
+	local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+	if not hum then return 0, 250 end
+	return math.max(0, hum.Health), math.max(1, hum.MaxHealth)
+end
+local function shieldOf(p)
+	local ch = p.Character
+	local max = ch and ch:GetAttribute("MaxShield") or 0
+	return ch and ch:GetAttribute("Shield") or 0, max
+end
+
+-- ================= bottom-right: item selection =================
+local items = new("Frame", { AnchorPoint = Vector2.new(1, 1), Position = UDim2.fromOffset(1920 - 48, 1080 - 40), Size = UDim2.fromOffset(560, 190), BackgroundTransparency = 1 }, root)
+-- v5.9: ammo on top, the WEAPON NAME right under it (the fire mode / sight line is gone; the big name on the left moved here)
+local ammoBig = text(items, "30", 34, 392, -2, 100, 38, F_BOLD, Enum.TextXAlignment.Right)
+local ammoMag = text(items, "/30", 22, 494, 6, 66, 28, F_MED, Enum.TextXAlignment.Left, DIM)
+local wName = text(items, "", 20, 0, 36, 560, 24, F_BOLD, Enum.TextXAlignment.Right)
+
+-- v5.9: RELOAD = a small ring around the crosshair that fills clockwise from the top (was a thin bar above the gun picture)
+local RING_D, RING_T = 54, 3.5
+local ring = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 540), Size = UDim2.fromOffset(RING_D, RING_D), BackgroundTransparency = 1, Visible = false }, root)
+local function ringCircle(parent, transp)
+	local c = new("Frame", { Position = UDim2.fromOffset(RING_T, RING_T), Size = UDim2.new(1, -RING_T * 2, 1, -RING_T * 2), BackgroundTransparency = 1 }, parent)
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, c)
+	local st = new("UIStroke", { Color = WHITE, Thickness = RING_T, Transparency = transp, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, c)
+	return c, st
+end
+do -- faint full track + soft dark outline so it reads on bright maps
+	local _, trackSt = ringCircle(ring, 0.72)
+	trackSt.Color = Color3.new(0, 0, 0)
+end
+-- the fill: two half-clips, each holding a full ring whose gradient shows one half-plane. Rotating the gradients sweeps the arc.
+local function halfClip(xScale)
+	local clip = new("Frame", { Position = UDim2.fromScale(xScale, 0), Size = UDim2.fromScale(0.5, 1), BackgroundTransparency = 1, ClipsDescendants = true }, ring)
+	local holder = new("Frame", { Position = UDim2.fromScale(-xScale * 2, 0), Size = UDim2.fromScale(2, 1), BackgroundTransparency = 1 }, clip)
+	local _, st = ringCircle(holder, 0)
+	local g = new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.499, 1),
+		NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 0) }) }, st)
+	return g
+end
+local ringRight, ringLeft = halfClip(0.5), halfClip(0)
+local function setRing(u)
+	local deg = math.clamp(u, 0, 1) * 360
+	ringRight.Rotation = math.min(deg, 180) - 180 -- 0..180 deg of the sweep (right half)
+	ringLeft.Rotation = math.max(deg, 180) - 180  -- 180..360 deg (left half)
+end
+setRing(0)
+
+local SLOT = 76
+local slotRow = new("Frame", { Position = UDim2.fromOffset(0, 70), Size = UDim2.fromOffset(560, 120), BackgroundTransparency = 1 }, items)
+-- divider line under the row, like the Finals' thin underline
+rect(slotRow, 0, SLOT + 10, 560, 2, WHITE, 0.6)
+
+local gunSlot -- { frame, vp, id }
+local gadgetSlots = {}
+
+local function gunViewport(parent, weaponId, dark)
+	for _, c in parent:GetChildren() do if c:IsA("ViewportFrame") then c:Destroy() end end
+	local vp = new("ViewportFrame", { Size = UDim2.new(1, -8, 1, -8), Position = UDim2.fromOffset(4, 4), BackgroundTransparency = 1,
+		Ambient = dark and Color3.new(0, 0, 0) or Color3.fromRGB(200, 200, 200), LightColor = dark and Color3.new(0, 0, 0) or WHITE, LightDirection = Vector3.new(-0.4, -1, -0.2) }, parent)
+	local ok, desc = pcall(GunModels.Describe, weaponId, "Iron")
+	if not ok or not desc then return vp end
+	local model = new("Model", {}, vp)
+	local minV, maxV = Vector3.new(math.huge, math.huge, math.huge), Vector3.new(-math.huge, -math.huge, -math.huge)
+	for _, d in desc.Parts do
+		if not d.Reticle and d.Group ~= "aux" and (d.Transparency or 0) < 1 then
+			local p = new("Part", { Anchored = true, Size = d.Size, CFrame = d.CF, Color = dark and DARK or WHITE, Material = Enum.Material.SmoothPlastic }, model)
+			if d.Shape then p.Shape = d.Shape end
+			minV, maxV = minV:Min(d.CF.Position - d.Size / 2), maxV:Max(d.CF.Position + d.Size / 2)
+		end
+	end
+	local cam = new("Camera", { FieldOfView = 16 }, vp)
+	-- v5.9: framed by its real silhouette (it was sized from the length only: long guns cropped, short ones tiny / off centre).
+	-- Side view, muzzle pointing left (the Finals draws its icons that way).
+	UI.FitViewport(vp, cam, model, Vector3.new(-1, 0, 0), { pad = 0.1, fov = 16 })
+	return vp
+end
+
+local function makeSlot(x, w, key)
+	local f = rect(slotRow, x, 0, w, SLOT, WHITE, 1)
+	new("UICorner", { CornerRadius = UDim.new(0, 12) }, f)
+	local border = new("UIStroke", { Color = WHITE, Thickness = 2, Transparency = 0.55 }, f)
+	local k = text(slotRow, key, 16, x, SLOT + 14, w, 20, F_BOLD, Enum.TextXAlignment.Center, DIM)
+	return { frame = f, border = border, key = k }
+end
+
+local function buildSlots()
+	for _, c in slotRow:GetChildren() do if c:IsA("Frame") and c ~= nil and c.Size.Y.Offset == SLOT then c:Destroy() end end
+	for _, c in slotRow:GetChildren() do if c:IsA("TextLabel") then c:Destroy() end end
+	gadgetSlots = {}
+	-- gun slot (wide) on the right, gadgets to its left (Finals order: weapon at the far right of the row is the selected one)
+	local gx = 560 - 170
+	gunSlot = makeSlot(gx, 170, "1")
+	gunSlot.frame.BackgroundTransparency = 0 -- selected: solid white square
+	gunSlot.border.Transparency = 1
+	gunSlot.key.TextColor3 = WHITE
+	local raw = player:GetAttribute("LoadoutJson")
+	local lo = {}
+	if type(raw) == "string" then
+		local ok, t = pcall(function() return HttpService:JSONDecode(raw) end)
+		if ok and type(t) == "table" then lo = t end
+	end
+	for idx = 1, 3 do -- v4.0: left to right = gadget 1, 2, 3 (keys 2, 3, 4), then the gun (key 1); real gadgets now: icon + charges + cooldown
+		local x = gx - (4 - idx) * (SLOT + 12)
+		local s = makeSlot(x, SLOT, tostring(idx + 1))
+		local id = type(lo.Gadgets) == "table" and lo.Gadgets[idx] or ""
+		local item = Catalog and Catalog.ById[id]
+		if item then
+			s.glyph = text(s.frame, "", 24, 0, 8, SLOT, SLOT - 16, F_BOLD, Enum.TextXAlignment.Center, WHITE) -- (kept as the colour handle; the picture is below)
+			local picHolder = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(SLOT / 2, 6), Size = UDim2.fromOffset(SLOT - 24, SLOT - 24), BackgroundTransparency = 1 }, s.frame) -- v5.9: square + centred
+			s.pic = GM.Picture(picHolder, item.id)
+			s.itemId = item.id
+			s.name = text(s.frame, string.upper(item.name), 9, 0, SLOT - 17, SLOT, 12, F_MED, Enum.TextXAlignment.Center, DIM)
+			s.count = text(s.frame, "", 16, SLOT - 30, 4, 26, 18, F_BOLD, Enum.TextXAlignment.Right, WHITE)
+			s.cd = rect(s.frame, 0, 0, SLOT, SLOT, Color3.new(0, 0, 0), 0.45)
+			s.cd.Size = UDim2.fromOffset(SLOT, 0)
+			s.cd.AnchorPoint = Vector2.new(0, 1)
+			s.cd.Position = UDim2.fromOffset(0, SLOT)
+			s.cd.ZIndex = 5
+			s.cdText = text(s.frame, "", 22, 0, 0, SLOT, SLOT, F_BOLD, Enum.TextXAlignment.Center, WHITE)
+			s.cdText.ZIndex = 6
+			s.idx = idx
+			s.frame.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
+			s.frame.BackgroundTransparency = 0.35
+		else
+			s.border.Transparency = 0.85
+		end
+		table.insert(gadgetSlots, s)
+	end
+	gunSlot.id = nil
+end
+
+local function refreshGun()
+	local id = player:GetAttribute("Weapon")
+	if gunSlot and id and gunSlot.id ~= id then
+		gunSlot.id = id
+		gunViewport(gunSlot.frame, id, true)
+	end
+end
+
+local function refreshAmmo()
+	local name = player:GetAttribute("HUDWeapon")
+	wName.Text = name and string.upper(name) or ""
+	local a, m = player:GetAttribute("HUDAmmo") or 0, player:GetAttribute("HUDMag") or 0
+	if ammoBig.Text ~= tostring(a) then
+		ammoBig.TextSize = 40
+		TWEEN:Create(ammoBig, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { TextSize = 34 }):Play()
+	end
+	ammoBig.Text = tostring(a)
+	ammoMag.Text = "/" .. tostring(m)
+	ammoBig.TextColor3 = (m > 0 and a <= m * 0.25) and RED or WHITE
+	local reloading = player:GetAttribute("HUDReload") == true
+	if reloading and not ring.Visible then setRing(player:GetAttribute("HUDReloadU") or 0) end
+	ring.Visible = reloading
+end
+
+for _, k in { "HUDWeapon", "HUDAmmo", "HUDMag", "HUDReload" } do player:GetAttributeChangedSignal(k):Connect(refreshAmmo) end
+player:GetAttributeChangedSignal("Weapon"):Connect(refreshGun)
+player:GetAttributeChangedSignal("LoadoutJson"):Connect(function() buildSlots() refreshGun() end)
+player:GetAttributeChangedSignal("HUDReloadU"):Connect(function()
+	setRing(player:GetAttribute("HUDReloadU") or 0)
+end)
+buildSlots()
+refreshGun()
+refreshAmmo()
+
+-- ================= per-frame: health + squad + hide while carrying =================
+local acc = 0
+local clock = 0
+local function updateGadgetSlots()
+	local t = workspace:GetServerTimeNow()
+	for _, s in gadgetSlots do
+		if s.idx then
+			local i = s.idx
+			local count = player:GetAttribute("GadCount" .. i) or 0
+			local max = player:GetAttribute("GadMax" .. i) or 0
+			local ready = player:GetAttribute("GadReady" .. i) or 0
+			local nxt = player:GetAttribute("GadNext" .. i) or 0
+			local usable = count > 0 and t >= ready
+			s.count.Text = max > 0 and tostring(count) or ""
+			s.count.TextColor3 = count > 0 and WHITE or RED
+			s.glyph.TextColor3 = usable and WHITE or DIM
+			if s.pic then
+				s.pic.ImageTransparency = usable and 0 or 0.55
+				s.pic.ImageColor3 = usable and Color3.new(1, 1, 1) or Color3.fromRGB(150, 150, 150)
+			end
+			local ch = player.Character
+			local equipped = ch ~= nil and ch:GetAttribute("HeldSlot") == i
+			s.border.Transparency = equipped and 0 or (usable and 0.3 or 0.75)
+			s.border.Color = equipped and Color3.fromRGB(110, 200, 255) or WHITE
+			s.border.Thickness = equipped and 3 or 2
+			local frac, label = 0, ""
+			if count <= 0 and nxt > t then
+				local left = nxt - t
+				frac, label = 1, tostring(math.ceil(left))
+			elseif t < ready then
+				frac, label = math.clamp((ready - t) / 1.5, 0, 1), ""
+			end
+			s.cd.Size = UDim2.fromOffset(SLOT, math.floor(SLOT * frac))
+			s.cdText.Text = label
+		end
+	end
+end
+
+local lastHp, lastSh = nil, nil
+RunService.Heartbeat:Connect(function(dt)
+	clock += dt
+	meTick_(dt)
+	updateGadgetSlots()
+	for _, r in mateRows do if r.tick then r.tick(dt) end end
+	acc += dt
+	if acc < 0.05 then return end
+	acc = 0
+	-- you
+	local hp, max = hpOf(player)
+	meName.Text = player.DisplayName
+	meHP.Text = tostring(math.ceil(hp))
+	meMax.Text = "/ " .. tostring(math.floor(max))
+	meMax.Position = UDim2.fromOffset(meHP.TextBounds.X + 8, meMax.Position.Y.Offset)
+	meBar(hp / max, (hp / max <= 0.3) and RED or WHITE)
+	-- v4.4: shield bar + hit flashes (a bar flashes white and shakes whenever it loses points; the white ghost behind it drains slowly)
+	local sh, shMax = shieldOf(player)
+	meShBar(shMax > 0 and sh / shMax or 0, SH_BLUE)
+	meShNum.Text = shMax > 0 and tostring(math.ceil(sh)) or ""
+	meShNum.TextTransparency = sh > 0 and 0 or 0.6
+	if lastHp and hp < lastHp - 0.01 then meFlash() end
+	if lastSh and sh < lastSh - 0.01 then meShFlash() end
+	lastHp, lastSh = hp, sh
+	meAccent.BackgroundColor3 = teamColor3()
+	local low = hp > 0 and hp / max <= 0.3
+	meGlow.BackgroundTransparency = low and (0.35 + 0.4 * (0.5 + 0.5 * math.sin(clock * 9))) or 1
+	meHP.TextColor3 = low and RED or WHITE
+	-- teammates
+	local mates = teammates()
+	for i = 1, math.max(#mates, #mateRows) do
+		local p = mates[i]
+		if p then
+			local r = mateRow(i)
+			r.row.Visible = true
+			local h, m = hpOf(p)
+			local alive = h > 0
+			r.name.Text = p.DisplayName
+			r.name.TextColor3 = alive and WHITE or DIM
+			r.dead.Visible = not alive
+			r.bar(h / m, alive and ((h / m <= 0.3) and RED or WHITE) or DIM)
+			r.accent.BackgroundColor3 = alive and teamColor3() or DIM
+		elseif mateRows[i] then
+			mateRows[i].row.Visible = false
+		end
+	end
+	-- the item row is pointless while carrying a box (guns are locked)
+	items.Visible = player:GetAttribute("Carrying") ~= true and player:GetAttribute("IsDead") ~= true
+end)
