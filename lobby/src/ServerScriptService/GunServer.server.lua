@@ -1,0 +1,286 @@
+-- GunServer v2.2-lobby (LOBBY place, NEW in v5.17: the TRAINING ZONE - the same server code as Breakline's GunServer, with these differences: it only works for a player whose Player attribute
+--   InTraining is true (TrainingServer sets it while the player stands inside the part "TrainingZone"), only players / sentries inside the zone can be hit, nobody is ever really hurt
+--   (the lobby Vitals only returns the damage + a virtual kill), and the gun follows the lobby loadout equipped right now. Make nothing else of it: keep it as Breakline's when you change guns.)
+-- GunServer v2.2 (v5.14: power-up cards, numbers in ReplicatedStorage.CardEffects - DEEP POCKETS = every life starts with one extra magazine loaded,
+--   HOT BARREL = +10% fire rate for 4 s after a kill (attribute HotBarrelUntil), HOLLOW POINT = headshots +12%, GLASS CANNON = +15% damage dealt)
+-- GunServer v2: server-authoritative ammo, fire rate and damage for every weapon in WeaponConfig.
+-- Also owns the equipped weapon: Player attributes "Weapon" + "Sight". v2.1: the weapon is ONLY the one picked in the lobby loadout
+-- (the temporary G picker + its open SetLoadout remote are gone). The whole lobby loadout is published as "LoadoutJson" for MatchHUD.
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local Weapons = require(RS:WaitForChild("WeaponConfig"))
+local GunMath = require(RS:WaitForChild("GunMath"))
+local ServerStorage = game:GetService("ServerStorage")
+local MatchCfg = require(RS:WaitForChild("MatchConfig"))
+local function bindable(name) -- LOBBY: there is no MatchServer, so make the events here (GadgetServer reuses the same ones)
+	local b = ServerStorage:FindFirstChild(name)
+	if not b then
+		b = Instance.new("BindableEvent")
+		b.Name = name
+		b.Parent = ServerStorage
+	end
+	return b
+end
+local BoxDamage = bindable("BoxDamage")
+local GadgetDamage = bindable("GadgetDamage")
+local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
+local Vitals = require(script.Parent:WaitForChild("Vitals")) -- v4.4: 200 health + 100 shield (damage hits the shield first)
+local MatchState = RS:FindFirstChild("MatchState") -- LOBBY: none (guns only work inside the TRAINING ZONE, see inTraining below)
+local function inTraining(p) return p and p:GetAttribute("InTraining") == true end
+local CardFx = require(RS:WaitForChild("CardEffects")) -- v5.14: power-up cards
+
+local remotes = Instance.new("Folder")
+remotes.Name = "GunRemotes"
+local function remote(name)
+	local r = Instance.new("RemoteEvent"); r.Name = name; r.Parent = remotes; return r
+end
+local FireRemote, ReloadRemote = remote("Fire"), remote("Reload")
+local HitConfirm, ShotFX, Damaged = remote("HitConfirm"), remote("ShotFX"), remote("Damaged")
+remotes.Parent = RS
+
+local state = {}
+local pocketsReady = {} -- v5.14 DEEP POCKETS: true from every spawn until the extra magazine was handed out
+local function getState(player, weapon)
+	local s = state[player]
+	if not s or s.weapon ~= weapon then
+		local mag = Weapons.Get(weapon).MagSize
+		local ammo = mag
+		if pocketsReady[player] and CardFx.Has(player, "deep_pockets") then
+			ammo = mag * (1 + CardFx.DEEP_POCKETS_MAGS)
+			pocketsReady[player] = nil
+		end
+		s = { weapon = weapon, ammo = ammo, lastFire = 0, reloadUntil = 0, untouched = true }
+		state[player] = s
+	end
+	return s
+end
+
+local function onPlayer(p)
+	p:SetAttribute("Weapon", Weapons.Default)
+	p:SetAttribute("Sight", Weapons.Get(Weapons.Default).DefaultSight)
+	p.CharacterAdded:Connect(function() state[p] = nil pocketsReady[p] = true end)
+	pocketsReady[p] = true
+	-- v5.14: the card is picked after you spawned; if your gun was not used yet the extra magazine is loaded right then
+	p:GetAttributeChangedSignal("MatchCard"):Connect(function()
+		local s = state[p]
+		if pocketsReady[p] and CardFx.Has(p, "deep_pockets") and s and s.untouched then
+			s.ammo = Weapons.Get(s.weapon).MagSize * (1 + CardFx.DEEP_POCKETS_MAGS)
+			pocketsReady[p] = nil
+		end
+	end)
+	-- safety net: the Weapon attribute can never be empty / unknown (the server rejects shots that do not match it)
+	p:GetAttributeChangedSignal("Weapon"):Connect(function()
+		local w = p:GetAttribute("Weapon")
+		if type(w) ~= "string" or not Weapons.Weapons[w] then
+			p:SetAttribute("Weapon", Weapons.Default)
+			p:SetAttribute("Sight", Weapons.Get(Weapons.Default).DefaultSight)
+		end
+	end)
+	-- LOBBY: the gun follows the loadout you have equipped RIGHT NOW (LobbyServer publishes it as LoadoutJson)
+	local function syncFromLoadout()
+		local raw = p:GetAttribute("LoadoutJson")
+		if type(raw) ~= "string" or raw == "" then return end
+		local ok, t = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+		local w = ok and type(t) == "table" and t.Weapon
+		if type(w) == "string" and Weapons.Weapons[w] and w ~= p:GetAttribute("Weapon") then
+			state[p] = nil
+			p:SetAttribute("Sight", Weapons.Get(w).DefaultSight)
+			p:SetAttribute("Weapon", w)
+		end
+	end
+	p:GetAttributeChangedSignal("LoadoutJson"):Connect(syncFromLoadout)
+	task.spawn(function()
+		Profiles.WaitFor(p)
+		syncFromLoadout()
+	end)
+end
+Players.PlayerAdded:Connect(onPlayer)
+for _, p in Players:GetPlayers() do onPlayer(p) end
+Players.PlayerRemoving:Connect(function(p) state[p] = nil pocketsReady[p] = nil end)
+
+ReloadRemote.OnServerEvent:Connect(function(player, weapon)
+	if not inTraining(player) then return end -- LOBBY: only inside the training zone
+	if weapon ~= player:GetAttribute("Weapon") or player:GetAttribute("Carrying") then return end
+	local cfg = Weapons.Get(weapon)
+	local w = getState(player, weapon)
+	local now = os.clock()
+	if now < w.reloadUntil or w.ammo >= cfg.MagSize then return end
+	w.untouched = false
+	-- v7: round-fed guns (AWP / shotgun / revolver) only load what is missing, and a short top-up is a short reload
+	w.reloadUntil = now + Weapons.ReloadDuration(cfg, w.ammo) * 0.9
+	w.ammo = cfg.MagSize
+end)
+
+local function maxBudget(cfg)
+	if cfg.FireMode == "Burst" then return cfg.BurstCount + 0.5 end
+	return math.clamp(0.25 / (60 / cfg.RPM), 1.2, 3)
+end
+
+-- validates one pellet; returns model, humanoid, damage, head, hitPos or nil
+local function checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
+	if typeof(hitPart) ~= "Instance" or not hitPart:IsA("BasePart") or typeof(hitPos) ~= "Vector3" then return end
+	if not hitPart:IsDescendantOf(workspace) then return end
+	local model = hitPart:FindFirstAncestorOfClass("Model")
+	local hum = model and model:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 or model == char then return end
+	local targetPlayer = Players:GetPlayerFromCharacter(model)
+	if targetPlayer and not inTraining(targetPlayer) then return end -- LOBBY: only players who are in the training zone too
+	if not targetPlayer and model:GetAttribute("OwnerTeam") == nil and not model:GetAttribute("IsBot") and not model:GetAttribute("TrainingTarget") then return end -- LOBBY: nothing else with a Humanoid (NPCs) can be shot
+	if targetPlayer and not player.Neutral and targetPlayer.Team == player.Team then return end
+	local sentryTeam = model:GetAttribute("OwnerTeam") -- v4.0: a gadget Sentry (has a Humanoid, no player); never shoot your own team's
+	if sentryTeam and player.Team and sentryTeam == player.Team.Name then return end
+
+	local toHit = hitPos - origin
+	local dist = toHit.Magnitude
+	if dist > cfg.Range or dist < 0.01 then return end
+	if toHit.Unit:Dot(dir) < 0.95 then return end
+	if (hitPart.Position - hitPos).Magnitude > hitPart.Size.Magnitude / 2 + 7 then return end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore = {}
+	for _, p in Players:GetPlayers() do if p.Character then table.insert(ignore, p.Character) end end
+	table.insert(ignore, model)
+	params.FilterDescendantsInstances = ignore
+	if workspace:Raycast(origin, toHit.Unit * math.max(dist - 0.5, 0), params) then return end
+
+	local head = GunMath.IsHeadshot(hitPart)
+	return model, hum, GunMath.Damage(cfg, dist, head), head, hitPos, targetPlayer
+end
+
+-- shots = { { dir, hitPart, hitPos }, ... } one entry per pellet
+-- validates a shot at a plugged wall box (enemy team's boxes only); returns box part, damage, hitPos or nil
+local function checkBoxHit(player, cfg, origin, dir, hitPart, hitPos)
+	if not hitPart:GetAttribute("WPBox") or hitPart:GetAttribute("State") ~= "Plugged" then return end
+	local plugTeam = hitPart:GetAttribute("PlugTeam")
+	if not plugTeam or not player.Team or player.Team.Name == plugTeam then return end
+	local toHit = hitPos - origin
+	local dist = toHit.Magnitude
+	if dist > cfg.Range or dist < 0.01 or toHit.Unit:Dot(dir) < 0.95 then return end
+	if (hitPart.Position - hitPos).Magnitude > hitPart.Size.Magnitude / 2 + 4 then return end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore = {}
+	for _, p in Players:GetPlayers() do if p.Character then table.insert(ignore, p.Character) end end
+	params.FilterDescendantsInstances = ignore
+	local r = workspace:Raycast(origin, toHit.Unit * (dist + 1), params)
+	if r and r.Instance ~= hitPart then return end -- something solid is in the way
+	return hitPart, GunMath.Damage(cfg, dist, false) * MatchCfg.BOX.DamageMult, hitPos
+end
+
+-- v4.0: validates a shot at a bubble shield (GadgetServer); returns the shield part, damage or nil. Friendly shields soak the bullet but take no damage.
+local function checkShieldHit(player, cfg, origin, dir, hitPart, hitPos)
+	if hitPart.Name ~= "BubbleShield" or not hitPart:HasTag("GadgetShield") then return end
+	local toHit = hitPos - origin
+	local dist = toHit.Magnitude
+	if dist > cfg.Range or dist < 0.01 or toHit.Unit:Dot(dir) < 0.95 then return end
+	if (hitPart.Position - hitPos).Magnitude > hitPart.Size.X / 2 + 3 then return end
+	local team = hitPart:GetAttribute("ShieldTeam")
+	if team and player.Team and team == player.Team.Name then return end
+	return hitPart, GunMath.Damage(cfg, dist, false)
+end
+
+FireRemote.OnServerEvent:Connect(function(player, weapon, origin, shots)
+	if not inTraining(player) then return end -- LOBBY: only inside the training zone
+	if weapon ~= player:GetAttribute("Weapon") or player:GetAttribute("Carrying") then return end
+	do -- v3.8: no shooting while your body is being revealed after a respawn, or while wall-climbing
+		local ch = player.Character
+		if ch and (ch:GetAttribute("Revealing") == true or ch:GetAttribute("AbilityMode") == "climb" or ch:GetAttribute("HeldGadget") ~= nil
+			or ch:GetAttribute("Reviving") == true or player:GetAttribute("CarryingSoul") == true) then return end
+	end
+	local ph = MatchState and MatchState:GetAttribute("Phase")
+	if ph == "Waiting" or ph == "Pregame" or ph == "Warp" or ph == "Cards" or ph == "Countdown" or ph == "Summary" then return end
+	local cfg = Weapons.Get(weapon)
+	if typeof(origin) ~= "Vector3" or type(shots) ~= "table" then return end
+	if #shots < 1 or #shots > cfg.Pellets then return end
+
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local myHum = char and char:FindFirstChildOfClass("Humanoid")
+	if not root or not myHum or myHum.Health <= 0 then return end
+	if (origin - root.Position).Magnitude > 10 then return end
+
+	local w = getState(player, weapon)
+	local now = os.clock()
+	if now < w.reloadUntil or w.ammo <= 0 then return end
+	-- rate limit that allows small bursts (lag bunches shots together); still caps at the weapon's rate
+	local cap = maxBudget(cfg)
+	w.budget = math.min((w.budget or cap) + (now - w.lastFire) / (Weapons.AvgInterval(cfg) * CardFx.FireIntervalMult(player)), cap) -- v5.14: HOT BARREL
+	if w.budget < 1 then return end
+	w.budget -= 1
+	w.ammo -= 1
+	w.lastFire = now
+	w.untouched = false
+	-- v5.14 cards: damage multipliers for players / bots / sentries
+	local hollow = CardFx.Has(player, "hollow_point")
+	local glass = CardFx.Has(player, "glass_cannon")
+
+	local first, maxCone = nil, math.cos(math.rad(cfg.PelletSpread * 2.2 + 1))
+	local ends, hits, boxHits = {}, {}, {}
+	for i, shot in shots do
+		if type(shot) ~= "table" then return end
+		local dir, hitPart, hitPos = shot[1], shot[2], shot[3]
+		if typeof(dir) ~= "Vector3" then return end
+		local m = dir.Magnitude
+		if not (m > 0.9 and m < 1.1) then return end
+		dir = dir.Unit
+		first = first or dir
+		if dir:Dot(first) < maxCone then continue end
+
+		local endPos = origin + dir * cfg.Range
+		if typeof(hitPos) == "Vector3" and (hitPos - origin).Magnitude <= cfg.Range + 5 then endPos = hitPos end
+		ends[i] = endPos
+
+		local boxPart, boxDmg, boxPos
+		if typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") and typeof(hitPos) == "Vector3" and BoxDamage then
+			boxPart, boxDmg, boxPos = checkBoxHit(player, cfg, origin, dir, hitPart, hitPos)
+		end
+		if boxPart then
+			local b = boxHits[boxPart] or { dmg = 0, pos = boxPos }
+			b.dmg += boxDmg
+			boxHits[boxPart] = b
+		end
+		if typeof(hitPart) == "Instance" and hitPart:IsA("BasePart") and typeof(hitPos) == "Vector3" and GadgetDamage then
+			local sp, sd = checkShieldHit(player, cfg, origin, dir, hitPart, hitPos)
+			if sp then GadgetDamage:Fire(sp, sd) end
+		end
+		local model, hum, dmg, head, pos, targetPlayer = checkHit(player, char, cfg, origin, dir, hitPart, hitPos)
+		if model then
+			local h = hits[model] or { hum = hum, dmg = 0, head = false, pos = pos, player = targetPlayer }
+			if head and hollow then dmg *= CardFx.HOLLOW_POINT_HEAD end -- v5.14: HOLLOW POINT
+			if glass then dmg *= CardFx.GLASS_CANNON_DEAL end           -- v5.14: GLASS CANNON
+			h.dmg += dmg
+			h.head = h.head or head
+			hits[model] = h
+		end
+	end
+
+	-- show this shot to everyone else
+	for _, p in Players:GetPlayers() do
+		if p ~= player then ShotFX:FireClient(p, player, origin, ends) end
+	end
+
+	-- plugged boxes: damage goes to MatchServer, the shooter gets a body hitmarker + number
+	for part, b in boxHits do
+		BoxDamage:Fire(part, b.dmg, player)
+		HitConfirm:FireClient(player, part, false, false, math.floor(b.dmg + 0.5), b.pos)
+	end
+
+	-- one damage number per target per shot (shotgun pellets are added together)
+	for model, h in hits do
+		if h.hum.Health > 0 then
+			local dealt = Vitals.Damage(h.hum, h.dmg) -- v5.8: the damage that really came off (0 while the target is spawn-protected)
+			local killed = Vitals.Killed(h.hum) -- LOBBY: a VIRTUAL kill (nobody is really hurt)
+			if dealt <= 0 and not killed then continue end -- protected target: no number, no stats (the client hitmarker still shows)
+			if killed and (h.player or model:GetAttribute("IsBot")) and CardFx.Has(player, "hot_barrel") then -- v5.14: HOT BARREL
+				player:SetAttribute("HotBarrelUntil", workspace:GetServerTimeNow() + CardFx.HOT_BARREL_TIME)
+			end
+			if h.player or model:GetAttribute("IsBot") then -- match stats for the souls screen (MatchServer resets them every round); v5.7: bots count too
+				player:SetAttribute("StatDamage", (player:GetAttribute("StatDamage") or 0) + dealt)
+				if killed then player:SetAttribute("StatKills", (player:GetAttribute("StatKills") or 0) + 1) end
+			end
+			HitConfirm:FireClient(player, model, h.head, killed, math.floor(h.dmg + 0.5), h.pos) -- (full hit value, as before: overkill shows the real shot)
+			if h.player then Damaged:FireClient(h.player, h.dmg, origin) end
+		end
+	end
+end)
