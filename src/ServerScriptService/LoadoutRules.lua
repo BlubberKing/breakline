@@ -1,4 +1,4 @@
--- LoadoutRules (ModuleScript in ServerScriptService, named "LoadoutRules") - BOTH places, keep the two copies identical. NEW in v4.7 (shop). v5.11: no duplicate gadgets / reserve items.
+-- LoadoutRules (ModuleScript in ServerScriptService, named "LoadoutRules") - BOTH places, keep the two copies identical. NEW in v4.7 (shop). v5.11: no duplicate gadgets / reserve items. v5.16: a gadget can not be in a gadget slot AND the reserve.
 -- The one place that decides what a saved loadout may contain:
 --   * every id must be a real catalog item of the right kind (as before)
 --   * and the player must OWN it (bought in the shop / given as starter gear). Until a player made the starter pick (StarterDone) nothing is
@@ -71,6 +71,10 @@ function R.Clean(player, l)
 				if seen[arr[i]] then arr[i] = "" else seen[arr[i]] = true end
 			end
 		end
+	end
+	-- v5.16: an item is EITHER a gadget OR in the reserve, never both (owner). A gadget that sits in a gadget slot is taken out of the reserve.
+	for i = 1, 3 do
+		if out.Reserve[i] ~= "" and table.find(out.Gadgets, out.Reserve[i]) then out.Reserve[i] = "" end
 	end
 	return out
 end
