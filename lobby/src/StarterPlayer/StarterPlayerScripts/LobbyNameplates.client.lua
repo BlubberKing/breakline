@@ -1,3 +1,4 @@
+-- LobbyNameplates v2.3 (v5.17: the TITLE above the name is much LARGER (32 px) and LONGER (a long thin tier-coloured line each side of the text, wider plate), easier to read from far away; the name row did not move)
 -- LobbyNameplates v2.2 (v5.16: the equipped TITLE (Titles module, Player attribute Title) shows as a small coloured line right above the name)
 -- LobbyNameplates v2.1 (v5.12: the crown sits close above the head (CROWN_Y 4.5 -> 1.45) and the nameplate moves up over it while a crown shows;
 --   the xN streak text is sized in STUDS now, so it always stays outside the crown at its upper right (in pixels it slid into the crown from far away)) (v2 v5.10: WIN-STREAK CROWN - a gold crown floats (bobbing + turning) well above the nameplate of everyone who is on a winning streak, with the streak
@@ -83,7 +84,7 @@ local function build(plr, char)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "Nameplate"
 	bb.Adornee = head
-	bb.Size = UDim2.fromOffset(320, 84) -- v5.16: taller (the name row stays in the middle, the TITLE line sits above it)
+	bb.Size = UDim2.fromOffset(560, 130) -- v5.17: wider + taller (the name row stays exactly in the middle, the big TITLE sits above it)
 	bb.StudsOffsetWorldSpace = Vector3.new(0, 2.5, 0)
 	bb.AlwaysOnTop = false
 	bb.MaxDistance = 90
@@ -91,15 +92,31 @@ local function build(plr, char)
 	bb.ResetOnSpawn = false
 	bb.Parent = char
 
-	local row = UI.new("Frame", { Position = UDim2.fromOffset(0, 25), Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1 }, bb)
+	local row = UI.new("Frame", { Position = UDim2.fromOffset(0, 48), Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1 }, bb)
 	-- v5.16 TITLE (the one the player equipped in the cosmetics locker), small and coloured by its tier, right above the name
-	local titleL = UI.new("TextLabel", { Name = "Title", BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 2), Size = UDim2.new(1, 0, 0, 22), Text = "",
-		TextSize = 18, FontFace = F.H, TextColor3 = K.text, Visible = false }, bb)
-	UI.new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.3 }, titleL)
+	local titleBox = UI.new("Frame", { Name = "TitleBox", BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 4), Size = UDim2.new(1, 0, 0, 42), Visible = false }, bb)
+	local titleL = UI.new("TextLabel", { Name = "Title", BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(0, 40), AutomaticSize = Enum.AutomaticSize.X, Text = "", TextSize = 32, FontFace = F.H, TextColor3 = K.text }, titleBox)
+	UI.new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 2.5, Transparency = 0.15 }, titleL)
+	-- v5.17: a long thin line each side of the title, in the title's colour, fading outward (makes the title read as a banner and longer)
+	local lineL = UI.new("Frame", { Name = "LineL", AnchorPoint = Vector2.new(1, 0.5), BackgroundColor3 = K.text, BorderSizePixel = 0, Size = UDim2.fromOffset(110, 3) }, titleBox)
+	UI.new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) }) }, lineL)
+	local lineR = UI.new("Frame", { Name = "LineR", AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = K.text, BorderSizePixel = 0, Size = UDim2.fromOffset(110, 3) }, titleBox)
+	UI.new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }) }, lineR)
+	local function placeLines()
+		local half = titleL.AbsoluteSize.X / 2
+		lineL.Position = UDim2.new(0.5, -half - 12, 0.5, 0)
+		lineR.Position = UDim2.new(0.5, half + 12, 0.5, 0)
+	end
+	titleL:GetPropertyChangedSignal("AbsoluteSize"):Connect(placeLines)
 	local function updTitle()
 		local t = Titles and Titles.ById[plr:GetAttribute("Title")] or nil
-		titleL.Visible = t ~= nil
-		if t then titleL.Text, titleL.TextColor3 = t.text, t.color end
+		titleBox.Visible = t ~= nil
+		if t then
+			titleL.Text, titleL.TextColor3 = t.text, t.color
+			lineL.BackgroundColor3, lineR.BackgroundColor3 = t.color, t.color
+			placeLines()
+		end
 	end
 	updTitle()
 	local c3 = plr:GetAttributeChangedSignal("Title"):Connect(updTitle)
