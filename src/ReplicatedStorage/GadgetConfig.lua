@@ -21,7 +21,7 @@ G.Items = {
 		projSize = 0.95, projColor = Color3.fromRGB(70, 92, 62),
 	},
 	SMOKE = {
-		name = "Smoke", kind = "throw", charges = 2, recharge = 30, cooldown = 0.9, speed = 110,
+		name = "Smoke Grenade", kind = "throw", charges = 2, recharge = 30, cooldown = 0.9, speed = 110,
 		fuse = 1.0, radius = 15, duration = 13,
 		projSize = 1.0, projColor = Color3.fromRGB(150, 160, 175),
 	},
