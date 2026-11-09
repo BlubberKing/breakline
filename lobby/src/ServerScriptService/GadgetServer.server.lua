@@ -1,0 +1,878 @@
+-- GadgetServer v-lobby (LOBBY place, NEW in v5.17: the TRAINING ZONE - Breakline's GadgetServer with: only usable while the Player attribute InTraining is true, only players inside the zone are hit,
+--   nobody is ever really hurt (lobby Vitals), placed shields only flash. Everything else is the same code as a match.)
+-- GadgetServer (v5.14: GLASS CANNON +15% gadget damage dealt, gadget kills start HOT BARREL - ReplicatedStorage.CardEffects)
+-- GadgetServer v2.1 (v4.9: throws are much stronger - ~115 studs/s, light gravity in flight via a VectorForce until the first bounce, 60% run-speed
+--   carry-over, released from the throwing hand AFTER the windup so it leaves the hand when the arm whips; Use(slot, dir, underhand) for the right-click toss) (was v2: Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0, reworked in v4.1:
+--   v4.1: gadgets are EQUIPPED first (remote Equip: your gun is swapped for the item, char attribute HeldGadget = id), then
+--         "throw" kinds (frag / smoke / flash) are thrown with remote Use(slot, dir) and
+--         "place" kinds (sentry / shield / mine) are put down EXACTLY where the client's preview was with remote Place(slot, pos, facing).
+--         The server re-checks everything for placement (range, line of sight, surface, clearance - the same GadgetModels.Check the preview uses).
+--         Real models (GadgetModels) are used for thrown items, the sentry, the mine and the shield projector.
+-- Server-authoritative gadgets: FRAG, SMOKE, FLASH, SENTRY, SHIELD (bubble), MINE. Numbers: ReplicatedStorage.GadgetConfig.
+--   Client -> server : ReplicatedStorage.GadgetRemotes.Use (slot 1-3, aim direction)
+--   Server -> clients: ReplicatedStorage.GadgetRemotes.FX  ("Boom" / "Flash" / "ShieldBreak", ...) = purely visual
+--   Player attributes (read by MatchHUD): GadId{i}, GadCount{i}, GadMax{i}, GadReady{i}, GadNext{i}  (i = loadout gadget slot 1-3, times = server time)
+--   ServerStorage.GadgetDamage (BindableEvent): GunServer fires (part, damage, shooter) when a bullet hits a bubble shield.
+-- Rules: only while MatchState.Phase == "Playing", never while carrying a box / revealing / wall-climbing. Thrown things are real physics parts
+-- owned by the server. Friendly fire is off (your own frag / mine only hurts you at selfMult, your own shield / sentry never block or hurt you).
+-- Bubble shield: a big transparent ball (CanQuery, no CanCollide). Bullets from OUTSIDE hit it (it takes the damage), bullets fired from INSIDE leave
+-- freely (a ray that starts inside a part does not hit that part). Explosions are blocked by it too.
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local SS = game:GetService("ServerStorage")
+local CS = game:GetService("CollectionService")
+local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local Cfg = require(RS:WaitForChild("GadgetConfig"))
+local GM = require(RS:WaitForChild("GadgetModels"))
+local Vitals = require(game:GetService("ServerScriptService"):WaitForChild("Vitals")) -- v4.4: shield + 200 health
+local MatchState = RS:FindFirstChild("MatchState") -- LOBBY: none (gadgets only work inside the TRAINING ZONE)
+local BoxDamage = SS:FindFirstChild("BoxDamage") -- (GunServer makes it in the lobby)
+
+local remotes = Instance.new("Folder")
+remotes.Name = "GadgetRemotes"
+local UseR = Instance.new("RemoteEvent"); UseR.Name = "Use"; UseR.Parent = remotes
+local FxR = Instance.new("RemoteEvent"); FxR.Name = "FX"; FxR.Parent = remotes
+local EquipR = Instance.new("RemoteEvent"); EquipR.Name = "Equip"; EquipR.Parent = remotes
+local PlaceR = Instance.new("RemoteEvent"); PlaceR.Name = "Place"; PlaceR.Parent = remotes
+remotes.Parent = RS
+local DamageEvent = SS:FindFirstChild("GadgetDamage") or Instance.new("BindableEvent") -- LOBBY: GunServer may have made it already
+DamageEvent.Name = "GadgetDamage"
+DamageEvent.Parent = SS
+local fxFolder = Instance.new("Folder")
+fxFolder.Name = "GadgetFX"
+fxFolder.Parent = workspace
+
+local rnd = Random.new()
+local shields, sentries, mines = {}, {}, {} -- [part] = rec / array / array
+
+------------------------------------------------------------------ helpers
+local function nowT() return workspace:GetServerTimeNow() end
+local function teamName(p) return p and p.Team and not p.Neutral and p.Team.Name or nil end
+local function isEnemy(owner, p) -- is player p an enemy of the owner (or the owner themself = false)
+	if owner == p then return false end
+	if p:GetAttribute("InTraining") ~= true then return false end -- LOBBY: only players inside the training zone can be hit
+	local a, b = teamName(owner), teamName(p)
+	if not a or not b then return true end
+	return a ~= b
+end
+local function aliveChar(p)
+	local c = p.Character
+	local h = c and c:FindFirstChildOfClass("Humanoid")
+	local r = c and c:FindFirstChild("HumanoidRootPart")
+	if h and r and h.Health > 0 then return c, h, r end
+	return nil
+end
+-- v5.11: every living enemy of `owner` as { root, hum, char, player? } - players AND bots (bot models carry IsBot + OwnerTeam)
+local function enemyTargets(owner)
+	local out = {}
+	for _, p in Players:GetPlayers() do
+		if isEnemy(owner, p) then
+			local c, h, r = aliveChar(p)
+			if c then table.insert(out, { root = r, hum = h, char = c, player = p }) end
+		end
+	end
+	local ot = teamName(owner)
+	for _, m in workspace:GetChildren() do
+		if m:IsA("Model") and m:GetAttribute("IsBot") and (not ot or m:GetAttribute("OwnerTeam") ~= ot) then
+			local h = m:FindFirstChildOfClass("Humanoid")
+			local r = m:FindFirstChild("HumanoidRootPart")
+			if h and r and h.Health > 0 then table.insert(out, { root = r, hum = h, char = m }) end
+		end
+	end
+	return out
+end
+local function teamColor(p)
+	if p and p.Team and not p.Neutral then return p.TeamColor.Color end
+	return Color3.fromRGB(110, 220, 255)
+end
+local function charList()
+	local t = {}
+	for _, p in Players:GetPlayers() do if p.Character then table.insert(t, p.Character) end end
+	return t
+end
+local function newParams(extra)
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	local ig = charList()
+	if extra then for _, e in extra do table.insert(ig, e) end end
+	rp.FilterDescendantsInstances = ig
+	return rp
+end
+local function cfFromUp(pos, up)
+	local r = up:Cross(Vector3.zAxis)
+	if r.Magnitude < 0.1 then r = up:Cross(Vector3.xAxis) end
+	r = r.Unit
+	return CFrame.fromMatrix(pos, r, up, r:Cross(up))
+end
+local function mkPart(props, parent)
+	local p = Instance.new("Part")
+	p.Anchored, p.CanCollide, p.CanQuery, p.CanTouch, p.CastShadow = true, false, false, false, false
+	p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
+	p.Material = Enum.Material.SmoothPlastic
+	for k, v in props do p[k] = v end
+	p.Parent = parent or fxFolder
+	return p
+end
+
+local gunRemotes
+local function gunRemote(name)
+	gunRemotes = gunRemotes or RS:FindFirstChild("GunRemotes")
+	return gunRemotes and gunRemotes:FindFirstChild(name)
+end
+
+-- damage a humanoid on behalf of `owner` (stats for the souls screen + hit confirm + damage indicator)
+local CardFx = require(RS:WaitForChild("CardEffects")) -- v5.14: power-up cards
+local function hurt(owner, targetPlayer, hum, dmg, hitPos)
+	if hum.Health <= 0 or dmg <= 0 then return end
+	if owner and targetPlayer ~= owner and CardFx.Has(owner, "glass_cannon") then dmg *= CardFx.GLASS_CANNON_DEAL end -- v5.14: GLASS CANNON
+	local dealt = Vitals.Damage(hum, dmg) -- shield first, then health (sentries have no shield and just take it)
+	local killed = Vitals.Killed(hum) -- LOBBY: a VIRTUAL kill (nobody is really hurt)
+	if killed and owner and targetPlayer ~= owner and (targetPlayer or hum.Parent:GetAttribute("IsBot")) and CardFx.Has(owner, "hot_barrel") then -- v5.14: HOT BARREL
+		owner:SetAttribute("HotBarrelUntil", workspace:GetServerTimeNow() + CardFx.HOT_BARREL_TIME)
+	end
+	if owner and targetPlayer and targetPlayer ~= owner then
+		owner:SetAttribute("StatDamage", (owner:GetAttribute("StatDamage") or 0) + dealt)
+		if killed then owner:SetAttribute("StatKills", (owner:GetAttribute("StatKills") or 0) + 1) end
+	end
+	if owner and owner.Parent and targetPlayer ~= owner then
+		local hc = gunRemote("HitConfirm")
+		if hc and hum.Parent then hc:FireClient(owner, hum.Parent, false, killed, math.floor(dmg + 0.5), hitPos or hum.Parent:GetPivot().Position) end
+	end
+	if targetPlayer then
+		local dm = gunRemote("Damaged")
+		if dm then dm:FireClient(targetPlayer, dmg, hitPos or Vector3.zero) end
+	end
+end
+
+------------------------------------------------------------------ bubble shield
+local function breakShield(part, quiet)
+	local rec = shields[part]
+	if not rec then return end
+	shields[part] = nil
+	if not quiet then FxR:FireAllClients("ShieldBreak", part.Position, rec.radius, part.Color) end
+	if rec.ring then rec.ring:Destroy() end
+	for _, e in rec.extra or {} do
+		if e.Parent then
+			TweenService:Create(e, TweenInfo.new(quiet and 0.5 or 0.15), { Transparency = 1 }):Play()
+			Debris:AddItem(e, quiet and 0.6 or 0.2)
+		end
+	end
+	TweenService:Create(part, TweenInfo.new(quiet and 0.6 or 0.15), { Transparency = 1 }):Play()
+	Debris:AddItem(part, quiet and 0.7 or 0.2)
+end
+
+local function damageShield(part, dmg)
+	local rec = shields[part]
+	if not rec then return end
+	-- LOBBY (training zone): a placed shield takes no real damage, it only flashes
+	part.Transparency = 0.12
+	task.delay(0.07, function() if part.Parent then part.Transparency = 0.35 end end)
+	if true then return end
+	rec.hp -= dmg
+	part:SetAttribute("HP", math.max(rec.hp, 0))
+	if rec.hp <= 0 then breakShield(part, false) return end
+	part.Transparency = 0.35 + 0.4 * (1 - math.clamp(rec.hp / rec.max, 0, 1))
+end
+
+DamageEvent.Event:Connect(function(part, dmg)
+	if typeof(part) == "Instance" and shields[part] and type(dmg) == "number" and dmg > 0 then damageShield(part, dmg) end
+end)
+
+local function buildShield(owner, pos)
+	local cfg = Cfg.Items.SHIELD
+	local R = cfg.radius
+	local col = teamColor(owner)
+	local dome = mkPart({
+		Name = "BubbleShield", Shape = Enum.PartType.Ball, Size = Vector3.one * 1.5, Position = pos + Vector3.new(0, R * 0.45, 0),
+		Material = Enum.Material.ForceField, Color = col, Transparency = 0.35, CanQuery = true,
+	})
+	dome:SetAttribute("ShieldTeam", teamName(owner) or "none")
+	dome:SetAttribute("HP", cfg.hp)
+	dome:SetAttribute("MaxHP", cfg.hp)
+	local ringD = 2 * R * math.sqrt(1 - 0.45 ^ 2)
+	local ring = mkPart({
+		Name = "ShieldRing", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 1, 1), Material = Enum.Material.Neon, Color = col, Transparency = 0.25,
+		CFrame = CFrame.new(pos + Vector3.new(0, 0.12, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+	})
+	-- v4.1: the real projector (GadgetModels) sits in the middle of the dome
+	local extra = {}
+	local desc = GM.Describe("SHIELD", col)
+	if desc then
+		for _, d in desc.Parts do
+			table.insert(extra, mkPart({ Name = "Projector", Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = CFrame.new(pos) * d.CF,
+				Color = d.Color, Material = d.Material, Transparency = d.Transparency or 0 }))
+		end
+	end
+	TweenService:Create(dome, TweenInfo.new(cfg.expand, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Size = Vector3.one * R * 2 }):Play()
+	TweenService:Create(ring, TweenInfo.new(cfg.expand, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.new(0.2, ringD, ringD), Transparency = 0.5 }):Play()
+	shields[dome] = { hp = cfg.hp, max = cfg.hp, radius = R, owner = owner, ring = ring, extra = extra }
+	CS:AddTag(dome, "GadgetShield")
+	task.delay(cfg.life, function() if shields[dome] then breakShield(dome, true) end end)
+end
+
+------------------------------------------------------------------ explosions
+local function detonateMine(rec) end -- forward declaration (assigned below)
+
+local function explode(pos, owner, radius, dmg, boxDmg, selfMult, shieldDmg)
+	FxR:FireAllClients("Boom", pos, radius)
+	local params = newParams()
+	local origin = pos + Vector3.new(0, 0.4, 0)
+	for _, p in Players:GetPlayers() do
+		local char, hum, root = aliveChar(p)
+		if char and (p == owner or isEnemy(owner, p)) then
+			local d = (root.Position - pos).Magnitude
+			if d <= radius then
+				local head = char:FindFirstChild("Head")
+				local visible = false
+				for _, tp in { root.Position, head and head.Position or root.Position } do
+					if not workspace:Raycast(origin, tp - origin, params) then visible = true break end
+				end
+				if visible then
+					local dealt = dmg * (0.25 + 0.75 * math.clamp(1 - d / radius, 0, 1))
+					if p == owner then dealt *= selfMult end
+					hurt(owner, p, hum, dealt, root.Position)
+				end
+			end
+		end
+	end
+	-- v5.11: enemy BOTS are hurt too (before, frags / mines went straight through them)
+	for _, t in enemyTargets(owner) do
+		if not t.player then
+			local d = (t.root.Position - pos).Magnitude
+			if d <= radius and not workspace:Raycast(origin, t.root.Position - origin, newParams({ t.char })) then
+				hurt(owner, nil, t.hum, dmg * (0.25 + 0.75 * math.clamp(1 - d / radius, 0, 1)), t.root.Position)
+			end
+		end
+	end
+	-- plugged boxes of the enemy team
+	local ot = teamName(owner)
+	for _, b in CS:GetTagged("WPBox") do
+		if b:IsA("BasePart") and b:GetAttribute("State") == "Plugged" then
+			local plugTeam = b:GetAttribute("PlugTeam")
+			if plugTeam and ot and plugTeam ~= ot and (b.Position - pos).Magnitude <= radius + b.Size.Magnitude / 2 then
+				BoxDamage:Fire(b, boxDmg * (0.3 + 0.7 * math.clamp(1 - (b.Position - pos).Magnitude / (radius + 4), 0, 1)), owner)
+			end
+		end
+	end
+	-- enemy shields, sentries and mines in range
+	for part, rec in shields do
+		if rec.owner ~= owner and (teamName(rec.owner) ~= ot or not ot) and (part.Position - pos).Magnitude < radius + rec.radius then
+			damageShield(part, shieldDmg or dmg)
+		end
+	end
+	for _, s in sentries do
+		if s.alive and s.owner ~= owner and (teamName(s.owner) ~= ot or not ot) and (s.headPos - pos).Magnitude < radius then
+			s.hum:TakeDamage(dmg * 0.8)
+		end
+	end
+	for _, m in table.clone(mines) do
+		if m.alive and m.owner ~= owner and (teamName(m.owner) ~= ot or not ot) and (m.pos - pos).Magnitude < radius then
+			task.delay(0.12, function() detonateMine(m) end)
+		end
+	end
+end
+
+------------------------------------------------------------------ smoke / flash
+local function smokeBlocks(a, b)
+	local ab = b - a
+	local len2 = ab:Dot(ab)
+	for _, c in CS:GetTagged("SmokeCloud") do
+		local R = c:GetAttribute("Radius") or 10
+		local t = len2 > 0 and math.clamp((c.Position - a):Dot(ab) / len2, 0, 1) or 0
+		if (a + ab * t - c.Position).Magnitude < R * 0.75 then return true end
+	end
+	return false
+end
+
+local function buildSmoke(owner, pos)
+	FxR:FireAllClients("SmokePop", pos) -- v5.7: sound hook (GadgetClient)
+	local cfg = Cfg.Items.SMOKE
+	local R = cfg.radius
+	local center = mkPart({ Name = "SmokeCloud", Transparency = 1, Size = Vector3.one * R * 0.9, Position = pos + Vector3.new(0, 2, 0) })
+	center:SetAttribute("Radius", R)
+	center:SetAttribute("ExpireAt", nowT() + cfg.duration)
+	CS:AddTag(center, "SmokeCloud")
+	local pe = Instance.new("ParticleEmitter")
+	pe.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	pe.Rate = 70
+	pe.Lifetime = NumberRange.new(5, 8)
+	pe.Speed = NumberRange.new(1, 4)
+	pe.SpreadAngle = Vector2.new(180, 180)
+	pe.Rotation = NumberRange.new(0, 360)
+	pe.RotSpeed = NumberRange.new(-20, 20)
+	pe.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, R * 0.35), NumberSequenceKeypoint.new(1, R * 0.8) })
+	pe.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(0.2, 0.2), NumberSequenceKeypoint.new(1, 1) })
+	pe.Color = ColorSequence.new(Color3.fromRGB(205, 208, 214))
+	pe.Drag = 2
+	pe.Parent = center
+	local blobs = {}
+	for i = 1, 7 do
+		local off = Vector3.new(rnd:NextNumber(-1, 1), rnd:NextNumber(-0.3, 0.8), rnd:NextNumber(-1, 1)) * R * 0.45
+		local b = mkPart({ Shape = Enum.PartType.Ball, Size = Vector3.one * 2, Position = pos + Vector3.new(0, 2, 0) + off, Color = Color3.fromRGB(200, 203, 210), Transparency = 0.3 })
+		TweenService:Create(b, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = Vector3.one * R * rnd:NextNumber(1.0, 1.5) }):Play()
+		table.insert(blobs, b)
+	end
+	task.delay(cfg.duration - 2.5, function()
+		pe.Enabled = false
+		for _, b in blobs do TweenService:Create(b, TweenInfo.new(2.4), { Transparency = 1 }):Play() end
+	end)
+	task.delay(cfg.duration, function()
+		center:Destroy()
+		for _, b in blobs do b:Destroy() end
+	end)
+end
+
+------------------------------------------------------------------ sentry
+local function buildSentry(owner, pos, facing)
+	local cfg = Cfg.Items.SENTRY
+	local col = teamColor(owner)
+	local desc = GM.Describe("SENTRY", col)
+	local model = Instance.new("Model")
+	model.Name = "Sentry"
+	local headPos = pos + desc.HeadPivot
+	local pivotInv = CFrame.new(desc.HeadPivot):Inverse()
+	local parts, eye, base = {}, nil, nil -- parts = { part, offset from the turning head }
+	-- v4.8: the head has ~75 detail parts now. Only ONE of them (the head body) is moved every frame; all the others are welded to it, so the
+	-- server sends one CFrame per frame instead of 75.
+	local headRoot, headRootOff, headParts = nil, nil, {}
+	for _, d in desc.Parts do
+		local isHead = d.Group == "head"
+		local cf = isHead and (CFrame.lookAt(headPos, headPos + facing) * (pivotInv * d.CF)) or (CFrame.new(pos) * d.CF)
+		local p = mkPart({ Name = d.Name, Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = cf, Color = d.Color, Material = d.Material,
+			CanQuery = true, CanCollide = d.Collide == true }, model)
+		if isHead then
+			if d.Name == "Body" and not headRoot then headRoot, headRootOff = p, pivotInv * d.CF else table.insert(headParts, p) end
+		end
+		if d.Name == "Eye" then eye = p end
+		if d.Name == "BaseDisc" then base = p end
+	end
+	if headRoot then
+		table.insert(parts, { headRoot, headRootOff })
+		for _, p in headParts do
+			p.Massless = true
+			local w = Instance.new("WeldConstraint")
+			w.Part0, w.Part1 = headRoot, p
+			w.Parent = p
+			p.Anchored = false
+		end
+	end
+	local muzzleOff = CFrame.new(desc.Muzzle - desc.HeadPivot)
+	local hum = Instance.new("Humanoid")
+	hum.MaxHealth, hum.Health = cfg.health, cfg.health
+	hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	hum.BreakJointsOnDeath = false
+	hum.RequiresNeck = false
+	pcall(function() hum.EvaluateStateMachine = false end)
+	hum.Parent = model
+	model.PrimaryPart = base
+	model:SetAttribute("OwnerTeam", teamName(owner) or "none")
+	model:SetAttribute("OwnerId", owner.UserId)
+	CS:AddTag(model, "Sentry")
+	model.Parent = fxFolder
+	FxR:FireAllClients("SentryDeploy", headPos) -- v5.7: sound hook
+	local rec = {
+		model = model, hum = hum, owner = owner, headPos = headPos, parts = parts, eye = eye, muzzleOff = muzzleOff, alive = true,
+		aim = facing, base = facing, scan = 0, nextFire = 0, nextScan = 0, armAt = os.clock() + cfg.armTime, dieAt = os.clock() + cfg.life, target = nil,
+	}
+	-- one sentry per player
+	for _, s in table.clone(sentries) do
+		if s.owner == owner then s.dieNow = true end
+	end
+	table.insert(sentries, rec)
+	-- v4.4: the sentry's Humanoid has its state machine off (EvaluateStateMachine = false), so Humanoid.Died never fired and a "dead" sentry kept
+	-- shooting. Watch the health directly (HealthChanged here + a check in the per-frame loop below).
+	hum.HealthChanged:Connect(function(h) if h <= 0 then rec.dieNow, rec.killed = true, true end end)
+	hum.Died:Connect(function() rec.dieNow, rec.killed = true, true end)
+	return rec
+end
+
+local function killSentry(rec)
+	if not rec.alive then return end
+	rec.alive = false
+	FxR:FireAllClients("Boom", rec.headPos, 6)
+	rec.model:Destroy()
+	local i = table.find(sentries, rec)
+	if i then table.remove(sentries, i) end
+end
+
+local function sentryFindTarget(rec, cfg)
+	local best, bestD
+	local head = rec.headPos
+	local params = newParams({ rec.model })
+	for _, p in Players:GetPlayers() do
+		if isEnemy(rec.owner, p) then
+			local char, _, root = aliveChar(p)
+			if char then
+				local d = (root.Position - head).Magnitude
+				if d <= cfg.range and (not bestD or d < bestD) then
+					local h = char:FindFirstChild("Head")
+					local tp = (h and h.Position) or root.Position
+					local origin = head + Vector3.new(0, 0.2, 0)
+					if not workspace:Raycast(origin, tp - origin, params) and not smokeBlocks(origin, tp) then
+						best, bestD = { player = p, char = char, root = root, point = tp }, d
+					end
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function sentryShoot(rec, cfg, target)
+	local muzzle = (CFrame.lookAt(rec.headPos, rec.headPos + rec.aim) * rec.muzzleOff).Position
+	local dir = (target.point - muzzle)
+	if dir.Magnitude < 0.5 then return end
+	dir = dir.Unit
+	local sp = math.rad(cfg.spread)
+	local a, r = rnd:NextNumber(0, math.pi * 2), sp * math.sqrt(rnd:NextNumber())
+	dir = (CFrame.lookAt(Vector3.zero, dir) * CFrame.Angles(0, 0, a) * CFrame.Angles(r, 0, 0)).LookVector
+	local ex = { rec.model }
+	for _, p in Players:GetPlayers() do
+		if p.Character and not isEnemy(rec.owner, p) then table.insert(ex, p.Character) end
+	end
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.FilterDescendantsInstances = ex
+	local res = workspace:Raycast(muzzle, dir * (cfg.range + 12), rp)
+	local endPos = res and res.Position or muzzle + dir * (cfg.range + 12)
+	if res then
+		local model = res.Instance:FindFirstAncestorOfClass("Model")
+		local h = model and model:FindFirstChildOfClass("Humanoid")
+		if h and model ~= rec.model then
+			local tp = Players:GetPlayerFromCharacter(model)
+			if tp or not model:GetAttribute("OwnerTeam") or model:GetAttribute("OwnerTeam") ~= teamName(rec.owner) then
+				hurt(rec.owner, tp, h, cfg.damage, endPos)
+			end
+		elseif shields[res.Instance] and shields[res.Instance].owner ~= rec.owner then
+			damageShield(res.Instance, cfg.damage)
+		end
+	end
+	local len = (endPos - muzzle).Magnitude
+	local tr = mkPart({ Size = Vector3.new(0.12, 0.12, len), CFrame = CFrame.lookAt(muzzle, endPos) * CFrame.new(0, 0, -len / 2),
+		Material = Enum.Material.Neon, Color = teamColor(rec.owner), Transparency = 0.15 })
+	Debris:AddItem(tr, 0.06)
+	FxR:FireAllClients("SentryShot", muzzle) -- v5.7: sound hook
+end
+
+------------------------------------------------------------------ mines
+local function buildMine(owner, pos, normal)
+	local cfg = Cfg.Items.MINE
+	local cf = cfFromUp(pos, normal)
+	local desc = GM.Describe("MINE")
+	local all, eye, body = {}, nil, nil
+	for _, d in desc.Parts do
+		local p = mkPart({ Name = d.Name, Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = cf * d.CF, Color = d.Color, Material = d.Material })
+		table.insert(all, p)
+		if d.Name == "Eye" then eye = p end
+		if d.Name == "Body" then body = p end
+	end
+	local light = Instance.new("PointLight")
+	light.Color, light.Range, light.Brightness, light.Enabled = Color3.fromRGB(255, 50, 50), 5, 2, false
+	light.Parent = eye
+	body:SetAttribute("MineTeam", teamName(owner) or "none")
+	local rec = {
+		owner = owner, pos = pos + normal * 0.3, normal = normal, parts = all, eye = eye, light = light, alive = true,
+		armAt = os.clock() + cfg.arm, armed = false, trig = nil, dieAt = os.clock() + cfg.life, nextCheck = 0, blink = 0,
+	}
+	-- keep at most `maxActive` per owner (oldest goes first, quietly)
+	local mine = {}
+	for _, m in mines do if m.owner == owner then table.insert(mine, m) end end
+	while #mine >= cfg.maxActive do
+		local old = table.remove(mine, 1)
+		old.alive = false
+		for _, p in old.parts do p:Destroy() end
+		table.remove(mines, table.find(mines, old))
+	end
+	table.insert(mines, rec)
+	return rec
+end
+
+local function removeMine(rec)
+	if not rec.alive then return end
+	rec.alive = false
+	for _, p in rec.parts do p:Destroy() end
+	local i = table.find(mines, rec)
+	if i then table.remove(mines, i) end
+end
+
+detonateMine = function(rec)
+	if not rec.alive then return end
+	local cfg = Cfg.Items.MINE
+	local pos, owner = rec.pos, rec.owner
+	removeMine(rec)
+	explode(pos + Vector3.new(0, 1, 0), owner, cfg.radius, cfg.damage, cfg.boxDamage, 0.4, 260)
+end
+
+------------------------------------------------------------------ per-frame logic (sentries + mines)
+local lastBeat = os.clock()
+game:GetService("RunService").Heartbeat:Connect(function()
+	local now = os.clock()
+	local dt = math.min(now - lastBeat, 0.1)
+	lastBeat = now
+	-- sentries
+	local cfg = Cfg.Items.SENTRY
+	for _, s in table.clone(sentries) do
+		if not s.alive then continue end
+		if s.dieNow or s.hum.Health <= 0 or now >= s.dieAt or not s.owner.Parent then killSentry(s) continue end
+		local armed = now >= s.armAt
+		if armed and now >= s.nextScan then
+			s.nextScan = now + 0.1
+			s.target = sentryFindTarget(s, cfg)
+		end
+		local desired
+		if s.target and s.target.char.Parent then
+			desired = (s.target.point - s.headPos).Unit
+			-- follow the moving target
+			local h = s.target.char:FindFirstChild("Head")
+			if h then s.target.point = h.Position end
+		else
+			s.target = nil
+			s.scan += dt * 0.9
+			desired = (CFrame.Angles(0, math.sin(s.scan) * 1.2, 0) * CFrame.lookAt(Vector3.zero, s.base)).LookVector
+		end
+		s.aim = s.aim:Lerp(desired, math.min(1, dt * cfg.turn)).Unit
+		local cf = CFrame.lookAt(s.headPos, s.headPos + s.aim)
+		for _, e in s.parts do e[1].CFrame = cf * e[2] end
+		if s.target and armed and now >= s.nextFire and s.aim:Dot(desired) > 0.995 then
+			s.nextFire = math.max(s.nextFire, now - 0.05) + 60 / cfg.rpm
+			sentryShoot(s, cfg, s.target)
+		end
+	end
+	-- mines
+	local mc = Cfg.Items.MINE
+	for _, m in table.clone(mines) do
+		if not m.alive then continue end
+		if now >= m.dieAt or not m.owner.Parent then removeMine(m) continue end
+		if not m.armed and now >= m.armAt then
+			m.armed = true
+			m.eye.Color = Color3.fromRGB(255, 50, 50)
+			m.light.Enabled = true
+			FxR:FireAllClients("MineArm", m.pos) -- v5.7: sound hook
+		end
+		if m.armed then
+			m.blink += dt
+			local rate = m.trig and 0.06 or 0.7
+			if m.blink >= rate then
+				m.blink = 0
+				m.light.Enabled = not m.light.Enabled
+				if m.light.Enabled and not m.trig then FxR:FireAllClients("MineBeep", m.pos) end -- v5.7: sound hook
+				m.eye.Transparency = m.light.Enabled and 0 or 0.6
+			end
+			if not m.trig and now >= m.nextCheck then
+				m.nextCheck = now + 0.1
+				-- v5.11 FIX: the height test used to be `d.Y - m.pos.Y` (d is ALREADY relative to the mine), so on any map that is not
+				-- sitting at Y = 0 an enemy was never "close enough" and the mine never went off. Now: a sphere-ish check round the mine
+				-- (flat distance <= trigger, height -2 .. +6 studs over it) against every enemy player AND every enemy bot.
+				for _, t in enemyTargets(m.owner) do
+					local d = t.root.Position - m.pos
+					if Vector3.new(d.X, 0, d.Z).Magnitude <= mc.trigger and d.Y > -2 and d.Y < 6 then
+						m.trig = now + mc.delay
+						FxR:FireAllClients("MineTrigger", m.pos) -- v5.7: sound hook
+						break
+					end
+				end
+			end
+			if m.trig and now >= m.trig then
+				-- hop up, then blow
+				m.alive = false
+				for _, p in m.parts do
+					TweenService:Create(p, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = p.CFrame + m.normal * 3 }):Play()
+				end
+				task.delay(0.15, function()
+					for _, p in m.parts do p:Destroy() end
+					local i = table.find(mines, m)
+					if i then table.remove(mines, i) end
+					explode(m.pos + m.normal * 3, m.owner, mc.radius, mc.damage, mc.boxDamage, 0.4, 260)
+				end)
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------------ state (charges, cooldowns)
+local state = {}
+local function loadoutIds(p)
+	local out = { "", "", "" }
+	local raw = p:GetAttribute("LoadoutJson")
+	if type(raw) == "string" then
+		local ok, t = pcall(HttpService.JSONDecode, HttpService, raw)
+		if ok and type(t) == "table" and type(t.Gadgets) == "table" then
+			for i = 1, 3 do
+				local id = t.Gadgets[i]
+				if type(id) == "string" and Cfg.Items[id] then out[i] = id end
+			end
+		end
+	end
+	return out
+end
+
+local function publish(p, s, i)
+	p:SetAttribute("GadId" .. i, s.ids[i])
+	p:SetAttribute("GadCount" .. i, s.count[i])
+	p:SetAttribute("GadMax" .. i, s.max[i])
+	p:SetAttribute("GadReady" .. i, s.ready[i])
+	p:SetAttribute("GadNext" .. i, s.nextCharge[i] or 0)
+end
+
+local function resetState(p)
+	local ids = loadoutIds(p)
+	local s = { ids = ids, count = {}, max = {}, ready = {}, nextCharge = {} }
+	for i = 1, 3 do
+		local c = Cfg.Items[ids[i]]
+		s.max[i] = c and c.charges or 0
+		s.count[i] = s.max[i]
+		s.ready[i] = 0
+		publish(p, s, i)
+	end
+	state[p] = s
+end
+
+------------------------------------------------------------------ throwing (frag / smoke / flash)
+-- v4.9: where a throw starts = right shoulder / hand side of the head (GadgetClient's preview line uses the same maths)
+local function throwOrigin(from, dir)
+	local T = Cfg.Throw
+	local right = dir:Cross(Vector3.yAxis)
+	right = right.Magnitude > 0.05 and right.Unit or Vector3.xAxis
+	local start = from + right * (T.Side or 0) + Vector3.new(0, -0.15, 0)
+	local want = start + dir * (T.Start or 1.8)
+	local rp = newParams()
+	local r = workspace:Raycast(from, want - from, rp)
+	if r then return r.Position - (want - from).Unit * 0.4 end
+	return want
+end
+
+local function launch(player, slot, id, dir, under)
+	local cfg = Cfg.Items[id]
+	local T = Cfg.Throw
+	local char, _, root = aliveChar(player)
+	if not char then return false end
+	local head = char:FindFirstChild("Head")
+	local from = head and head.Position or root.Position + Vector3.new(0, 1.5, 0)
+	local origin = throwOrigin(from, dir)
+	-- an invisible physics ball carries the real model (GadgetModels) along
+	local p = Instance.new("Part")
+	p.Name = "Gadget_" .. id
+	p.Shape = Enum.PartType.Ball
+	p.Size = Vector3.one * cfg.projSize
+	p.Transparency = 1
+	p.Material = Enum.Material.SmoothPlastic
+	p.CanQuery, p.CanCollide, p.CanTouch, p.CastShadow = false, true, true, false
+	p.CustomPhysicalProperties = PhysicalProperties.new(0.8, 0.7, T.Elasticity or 0.3, 1, 1)
+	p.CFrame = CFrame.new(origin)
+	p.Parent = fxFolder
+	local model = GM.Build(id, nil, { anchored = false })
+	if model then
+		model:PivotTo(CFrame.new(origin))
+		for _, c in model:GetChildren() do c.Parent = p end
+		model:Destroy()
+		GM.WeldTo(p, p)
+	end
+	pcall(function() p:SetNetworkOwner(nil) end)
+	local speed = cfg.speed * (under and (T.UnderMult or 0.45) or 1)
+	p.AssemblyLinearVelocity = dir * speed + root.AssemblyLinearVelocity * (T.Inherit or 0.35)
+	-- v4.9: lighter gravity while it flies (a VectorForce cancels part of it), normal gravity from the first bounce on
+	if T.Gravity and T.Gravity < workspace.Gravity then
+		local att = Instance.new("Attachment")
+		att.Name = "LiftAtt"
+		att.Parent = p
+		local vf = Instance.new("VectorForce")
+		vf.Name = "Lift"
+		vf.Attachment0 = att
+		vf.RelativeTo = Enum.ActuatorRelativeTo.World
+		vf.ApplyAtCenterOfMass = true
+		vf.Force = Vector3.new(0, p.AssemblyMass * (workspace.Gravity - T.Gravity), 0)
+		vf.Parent = p
+		local conn
+		conn = p.Touched:Connect(function(other)
+			if other:IsDescendantOf(char) or other:IsDescendantOf(fxFolder) then return end
+			if not other.CanCollide then return end
+			vf.Enabled = false
+			conn:Disconnect()
+		end)
+		task.delay(6, function() if conn.Connected then conn:Disconnect() end end)
+	end
+	p.AssemblyAngularVelocity = Vector3.new(rnd:NextNumber(-12, 12), rnd:NextNumber(-12, 12), rnd:NextNumber(-12, 12))
+	-- trail so people can see the arc
+	local a0, a1 = Instance.new("Attachment"), Instance.new("Attachment")
+	a0.Position, a1.Position = Vector3.new(0, cfg.projSize / 2, 0), Vector3.new(0, -cfg.projSize / 2, 0)
+	a0.Parent, a1.Parent = p, p
+	local tr = Instance.new("Trail")
+	tr.Attachment0, tr.Attachment1 = a0, a1
+	tr.Lifetime = 0.35
+	tr.Color = ColorSequence.new(cfg.projColor)
+	tr.Transparency = NumberSequence.new(0.3, 1)
+	tr.LightEmission = 0.4
+	tr.Parent = p
+
+	if id == "FRAG" then
+		task.delay(cfg.fuse, function()
+			if not p.Parent then return end
+			local pos = p.Position
+			p:Destroy()
+			explode(pos, player, cfg.radius, cfg.damage, cfg.boxDamage, cfg.selfMult, cfg.shieldDamage)
+		end)
+	elseif id == "SMOKE" then
+		task.delay(cfg.fuse, function()
+			if not p.Parent then return end
+			local pos = p.Position
+			p:Destroy()
+			buildSmoke(player, pos)
+		end)
+	elseif id == "FLASH" then
+		task.delay(cfg.fuse, function()
+			if not p.Parent then return end
+			local pos = p.Position
+			p:Destroy()
+			FxR:FireAllClients("Flash", pos, cfg.range, cfg.maxTime)
+		end)
+	end
+	return true
+end
+
+-- the checks every use shares. Returns s, id, cfg, char, root, t or nothing.
+local function prep(player, slot, kind)
+	if type(slot) ~= "number" or slot % 1 ~= 0 or slot < 1 or slot > 3 then return end
+	local s = state[player]
+	if not s then return end
+	local id = s.ids[slot]
+	local cfg = Cfg.Items[id]
+	if not cfg or cfg.kind ~= kind then return end
+	if player:GetAttribute("InTraining") ~= true then return end -- LOBBY: only inside the training zone
+	local char, _, root = aliveChar(player)
+	if not char then return end
+	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("Reviving") == true
+		or char:GetAttribute("AbilityMode") == "climb" then return end
+	if char:GetAttribute("HeldGadget") ~= id then return end -- it has to be in your hand (Equip)
+	local t = nowT()
+	if s.count[slot] <= 0 or t < s.ready[slot] then return end
+	return s, id, cfg, char, root, t
+end
+
+local function commit(player, s, slot, cfg, t, char)
+	s.count[slot] -= 1
+	s.ready[slot] = t + cfg.cooldown
+	if not s.nextCharge[slot] then s.nextCharge[slot] = t + cfg.recharge end
+	publish(player, s, slot)
+	char:SetAttribute("GadgetThrowAt", t) -- everybody's client plays the throwing arm (v4.9: windup -> whip -> follow-through, MoveAnim)
+end
+
+local lastUse, lastEquip = {}, {}
+UseR.OnServerEvent:Connect(function(player, slot, dir, under)
+	if typeof(dir) ~= "Vector3" then return end
+	local m = dir.Magnitude
+	if not (m > 0.9 and m < 1.1) then return end
+	local now = os.clock()
+	if now - (lastUse[player] or 0) < 0.25 then return end
+	local s, id, cfg, char, _, t = prep(player, slot, "throw")
+	if not s then return end
+	under = under == true
+	local T = Cfg.Throw
+	dir = (dir.Unit + Vector3.new(0, T.Up + (under and (T.UnderUp or 0.3) or 0), 0)).Unit
+	-- v4.9: the throw is committed now (GadgetThrowAt starts everybody's throwing arm), the item leaves the hand after the windup,
+	-- exactly when the arm whips forward
+	lastUse[player] = now
+	commit(player, s, slot, cfg, t, char)
+	char:SetAttribute("GadgetThrowUnder", under)
+	task.delay(T.Windup or 0.12, function()
+		if player.Parent then launch(player, slot, id, dir, under) end
+	end)
+end)
+
+------------------------------------------------------------------ equip (swap the gun for the item, or back)
+EquipR.OnServerEvent:Connect(function(player, slot)
+	local char = aliveChar(player)
+	if not char then return end
+	local now = os.clock()
+	if now - (lastEquip[player] or 0) < 0.12 then return end
+	lastEquip[player] = now
+	if slot == nil or slot == 0 then
+		char:SetAttribute("HeldGadget", nil)
+		char:SetAttribute("HeldSlot", nil)
+		return
+	end
+	if type(slot) ~= "number" or slot % 1 ~= 0 or slot < 1 or slot > 3 then return end
+	local s = state[player]
+	local id = s and s.ids[slot]
+	if not id or not Cfg.Items[id] or s.count[slot] <= 0 then return end
+	if player:GetAttribute("InTraining") ~= true then return end -- LOBBY: only inside the training zone
+	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("Reviving") == true
+		or char:GetAttribute("AbilityMode") == "climb" then return end
+	char:SetAttribute("HeldGadget", id)
+	char:SetAttribute("HeldSlot", slot)
+end)
+
+------------------------------------------------------------------ placing (sentry / shield / mine) exactly where the preview was
+PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing)
+	if typeof(spot) ~= "Vector3" then return end
+	local now = os.clock()
+	if now - (lastUse[player] or 0) < 0.25 then return end
+	local s, id, cfg, char, root, t = prep(player, slot, "place")
+	if not s then return end
+	local pl = GM.Place[id]
+	if not pl then return end
+	local head = char:FindFirstChild("Head")
+	local from = head and head.Position or root.Position + Vector3.new(0, 1.5, 0)
+	local to = spot - from
+	local dist = to.Magnitude
+	if dist < 0.5 or dist > pl.range * 1.2 + 2 then return end
+	-- the server finds the surface itself (what the client says is only where to look)
+	local ignore = charList()
+	table.insert(ignore, fxFolder)
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.FilterDescendantsInstances = ignore
+	rp.RespectCanCollide = true
+	local hit = workspace:Raycast(from, to.Unit * (dist + 1.5), rp)
+	if not hit or (hit.Position - spot).Magnitude > 2.5 then return end
+	local pos, normal = hit.Position, hit.Normal
+	if (pos - from).Magnitude > pl.range * 1.2 + 2 then return end
+	local ok = GM.Check(id, pos, normal, ignore)
+	if not ok then return end
+	local face = Vector3.zero
+	if typeof(facing) == "Vector3" then face = Vector3.new(facing.X, 0, facing.Z) end
+	if face.Magnitude < 0.1 then
+		face = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+		if face.Magnitude < 0.1 then face = Vector3.new(0, 0, -1) end
+	end
+	face = face.Unit
+	lastUse[player] = now
+	if id == "SENTRY" then buildSentry(player, pos, face)
+	elseif id == "SHIELD" then buildShield(player, pos)
+	elseif id == "MINE" then buildMine(player, pos, normal) end
+	commit(player, s, slot, cfg, t, char)
+	FxR:FireAllClients("Placed", pos, normal, id)
+end)
+
+-- recharge loop
+local acc = 0
+game:GetService("RunService").Heartbeat:Connect(function(dt)
+	acc += dt
+	if acc < 0.25 then return end
+	acc = 0
+	local t = nowT()
+	for p, s in state do
+		for i = 1, 3 do
+			local c = Cfg.Items[s.ids[i]]
+			if c and s.count[i] < s.max[i] and s.nextCharge[i] and t >= s.nextCharge[i] then
+				s.count[i] += 1
+				s.nextCharge[i] = s.count[i] < s.max[i] and (t + c.recharge) or nil
+				publish(p, s, i)
+			end
+		end
+	end
+end)
+
+local function onPlayer(p)
+	p:GetAttributeChangedSignal("LoadoutJson"):Connect(function() resetState(p) end)
+	p.CharacterAdded:Connect(function() resetState(p) end)
+	resetState(p)
+end
+Players.PlayerAdded:Connect(onPlayer)
+for _, p in Players:GetPlayers() do onPlayer(p) end
+Players.PlayerRemoving:Connect(function(p)
+	state[p], lastUse[p], lastEquip[p] = nil, nil, nil
+	for part, rec in shields do if rec.owner == p then breakShield(part, true) end end
+end)
