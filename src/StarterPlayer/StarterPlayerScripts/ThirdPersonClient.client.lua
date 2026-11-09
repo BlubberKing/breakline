@@ -1,3 +1,4 @@
+-- (v5.17: first-person restore() always switches the gun IK off, so your own poses are no longer dragged to the gun grips)
 -- ThirdPersonClient (v5.16: a character that holds a POSE gets no gun IK and its world gun is hidden; your own gear shows while you pose)
 -- ThirdPersonClient v5 (slim body): poses retuned for the taller / skinnier character, bigger gun, stride sway.
 -- (v4): IK hands on the gun, aim-driven gun joint, poses, recoil, reload, slide/crouch/mantle poses,
@@ -157,10 +158,13 @@ local function getState(char)
 end
 
 local function restore(st)
+	-- v5.17 FIX (poses looked "crossed" on your own body in a match): the gun IK is created with Weight = 1 and first person never ran update(), so restore() returned
+	-- at once (st.restored was already true) and the IK stayed ON for your own character: the moment a pose swung the camera round, both hands were dragged to the gun grips.
+	-- The weights are now zeroed every time, first person never needs the IK arms.
+	st.ikR.Weight, st.ikL.Weight = 0, 0
 	if st.restored then return end
 	st.restored = true
 	st.waist.C0, st.neck.C0, st.rootJ.C0 = st.waistC0, st.neckC0, st.rootC0
-	st.ikR.Weight, st.ikL.Weight = 0, 0
 end
 
 ------------------------------------------------------------------ carrying a Wall Push box
