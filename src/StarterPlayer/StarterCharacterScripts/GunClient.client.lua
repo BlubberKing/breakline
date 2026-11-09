@@ -1,4 +1,4 @@
--- GunClient (v5.16: LOWER SENSITIVITY - MatchConfig.MOUSE_SENS multiplies your Roblox setting (0.55); NO SHOOTING before the match starts - clicks, R and
+-- GunClient (v5.17: SETTINGS - mouse + aim sensitivity, field of view and screen shake read from ReplicatedStorage.Settings) (v5.16: LOWER SENSITIVITY - MatchConfig.MOUSE_SENS multiplies your Roblox setting (0.55); NO SHOOTING before the match starts - clicks, R and
 --   aiming are ignored and no gun sound plays while loading / on the loadout screen / in the cutscene / card roll / 3-2-1 (MatchConfig.LOCKED_PHASES);
 --   POSES - while your character holds a pose (character attribute Pose, PoseClient) the gun is put away and your body is not hidden)
 -- GunClient (v5.14: DEEP POCKETS extra magazine at the start of every life + HOT BARREL fire rate after a kill, from ReplicatedStorage.CardEffects)
@@ -75,7 +75,16 @@ UIS.MouseIconEnabled = false
 -- player's own Roblox sensitivity; set every frame (MatchFlow / menus can reset it), the same while aiming / scoped.
 local function mouseSens() local ok, m = pcall(function() return require(RS:WaitForChild("MatchConfig")).MOUSE_SENS end) return (ok and type(m) == "number") and m or 0.55 end
 local MOUSE_SENS = mouseSens()
-UIS.MouseDeltaSensitivity = MOUSE_SENS
+-- v5.17 SETTINGS (ReplicatedStorage.Settings, saved per player): mouse sensitivity, aim sensitivity, field of view, screen shake
+local SettingsMod = RS:FindFirstChild("Settings") and require(RS.Settings) or nil
+local function userSettings() return SettingsMod and SettingsMod.Get(player) or {} end
+local function sensNow(aiming)
+	local u = userSettings()
+	local s = (type(u.Sens) == "number") and u.Sens or MOUSE_SENS
+	if aiming and type(u.AdsSens) == "number" then s *= u.AdsSens end
+	return s
+end
+UIS.MouseDeltaSensitivity = sensNow(false)
 
 -- ================= HUD =================
 local gui = Instance.new("ScreenGui")
@@ -771,7 +780,7 @@ local function onRender(dt)
 		stillTime = moving and 0 or stillTime + dt
 		if stillTime > 0.3 or not alive then setSprintToggle(false) end
 	end
-	UIS.MouseDeltaSensitivity = MOUSE_SENS -- v5.16 (kept every frame: menus / cutscenes may reset it to 1)
+	UIS.MouseDeltaSensitivity = sensNow(aimAlpha > 0.5) -- v5.16 (kept every frame: menus / cutscenes may reset it to 1); v5.17: + the sensitivity settings
 	local isPosing = posing()
 	if alive and not character:GetAttribute("Revealing") and not isPosing then hideBody() end -- (RespawnReveal shows your body during the reveal; v5.16: PoseClient while posing)
 
@@ -875,7 +884,7 @@ local function onRender(dt)
 	climbOffset = climbOffset:Lerp(climbTarget, 1 - math.exp(-cfg.ClimbSnap * dt))
 	local cp = camPunch:Update(dt)
 	-- slide rumble: tiny low-frequency noise, scales with speed, mostly gone while aiming
-	local shakeAmt = SPEEDFX.SHAKE_DEG * slideAlpha * math.clamp(flatSpeed / 40, 0, 1.3) * (1 - aimAlpha * 0.85)
+	local shakeAmt = SPEEDFX.SHAKE_DEG * slideAlpha * math.clamp(flatSpeed / 40, 0, 1.3) * (1 - aimAlpha * 0.85) * (userSettings().Shake or 1) -- v5.17: screen shake setting
 	local shakeP = math.noise(now * 9, 0.3) * shakeAmt
 	local shakeY = math.noise(0.7, now * 9) * shakeAmt * 0.6
 	shakeRoll = math.noise(now * 7, 5.1) * shakeAmt * 1.5
@@ -898,7 +907,7 @@ local function onRender(dt)
 	local fp = fovPunch:Update(dt)
 	local fast = math.clamp((flatSpeed - SPEEDFX.FOV_FROM) / (SPEEDFX.FOV_TO - SPEEDFX.FOV_FROM), 0, 1)
 	speedFov = approach(speedFov, fast * SPEEDFX.FOV_ADD, dt, 0.35)
-	local fov = BASE_FOV + (SPRINT_FOV - BASE_FOV) * sprintAlpha + SLIDE_FOV_ADD * slideAlpha + speedFov
+	local fov = BASE_FOV + (SPRINT_FOV - BASE_FOV) * sprintAlpha + SLIDE_FOV_ADD * slideAlpha + speedFov + ((userSettings().Fov or BASE_FOV) - BASE_FOV) * (1 - aimAlpha) -- v5.17: field of view setting (hip only)
 	local zoomFp = sight.Mag and fp.X / sight.Mag or fp.X
 	camera.FieldOfView = fov + (adsFov - fov) * aimAlpha + zoomFp
 
@@ -1113,7 +1122,7 @@ cleanup = function()
 	for _, c in conns do c:Disconnect() end
 	fx:Destroy()
 	if built then built.Model:Destroy() end
-	UIS.MouseDeltaSensitivity = MOUSE_SENS
+	UIS.MouseDeltaSensitivity = sensNow(false)
 	camera.FieldOfView = BASE_FOV
 	if windSound then windSound:Destroy() end
 	pcall(function() CAS:UnbindAction(SPRINT_ACTION) end)
