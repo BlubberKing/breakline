@@ -1,4 +1,4 @@
--- ProfileStore v2.4 (v5.16: POSES + TITLES - PosesOwned / PoseWheel / TitlesOwned mirrored as PosesOwnedJson / PoseWheelJson / TitlesOwnedJson, Title (equipped title id) as the attribute Title) (v2.3 v5.11: PlayerCard (lobby player card background + showcase) + BannersOwned, mirrored as PlayerCardJson / BannersOwnedJson) (v2.2 v5.10: Streak = wins in a row, SkinsOwned / GunSkinsOwned / GunSkinEquipped mirrored as JSON attributes for the cosmetics shop) (v2.1 v5.9: ESSENCE premium currency - GrantEssence / SpendEssence) (v2 v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
+-- ProfileStore v2.5 (v5.17: SETTINGS - the key Settings (a table of the values the player changed) is mirrored as the attribute SettingsJson) (v2.4 v5.16: POSES + TITLES - PosesOwned / PoseWheel / TitlesOwned mirrored as PosesOwnedJson / PoseWheelJson / TitlesOwnedJson, Title (equipped title id) as the attribute Title) (v2.3 v5.11: PlayerCard (lobby player card background + showcase) + BannersOwned, mirrored as PlayerCardJson / BannersOwnedJson) (v2.2 v5.10: Streak = wins in a row, SkinsOwned / GunSkinsOwned / GunSkinEquipped mirrored as JSON attributes for the cosmetics shop) (v2.1 v5.9: ESSENCE premium currency - GrantEssence / SpendEssence) (v2 v4.7: Owned + StarterDone for the shop) (ModuleScript in ServerScriptService) - used by BOTH games (Lobby place + Breakline place). Keep the copies identical.
 -- One DataStore record per player, shared by both places. Only the keys you CHANGED are written (so the two places never overwrite each other).
 --   Profiles.WaitFor(player)            -> waits until the profile is loaded, returns the data table (or nil)
 --   Profiles.Get(player, key)           -> value
@@ -48,6 +48,7 @@ local DEFAULTS = {
 	PosesOwned = {},           -- v5.16: poses (emotes) bought in the cosmetics shop (the free ones belong to everybody). Mirrored as PosesOwnedJson.
 	PoseWheel = {},            -- v5.16: the 6 slots of the pose wheel (T) { 6 x pose id / "" }; empty = Poses.DefaultWheel. Mirrored as PoseWheelJson (both games read it).
 	TitlesOwned = {},          -- v5.16: titles bought in the cosmetics shop. Mirrored as TitlesOwnedJson.
+	Settings = {},             -- v5.17: the player's SETTINGS (ReplicatedStorage.Settings): only the values they changed. Mirrored as SettingsJson.
 	Title = "",                -- v5.16: the equipped title id ("" = none). Mirrored as the attribute Title (above your name in the lobby + on your player card).
 }
 local RECEIPTS_KEPT = 50
@@ -85,6 +86,7 @@ local function mirror(player, k, v)
 	if k == "PosesOwned" and type(v) == "table" then player:SetAttribute("PosesOwnedJson", HttpService:JSONEncode(v)) end -- v5.16
 	if k == "PoseWheel" and type(v) == "table" then player:SetAttribute("PoseWheelJson", HttpService:JSONEncode(v)) end
 	if k == "TitlesOwned" and type(v) == "table" then player:SetAttribute("TitlesOwnedJson", HttpService:JSONEncode(v)) end
+	if k == "Settings" and type(v) == "table" then player:SetAttribute("SettingsJson", HttpService:JSONEncode(v)) end -- v5.17
 	if type(v) == "number" or type(v) == "string" or type(v) == "boolean" then player:SetAttribute(k, v) end
 	if k == "XP" and Levels and type(v) == "number" then player:SetAttribute("Level", (Levels.FromXp(v))) end
 end
