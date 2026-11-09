@@ -1,3 +1,4 @@
+-- ThirdPersonClient (v5.16: a character that holds a POSE gets no gun IK and its world gun is hidden; your own gear shows while you pose)
 -- ThirdPersonClient v5 (slim body): poses retuned for the taller / skinnier character, bigger gun, stride sway.
 -- (v4): IK hands on the gun, aim-driven gun joint, poses, recoil, reload, slide/crouch/mantle poses,
 -- + Wall Push: while carrying a box the gun is hidden and BOTH hands hold the box (two-handed carry pose)
@@ -265,6 +266,7 @@ local function update(st, dt, t, isLocal)
 	local plrOwner = st.player
 	local freeHands = st.char:GetAttribute("HeldGadget") ~= nil or st.char:GetAttribute("Reviving") == true
 		or (plrOwner and plrOwner:GetAttribute("CarryingSoul") == true)
+		or st.char:GetAttribute("Pose") ~= nil -- v5.16: a pose (PoseClient poses the arms, the gun is put away)
 	if freeHands then -- v4.1: a gadget in hand / carrying a soul / reviving: no gun IK (MoveAnim poses the arms)
 		st.ikR.Weight, st.ikL.Weight = 0, 0
 	end
@@ -406,7 +408,7 @@ RunService.RenderStepped:Connect(function()
 			local g = plr.Character:FindFirstChild("TPGun")
 			if g then
 				local want = (plr:GetAttribute("Carrying") == true or (plr.Character and (plr.Character:GetAttribute("HeldGadget") ~= nil
-					or plr.Character:GetAttribute("Reviving") == true)) or plr:GetAttribute("CarryingSoul") == true) and 1 or 0
+					or plr.Character:GetAttribute("Reviving") == true or plr.Character:GetAttribute("Pose") ~= nil)) or plr:GetAttribute("CarryingSoul") == true) and 1 or 0 -- v5.16: + posing
 				if g:GetAttribute("CarryHide") ~= want then
 					g:SetAttribute("CarryHide", want)
 					for _, d in ipairs(g:GetDescendants()) do
@@ -421,9 +423,10 @@ RunService.RenderStepped:Connect(function()
 	local char = player.Character
 	if not char then return end
 	if char:GetAttribute("Revealing") == true then return end -- v3.8: RespawnReveal drives the transparency of your own body meanwhile
-	local fp = isFirstPerson(char)
+	local posingNow = char:GetAttribute("Pose") ~= nil -- v5.16: PoseClient shows your body from a third-person camera while you pose
+	local fp = isFirstPerson(char) and not posingNow
 	local carryingNow = player:GetAttribute("Carrying") == true or char:GetAttribute("HeldGadget") ~= nil
-		or char:GetAttribute("Reviving") == true or player:GetAttribute("CarryingSoul") == true
+		or char:GetAttribute("Reviving") == true or player:GetAttribute("CarryingSoul") == true or posingNow
 	for _, name in ipairs({ "Gear", "TPGun" }) do
 		local f = char:FindFirstChild(name)
 		local ltm = (fp or (carryingNow and name == "TPGun")) and 1 or 0
