@@ -1,4 +1,4 @@
--- LobbyMotion v1 (LocalScript in StarterPlayer > StarterCharacterScripts) - LOBBY place only. NEW in v4.0.
+-- LobbyMotion v1.1 (v5.17: stands down while the player is inside the training zone) (v1 (LocalScript in StarterPlayer > StarterCharacterScripts) - LOBBY place only. NEW in v4.0.
 -- Gives the lobby the SAME movement as Breakline, without any gun: sprint speed, crouch speed and the mobile / gamepad sprint toggle.
 -- (Breakline's GunClient does this job there; Movement.client = slide / crouch / mantle / momentum jumps, AbilityClient = movement
 --  ability, AbilityPose = wall run / climb animation are the very same files as in Breakline.)
@@ -39,6 +39,7 @@ local stillTime = 0
 local conn
 conn = RunService.Heartbeat:Connect(function(dt)
 	if not char.Parent or hum.Health <= 0 then return end
+	if player:GetAttribute("InTraining") == true then return end -- v5.17: inside the TRAINING ZONE GunClient owns speed / camera (the same code as a match)
 	local menu = player:GetAttribute("LobbyMenuOpen") == true
 	local moving = hum.MoveDirection.Magnitude > 0.1
 	local shift = not menu and (UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.RightShift))
