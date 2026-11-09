@@ -1,3 +1,4 @@
+-- MatchFlow v1.6 (v5.17: the loadout background is a BLUEPRINT sheet (white lines on navy): SITE PLAN of the real map straight from above on the RIGHT, MISSION BRIEFING + OBJECTIVES on the LEFT, the middle left free for the squad)
 -- MatchFlow v1.5 (v5.16: the loadout screen background is a MISSION BRIEFING of the map you are about to play - a live night-vision / thermal recon picture
 --   of the real map (height-coloured blocks, outlines, grid, both insertion points, THE LINE), a feed look (scan lines, REC, clock, corner brackets), a typed
 --   MISSION BRIEFING panel + OBJECTIVES - instead of the black starfield; a gadget and a reserve slot can no longer hold the same item; the camera hand-over
@@ -238,9 +239,9 @@ end
 -- Nothing is uploaded: everything is built from the map that is already loaded + GUI frames.
 -- ======================================================================================
 local INTEL = {
-	base = rgb(5, 11, 13), floor = rgb(12, 30, 32), low = rgb(18, 62, 64), high = rgb(150, 238, 196), edge = rgb(150, 255, 214),
-	grid = rgb(70, 170, 150), ui = rgb(140, 238, 206), uiDim = rgb(84, 140, 128), panel = rgb(6, 15, 17),
-	MAX_PARTS = 600, MAX_EDGED = 160, HEIGHT_FULL = 26,
+	base = rgb(9, 32, 78), base2 = rgb(4, 18, 50), floor = rgb(14, 48, 110), fill = rgb(34, 92, 178), line = rgb(228, 243, 255), lineDim = rgb(120, 170, 228),
+	grid = rgb(74, 126, 206), ui = rgb(228, 243, 255), uiDim = rgb(132, 178, 232), accent = rgb(122, 216, 255), panel = rgb(7, 26, 66), hostile = rgb(255, 126, 104),
+	MAX_PARTS = 600, MAX_EDGED = 260,
 }
 local function intelMapFolder()
 	local n = State:GetAttribute("MapFolder")
@@ -261,18 +262,76 @@ local function boxCorners(cf, size)
 	return out
 end
 
+-- v5.17 BLUEPRINT: the loadout background is a blueprint sheet (white lines on navy). Layout rule (owner): everything important sits on the SIDES,
+-- the middle (x 520 - 1400 of the 1920 canvas) is only faint paper + construction circles because the squad stands there.
+--   LEFT  column (x 56 - 466): MISSION BRIEFING (operation, mode, squad, area, insertion + numbered NOTES) and OBJECTIVES.
+--   RIGHT column (x 1400 - 1872): SITE PLAN = the real map seen straight from above as clean white outlines (drawn live from the loaded map folder),
+--     both insertion points, THE LINE, dimension lines, a legend.
 local function buildBriefing(root, myCol)
 	local api = {}
 	local mode = tostring(State:GetAttribute("Mode") or "Breakline")
 	local oneV1 = string.lower(mode) == "1v1"
 	local myTeam = player.Team and player.Team.Name or ""
+	local feed = makeCanvas(root, 2)
+	local function fr(props, parent)
+		local f = new("Frame", { BorderSizePixel = 0, BackgroundColor3 = INTEL.ui, ZIndex = 2 }, parent or feed)
+		for k, v in props do f[k] = v end
+		return f
+	end
 
-	-- ---------- 1) the recon map (a ViewportFrame under everything else on this screen) ----------
-	local vp = new("ViewportFrame", { Name = "ReconMap", Size = UDim2.fromScale(1, 1), BackgroundColor3 = INTEL.base, BorderSizePixel = 0, ZIndex = 1,
-		Ambient = rgb(110, 140, 136), LightColor = rgb(210, 255, 236), LightDirection = Vector3.new(-0.35, -1, -0.25), ImageTransparency = 0.12 }, root)
-	local cam = new("Camera", { FieldOfView = 30 }, vp)
+	-- ---------- 1) paper: navy sheet, fine + major grid, a soft light behind the squad, construction circles, border + ticks ----------
+	local sheet = new("Frame", { Name = "BlueprintSheet", Size = UDim2.fromScale(1, 1), BackgroundColor3 = INTEL.base, BorderSizePixel = 0, ZIndex = 1 }, root)
+	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(13, 42, 96), rgb(5, 21, 56)) }, sheet)
+	for x = 0, 1920, 48 do
+		local major = x % 240 == 0
+		fr({ Position = UDim2.fromOffset(x, 0), Size = UDim2.fromOffset(major and 2 or 1, 1080), BackgroundColor3 = INTEL.grid, BackgroundTransparency = major and 0.78 or 0.9 })
+	end
+	for y = 0, 1080, 48 do
+		local major = y % 240 == 0
+		fr({ Position = UDim2.fromOffset(0, y), Size = UDim2.fromOffset(1920, major and 2 or 1), BackgroundColor3 = INTEL.grid, BackgroundTransparency = major and 0.78 or 0.9 })
+	end
+	-- soft light behind the squad so the dark outfits read on the navy paper
+	local glow = fr({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 560), Size = UDim2.fromOffset(1000, 900), BackgroundColor3 = rgb(70, 140, 230), BackgroundTransparency = 0.55 })
+	new("UICorner", { CornerRadius = UDim.new(1, 0) }, glow)
+	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(0.6, 0.86), NumberSequenceKeypoint.new(1, 1) }) }, glow)
+	-- construction circles + centre lines (only behind the squad)
+	for _, r in { 330, 470 } do
+		local c = fr({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 600), Size = UDim2.fromOffset(r * 2, r * 2), BackgroundTransparency = 1 })
+		new("UICorner", { CornerRadius = UDim.new(1, 0) }, c)
+		new("UIStroke", { Color = INTEL.lineDim, Thickness = 1.5, Transparency = 0.72 }, c)
+	end
+	fr({ Position = UDim2.fromOffset(960, 215), Size = UDim2.fromOffset(1, 700), BackgroundColor3 = INTEL.lineDim, BackgroundTransparency = 0.8 })
+	-- sheet border (double line) with tick marks round the edge
+	for _, inset in { 22, 32 } do
+		local b = fr({ Position = UDim2.fromOffset(inset, inset), Size = UDim2.fromOffset(1920 - inset * 2, 1080 - inset * 2), BackgroundTransparency = 1 })
+		new("UIStroke", { Color = INTEL.line, Thickness = inset == 22 and 2 or 1, Transparency = inset == 22 and 0.35 or 0.6 }, b)
+	end
+	for x = 80, 1840, 80 do
+		fr({ Position = UDim2.fromOffset(x, 22), Size = UDim2.fromOffset(1, 10), BackgroundTransparency = 0.45 })
+		fr({ Position = UDim2.fromOffset(x, 1048), Size = UDim2.fromOffset(1, 10), BackgroundTransparency = 0.45 })
+	end
+	for y = 80, 1000, 80 do
+		fr({ Position = UDim2.fromOffset(22, y), Size = UDim2.fromOffset(10, 1), BackgroundTransparency = 0.45 })
+		fr({ Position = UDim2.fromOffset(1888, y), Size = UDim2.fromOffset(10, 1), BackgroundTransparency = 0.45 })
+	end
+
+	-- ---------- 2) the SITE PLAN (right column): the real map from straight above, white outlines ----------
+	local BX, BY, BW, BH = 1400, 232, 472, 556 -- the whole plan box (canvas px)
+	local VX, VY, VW, VH = BX + 30, BY + 74, BW - 44, BH - 120 -- the viewport inside it (margins left for dimension lines)
+	local boxF = fr({ Position = UDim2.fromOffset(BX, BY), Size = UDim2.fromOffset(BW, BH), BackgroundColor3 = INTEL.panel, BackgroundTransparency = 0.12 })
+	new("UIStroke", { Color = INTEL.line, Thickness = 1.5, Transparency = 0.25 }, boxF)
+	fr({ Position = UDim2.fromOffset(BX, BY), Size = UDim2.fromOffset(BW, 4), BackgroundColor3 = INTEL.accent })
+	local mapName = string.upper(tostring(State:GetAttribute("MapName") or "UNKNOWN"))
+	label(feed, "SITE PLAN", 30, F.H, WHITE, { Position = UDim2.fromOffset(BX + 18, BY + 12), Size = UDim2.fromOffset(300, 34), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	label(feed, "SHEET 01  //  " .. mapName, 14, F.MB, INTEL.accent, { Position = UDim2.fromOffset(BX + 18, BY + 46), Size = UDim2.fromOffset(BW - 36, 20), TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 3, TextTruncate = Enum.TextTruncate.AtEnd })
+
+	local vp = new("ViewportFrame", { Name = "SitePlan", Position = UDim2.fromOffset(VX, VY), Size = UDim2.fromOffset(VW, VH), BackgroundColor3 = INTEL.base2, BorderSizePixel = 0, ZIndex = 2,
+		Ambient = WHITE, LightColor = WHITE, LightDirection = Vector3.new(0, -1, 0) }, feed)
+	new("UIStroke", { Color = INTEL.lineDim, Thickness = 1, Transparency = 0.35 }, vp)
+	local cam = new("Camera", { FieldOfView = 20 }, vp)
 	vp.CurrentCamera = cam
-	local world = new("Model", { Name = "Recon" }, vp)
+	local world = new("Model", { Name = "Plan" }, vp)
 	local folder = intelMapFolder()
 	local lo, hi
 	local mb = folder and folder:FindFirstChild("MapBounds", true) or workspace:FindFirstChild("MapBounds")
@@ -280,8 +339,8 @@ local function buildBriefing(root, myCol)
 		for _, c in boxCorners(mb.CFrame, mb.Size) do lo = lo and lo:Min(c) or c; hi = hi and hi:Max(c) or c end
 	end
 	local spawns = { Red = {}, Blue = {} }
+	local srcList = {}
 	if folder then
-		local list = {}
 		for _, d in folder:GetDescendants() do
 			if d:IsA("BasePart") then
 				local team = (d.Name == "RedSpawn" or (d.Parent and d.Parent.Name == "RedSpawn")) and "Red"
@@ -289,188 +348,199 @@ local function buildBriefing(root, myCol)
 				if team then
 					table.insert(spawns[team], d.Position)
 				elseif d.Transparency < 0.95 and d.Name ~= "MapBounds" then
-					table.insert(list, d)
+					table.insert(srcList, d)
 				end
 			end
 		end
-		table.sort(list, function(a, b) return a.Size.X * a.Size.Y * a.Size.Z > b.Size.X * b.Size.Y * b.Size.Z end)
-		local floorY = lo and lo.Y or math.huge
-		if not lo then for _, d in list do floorY = math.min(floorY, d.Position.Y - d.Size.Y / 2) end end
-		local edged = 0
-		for i, src in list do
-			if i > INTEL.MAX_PARTS then break end
-			local sz, cf = src.Size, src.CFrame
-			local flat = sz.Y < 0.3 * math.min(sz.X, sz.Z) and math.abs(cf.UpVector.Y) > 0.9
-			local p
-			if src:IsA("Part") then
-				p = part(world, sz, cf, INTEL.low, false, 0, src.Shape)
-			else
-				local ok, c = pcall(function() return src:Clone() end)
-				if ok and c then
-					for _, ch in c:GetChildren() do ch:Destroy() end
-					c.Anchored, c.CanCollide, c.CanQuery, c.CanTouch, c.CastShadow = true, false, false, false, false
-					if c:IsA("UnionOperation") then c.UsePartColor = true end
-					if c:IsA("MeshPart") then pcall(function() c.TextureID = "" end) end
-					c.Parent = world
-					p = c
-				end
-			end
-			if p then
-				local corners = boxCorners(cf, sz)
-				local top = -math.huge
-				for _, c in corners do
-					top = math.max(top, c.Y)
-					if not mb and math.max(sz.X, sz.Z) < 600 then lo = lo and lo:Min(c) or c; hi = hi and hi:Max(c) or c end
-				end
-				local t = math.clamp((top - floorY) / INTEL.HEIGHT_FULL, 0, 1)
-				p.Material = Enum.Material.SmoothPlastic
-				p.Color = flat and INTEL.floor or INTEL.low:Lerp(INTEL.high, t * 0.85)
-				p.Transparency = flat and 0 or 0.18
-				-- bright outline round the TOP face of the tallest standing blocks (reads like a thermal / NV edge)
-				if not flat and edged < INTEL.MAX_EDGED and src:IsA("Part") and src.Shape == Enum.PartType.Block and sz.Y > 2 then
-					edged += 1
-					local th = math.clamp(math.max(sz.X, sz.Z) * 0.01, 0.18, 0.5)
-					local h = sz / 2
-					local tc = { cf:PointToWorldSpace(Vector3.new(-h.X, h.Y, -h.Z)), cf:PointToWorldSpace(Vector3.new(h.X, h.Y, -h.Z)),
-						cf:PointToWorldSpace(Vector3.new(h.X, h.Y, h.Z)), cf:PointToWorldSpace(Vector3.new(-h.X, h.Y, h.Z)) }
-					for k = 1, 4 do
-						local a, b = tc[k], tc[k % 4 + 1]
-						local len = (b - a).Magnitude
-						if len > 0.1 then part(world, Vector3.new(th, th, len), CFrame.lookAt((a + b) / 2, b), INTEL.edge, true, 0.45) end
-					end
-				end
+		table.sort(srcList, function(a, b) return a.Size.X * a.Size.Y * a.Size.Z > b.Size.X * b.Size.Y * b.Size.Z end)
+	end
+	if not lo then
+		for _, d in srcList do
+			if math.max(d.Size.X, d.Size.Z) < 600 then
+				for _, c in boxCorners(d.CFrame, d.Size) do lo = lo and lo:Min(c) or c; hi = hi and hi:Max(c) or c end
 			end
 		end
 	end
 	if not lo then lo, hi = Vector3.new(-70, 0, -130), Vector3.new(70, 30, 130) end
 	local center = (lo + hi) / 2
-	local floorY = lo.Y + 0.1
+	local floorY = lo.Y
 	local spanX, spanZ = hi.X - lo.X, hi.Z - lo.Z
-	-- grid on the floor
+
+	-- which way is "up" on the plan: from YOUR insertion towards the enemy's, so you read the map from your own side
+	local mineAvg, theirAvg
+	local function avg(list) local s = Vector3.zero for _, q in list do s += q end return s / #list end
+	if #spawns.Red > 0 then spawns.RedAvg = avg(spawns.Red) end
+	if #spawns.Blue > 0 then spawns.BlueAvg = avg(spawns.Blue) end
+	mineAvg, theirAvg = spawns[myTeam .. "Avg"], spawns[(myTeam == "Red") and "BlueAvg" or "RedAvg"]
+	local upDir = Vector3.new(0, 0, -1)
+	if mineAvg and theirAvg then
+		local d = theirAvg - mineAvg
+		if Vector2.new(d.X, d.Z).Magnitude > 1 then upDir = Vector3.new(d.X, 0, d.Z).Unit end
+	elseif mineAvg then
+		local d = center - mineAvg
+		if Vector2.new(d.X, d.Z).Magnitude > 1 then upDir = Vector3.new(d.X, 0, d.Z).Unit end
+	end
+	local rightDir = upDir:Cross(Vector3.new(0, 1, 0)) -- screen right when looking straight down with `upDir` as screen up
+	-- extents along the plan's own axes (so a map turned by the camera still fits)
+	local function ext(vv) return math.abs(vv.X * rightDir.X + vv.Z * rightDir.Z), math.abs(vv.X * upDir.X + vv.Z * upDir.Z) end
+	local halfW, halfH = 0, 0
+	for _, c in { Vector3.new(lo.X, 0, lo.Z), Vector3.new(hi.X, 0, lo.Z), Vector3.new(lo.X, 0, hi.Z), Vector3.new(hi.X, 0, hi.Z) } do
+		local w, h = ext(c - Vector3.new(center.X, 0, center.Z))
+		halfW, halfH = math.max(halfW, w), math.max(halfH, h)
+	end
+	halfW, halfH = math.max(halfW, 20), math.max(halfH, 20)
+	local tanH = math.tan(math.rad(cam.FieldOfView / 2))
+	local aspect = VW / VH
+	local dist = math.max(halfH / tanH, halfW / (tanH * aspect)) * 1.1
+	cam.CFrame = CFrame.lookAt(Vector3.new(center.X, floorY + dist, center.Z), Vector3.new(center.X, floorY, center.Z), upDir)
+	local studPx = (2 * dist * tanH) / VH -- studs per screen pixel (line thickness)
+	local lineTh = math.max(0.25, studPx * 1.7)
+
+	-- the play area (a thin dashed-looking border) + a fine grid every ~10 % of the long side
 	do
-		local step = math.max(10, math.floor(math.max(spanX, spanZ) / 24))
+		local y = floorY + 0.2
+		local function seg(a, b, th, col, tr)
+			local len = (b - a).Magnitude
+			if len > 0.05 then part(world, Vector3.new(th, 0.1, len), CFrame.lookAt((a + b) / 2, b), col, true, tr) end
+		end
+		local corners = { Vector3.new(lo.X, y, lo.Z), Vector3.new(hi.X, y, lo.Z), Vector3.new(hi.X, y, hi.Z), Vector3.new(lo.X, y, hi.Z) }
+		for k = 1, 4 do seg(corners[k], corners[k % 4 + 1], lineTh * 1.3, INTEL.line, 0.05) end
+		local step = math.max(8, math.floor(math.max(spanX, spanZ) / 18))
 		local n = 0
 		for x = math.ceil(lo.X / step) * step, hi.X, step do
-			n += 1 if n > 48 then break end
-			part(world, Vector3.new(0.12, 0.05, spanZ), CFrame.new(x, floorY + 0.12, center.Z), INTEL.grid, true, 0.86)
+			n += 1 if n > 40 then break end
+			seg(Vector3.new(x, y - 0.05, lo.Z), Vector3.new(x, y - 0.05, hi.Z), lineTh * 0.5, INTEL.grid, 0.55)
 		end
 		n = 0
 		for z = math.ceil(lo.Z / step) * step, hi.Z, step do
-			n += 1 if n > 48 then break end
-			part(world, Vector3.new(spanX, 0.05, 0.12), CFrame.new(center.X, floorY + 0.12, z), INTEL.grid, true, 0.86)
-		end
-		-- the outline of the play area
-		for _, e in { { Vector3.new(lo.X, 0, lo.Z), Vector3.new(hi.X, 0, lo.Z) }, { Vector3.new(hi.X, 0, lo.Z), Vector3.new(hi.X, 0, hi.Z) },
-			{ Vector3.new(hi.X, 0, hi.Z), Vector3.new(lo.X, 0, hi.Z) }, { Vector3.new(lo.X, 0, hi.Z), Vector3.new(lo.X, 0, lo.Z) } } do
-			local a, b = e[1] + Vector3.new(0, floorY + 0.15, 0), e[2] + Vector3.new(0, floorY + 0.15, 0)
-			part(world, Vector3.new(0.35, 0.1, (b - a).Magnitude), CFrame.lookAt((a + b) / 2, b), INTEL.edge, true, 0.55)
+			n += 1 if n > 40 then break end
+			seg(Vector3.new(lo.X, y - 0.05, z), Vector3.new(hi.X, y - 0.05, z), lineTh * 0.5, INTEL.grid, 0.55)
 		end
 	end
-	-- THE LINE across the middle (Breakline): a dashed red line + a soft band
+	-- every solid block: a pale fill + a white outline of its footprint (flat floors are skipped, they would just fill the sheet)
+	do
+		local edged = 0
+		for i, src in srcList do
+			if i > INTEL.MAX_PARTS then break end
+			local sz, cf = src.Size, src.CFrame
+			local flat = sz.Y < 0.3 * math.min(sz.X, sz.Z) and math.abs(cf.UpVector.Y) > 0.9
+			if not flat and math.max(sz.X, sz.Z) < 900 then
+				local top = floorY
+				local corners = boxCorners(cf, sz)
+				for _, c in corners do top = math.max(top, c.Y) end
+				local topY = floorY + 0.4 + math.min(top - floorY, 40) * 0.01
+				if src:IsA("Part") and src.Shape == Enum.PartType.Block then
+					local h = sz / 2
+					local tc = { cf:PointToWorldSpace(Vector3.new(-h.X, 0, -h.Z)), cf:PointToWorldSpace(Vector3.new(h.X, 0, -h.Z)),
+						cf:PointToWorldSpace(Vector3.new(h.X, 0, h.Z)), cf:PointToWorldSpace(Vector3.new(-h.X, 0, h.Z)) }
+					-- fill: a flat slab the footprint's size at the block's height
+					local fill = part(world, Vector3.new(sz.X, 0.1, sz.Z), CFrame.new(cf.Position.X, topY - 0.05, cf.Position.Z) * CFrame.Angles(0, math.atan2(-cf.LookVector.X, -cf.LookVector.Z), 0), INTEL.fill, true, 0.55)
+					fill.Name = "Fill"
+					if edged < INTEL.MAX_EDGED and sz.Y > 1.5 then
+						edged += 1
+						for k = 1, 4 do
+							local a, b = tc[k], tc[k % 4 + 1]
+							a, b = Vector3.new(a.X, topY, a.Z), Vector3.new(b.X, topY, b.Z)
+							local len = (b - a).Magnitude
+							if len > 0.05 then part(world, Vector3.new(lineTh, 0.1, len + lineTh), CFrame.lookAt((a + b) / 2, b), INTEL.line, true, 0.05) end
+						end
+					end
+				else
+					local ok, c = pcall(function() return src:Clone() end)
+					if ok and c then
+						for _, ch in c:GetChildren() do ch:Destroy() end
+						c.Anchored, c.CanCollide, c.CanQuery, c.CanTouch, c.CastShadow = true, false, false, false, false
+						if c:IsA("UnionOperation") then c.UsePartColor = true end
+						if c:IsA("MeshPart") then pcall(function() c.TextureID = "" end) end
+						c.Material, c.Color, c.Transparency = Enum.Material.Neon, INTEL.fill, 0.45
+						c.Parent = world
+					end
+				end
+			end
+		end
+	end
+	-- THE LINE across the middle (Breakline): a dashed white line, perpendicular to the way you face
 	if not oneV1 then
-		local wallRed = rgb(255, 72, 72)
-		local dash = math.max(3, spanX / 30)
-		local x = lo.X
-		while x < hi.X do
-			local len = math.min(dash, hi.X - x)
-			part(world, Vector3.new(len, 0.12, 0.5), CFrame.new(x + len / 2, floorY + 0.2, center.Z), wallRed, true, 0.2)
+		local y = floorY + 0.9
+		local dash = math.max(3, halfW * 2 / 28)
+		local x = -halfW
+		while x < halfW do
+			local len = math.min(dash, halfW - x)
+			local mid = Vector3.new(center.X, y, center.Z) + rightDir * (x + len / 2)
+			part(world, Vector3.new(lineTh * 2.2, 0.1, len), CFrame.lookAt(mid, mid + rightDir), INTEL.accent, true, 0)
 			x += dash * 1.8
 		end
-		part(world, Vector3.new(spanX, 0.06, math.max(4, spanZ * 0.03)), CFrame.new(center.X, floorY + 0.16, center.Z), wallRed, true, 0.88)
 	end
-	-- insertion points: a glowing pillar + a ring per team (average of that team's spawn markers)
+	-- insertion points: a ring + a cross per team
 	local insert = {}
-	for team, list in spawns do
-		if #list > 0 then
-			local s = Vector3.zero
-			for _, q in list do s += q end
-			s /= #list
-			local col = team == "Red" and rgb(255, 84, 84) or rgb(80, 160, 255)
+	for _, team in { "Red", "Blue" } do
+		local s = spawns[team .. "Avg"]
+		if s then
+			local own = team == myTeam
+			local col = own and INTEL.accent or INTEL.hostile
+			local rr = math.max(4, halfW * 0.11)
 			local up = CFrame.Angles(0, 0, math.rad(90))
-			part(world, Vector3.new(36, 0.9, 0.9), CFrame.new(s.X, floorY + 18, s.Z) * up, col, true, 0.35, Enum.PartType.Cylinder)
-			part(world, Vector3.new(0.12, 14, 14), CFrame.new(s.X, floorY + 0.25, s.Z) * up, col, true, 0.55, Enum.PartType.Cylinder)
-			insert[team] = { pos = Vector3.new(s.X, floorY + 2, s.Z), col = col }
+			part(world, Vector3.new(0.1, rr * 2, rr * 2), CFrame.new(s.X, floorY + 1.2, s.Z) * up, col, true, 0.1, Enum.PartType.Cylinder)
+			part(world, Vector3.new(0.12, rr * 2 - lineTh * 3.2, rr * 2 - lineTh * 3.2), CFrame.new(s.X, floorY + 1.3, s.Z) * up, INTEL.base2, true, 0, Enum.PartType.Cylinder)
+			part(world, Vector3.new(lineTh * 1.6, 0.1, rr * 1.6), CFrame.new(s.X, floorY + 1.5, s.Z), col, true, 0)
+			part(world, Vector3.new(rr * 1.6, 0.1, lineTh * 1.6), CFrame.new(s.X, floorY + 1.5, s.Z), col, true, 0)
+			insert[team] = { pos = Vector3.new(s.X, floorY + 1.5, s.Z), col = col, own = own }
 		end
 	end
 
-	-- camera: high above, tilted, coming from YOUR side of the map, drifting slowly
-	local mine = insert[myTeam]
-	local baseYaw = 0
-	if mine then
-		local d = mine.pos - center
-		if Vector2.new(d.X, d.Z).Magnitude > 1 then baseYaw = math.atan2(d.X, d.Z) end
+	-- dimension lines in the plan box margins (GUI): width under the plan, length on its left
+	do
+		local dy = VY + VH + 12
+		fr({ Position = UDim2.fromOffset(VX, dy), Size = UDim2.fromOffset(VW, 1), BackgroundColor3 = INTEL.accent, BackgroundTransparency = 0.2 })
+		for _, x in { VX, VX + VW - 1 } do fr({ Position = UDim2.fromOffset(x, dy - 6), Size = UDim2.fromOffset(1, 13), BackgroundColor3 = INTEL.accent }) end
+		local wLabel = label(feed, ("%d  STUDS"):format(math.floor(halfW * 2 + 0.5)), 14, F.MB, INTEL.accent, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(VX + VW / 2, dy + 5),
+			Size = UDim2.fromOffset(200, 18), BackgroundTransparency = 1, ZIndex = 3 })
+		local dx = VX - 12
+		fr({ Position = UDim2.fromOffset(dx, VY), Size = UDim2.fromOffset(1, VH), BackgroundColor3 = INTEL.accent, BackgroundTransparency = 0.2 })
+		for _, y in { VY, VY + VH - 1 } do fr({ Position = UDim2.fromOffset(dx - 6, y), Size = UDim2.fromOffset(13, 1), BackgroundColor3 = INTEL.accent }) end
+		label(feed, ("%d  STUDS"):format(math.floor(halfH * 2 + 0.5)), 14, F.MB, INTEL.accent, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(dx - 14, VY + VH / 2),
+			Size = UDim2.fromOffset(200, 18), Rotation = -90, ZIndex = 3 })
+		local _ = wLabel
 	end
-	local span = math.max(spanX, spanZ, 40)
-	local EL = math.rad(56)
-	local dist = span * 0.62 / math.tan(math.rad(cam.FieldOfView / 2))
-	local function placeCam(t)
-		local yaw = baseYaw + math.sin(t * 0.07) * math.rad(9)
-		local el = EL + math.sin(t * 0.11) * math.rad(3)
-		local off = Vector3.new(math.sin(yaw) * math.cos(el), math.sin(el), math.cos(yaw) * math.cos(el)) * dist
-		local look = center + Vector3.new(math.sin(t * 0.05) * span * 0.03, 0, math.cos(t * 0.06) * span * 0.03)
-		cam.CFrame = CFrame.lookAt(look + off, look)
+	-- legend under the plan
+	do
+		local ly = BY + BH + 14
+		local function legend(y, text, col, kind)
+			if kind == "ring" then
+				local r = fr({ Position = UDim2.fromOffset(BX + 14, y + 3), Size = UDim2.fromOffset(16, 16), BackgroundTransparency = 1 })
+				new("UICorner", { CornerRadius = UDim.new(1, 0) }, r)
+				new("UIStroke", { Color = col, Thickness = 2 }, r)
+			else
+				for k = 0, 2 do fr({ Position = UDim2.fromOffset(BX + 12 + k * 8, y + 10), Size = UDim2.fromOffset(5, 3), BackgroundColor3 = col }) end
+			end
+			label(feed, text, 15, F.MB, INTEL.ui, { Position = UDim2.fromOffset(BX + 44, y), Size = UDim2.fromOffset(BW - 60, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+		end
+		legend(ly, "YOUR INSERTION", INTEL.accent, "ring")
+		legend(ly + 26, "HOSTILE INSERTION", INTEL.hostile, "ring")
+		if not oneV1 then legend(ly + 52, "THE LINE", INTEL.accent, "dash") end
 	end
-	placeCam(0)
-
-	-- ---------- 2) the feed look (a canvas between the map and the squad) ----------
-	local feed = makeCanvas(root, 2)
-	local function fr(props, parent)
-		local f = new("Frame", { BorderSizePixel = 0, BackgroundColor3 = INTEL.ui, ZIndex = 2 }, parent or feed)
-		for k, v in props do f[k] = v end
-		return f
-	end
-	-- a dark pool behind the squad so the figures + names always read on the map
-	local pool = fr({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 560), Size = UDim2.fromOffset(1250, 820), BackgroundColor3 = BLACK, BackgroundTransparency = 0.25 })
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, pool)
-	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.35), NumberSequenceKeypoint.new(1, 1) }) }, pool)
-	-- vignette
-	for _, spec in { { 0, 0, true, 90 }, { 0, 1, true, 270 }, { 0, 0, false, 0 }, { 1, 0, false, 180 } } do
-		local e = new("Frame", { AnchorPoint = Vector2.new(spec[1], spec[2]), Position = UDim2.fromScale(spec[1], spec[2]),
-			Size = spec[3] and UDim2.new(1, 0, 0.3, 0) or UDim2.new(0.22, 0, 1, 0), BackgroundColor3 = BLACK, BackgroundTransparency = 0.15, BorderSizePixel = 0, ZIndex = 2 }, root)
-		new("UIGradient", { Rotation = spec[4], Transparency = NumberSequence.new(0, 1) }, e)
-	end
-	-- scan lines + the slow scan band
-	for y = 0, 1080, 6 do fr({ Position = UDim2.fromOffset(0, y), Size = UDim2.fromOffset(1920, 1), BackgroundColor3 = BLACK, BackgroundTransparency = 0.82 }) end
-	local band = fr({ Position = UDim2.fromOffset(0, -140), Size = UDim2.fromOffset(1920, 140), BackgroundTransparency = 0.9 })
-	new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.85, 0.55), NumberSequenceKeypoint.new(1, 0.2) }) }, band)
-	-- corner brackets of the feed
-	local BX0, BY0, BX1, BY1, BL, BT = 48, 216, 1872, 930, 46, 3
-	for _, c in { { BX0, BY0, 1, 1 }, { BX1, BY0, -1, 1 }, { BX0, BY1, 1, -1 }, { BX1, BY1, -1, -1 } } do
-		fr({ Position = UDim2.fromOffset(c[3] > 0 and c[1] or c[1] - BL, c[4] > 0 and c[2] or c[2] - BT), Size = UDim2.fromOffset(BL, BT), BackgroundTransparency = 0.25 })
-		fr({ Position = UDim2.fromOffset(c[3] > 0 and c[1] or c[1] - BT, c[4] > 0 and c[2] or c[2] - BL), Size = UDim2.fromOffset(BT, BL), BackgroundTransparency = 0.25 })
-	end
-	-- REC + feed name (top right, under the clock row) and a running clock
-	local recDot = fr({ Position = UDim2.fromOffset(1560, 236), Size = UDim2.fromOffset(12, 12), BackgroundColor3 = rgb(255, 60, 60) })
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, recDot)
-	local mapName = string.upper(tostring(State:GetAttribute("MapName") or "UNKNOWN"))
-	label(feed, "REC   RECON FEED  //  " .. mapName, 14, F.MB, INTEL.ui, { Position = UDim2.fromOffset(1580, 230), Size = UDim2.fromOffset(290, 24),
-		TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2, TextTruncate = Enum.TextTruncate.AtEnd })
-	local stamp = label(feed, "", 13, F.M, INTEL.uiDim, { Position = UDim2.fromOffset(1580, 252), Size = UDim2.fromOffset(290, 20), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2 })
-	label(feed, ("GRID  %d x %d  //  ALT %d"):format(math.floor(spanX), math.floor(spanZ), math.floor(dist)), 13, F.M, INTEL.uiDim,
-		{ Position = UDim2.fromOffset(BX0 + 14, BY1 - 30), Size = UDim2.fromOffset(400, 20), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2 })
-	-- tags for the insertion points (follow the map on screen)
+	-- tags for the insertion points (follow the plan)
 	local tags = {}
 	for team, ins in insert do
-		local own = team == myTeam
-		local t = label(feed, own and "YOUR INSERTION" or ("HOSTILE INSERTION"), 15, F.MB, ins.col, { AnchorPoint = Vector2.new(0, 0.5),
-			Size = UDim2.fromOffset(260, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 2 })
-		new("UIStroke", { Color = BLACK, Thickness = 1.5, Transparency = 0.3 }, t)
-		local dia = fr({ AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(14, 14), Rotation = 45, BackgroundTransparency = 1 })
-		new("UIStroke", { Color = ins.col, Thickness = 2 }, dia)
-		table.insert(tags, { label = t, dia = dia, pos = ins.pos })
+		local t = label(feed, ins.own and "YOU" or "HOSTILE", 15, F.H, ins.col, { AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(120, 20), ZIndex = 4 })
+		new("UIStroke", { Color = INTEL.base2, Thickness = 2.5, Transparency = 0.1 }, t)
+		table.insert(tags, { label = t, pos = ins.pos })
+		local _ = team
 	end
+	-- a slow scan line across the plan
+	local scan = fr({ Position = UDim2.fromOffset(VX, VY), Size = UDim2.fromOffset(VW, 3), BackgroundColor3 = INTEL.accent, BackgroundTransparency = 0.55, ZIndex = 3 })
+	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1) }) }, scan)
 
-	-- ---------- 3) MISSION BRIEFING (right) + OBJECTIVES (left) ----------
-	local panelL = { x = 1480, y = 290, w = 384 }
-	local plate = new("Frame", { Position = UDim2.fromOffset(panelL.x, panelL.y), Size = UDim2.fromOffset(panelL.w, 420), BackgroundColor3 = INTEL.panel,
-		BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 2 }, feed)
-	new("UIStroke", { Color = INTEL.ui, Thickness = 1, Transparency = 0.55 }, plate)
-	fr({ Size = UDim2.fromOffset(panelL.w, 3), BackgroundColor3 = myCol }, plate)
-	label(plate, "MISSION BRIEFING", 26, F.H, WHITE, { Position = UDim2.fromOffset(18, 14), Size = UDim2.fromOffset(300, 32), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-	local stampL = label(plate, "CLASSIFIED", 16, F.H, rgb(255, 80, 80), { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(panelL.w - 70, 30),
-		Size = UDim2.fromOffset(112, 26), Rotation = -8, ZIndex = 4 })
-	new("UIStroke", { Color = rgb(255, 80, 80), Thickness = 2, Transparency = 0.15, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, stampL)
-	fr({ Position = UDim2.fromOffset(18, 54), Size = UDim2.fromOffset(panelL.w - 36, 1), BackgroundTransparency = 0.6 }, plate)
+	-- ---------- 3) MISSION BRIEFING + OBJECTIVES (left column) ----------
+	local LX, LW = 56, 410
+	local plate = new("Frame", { Position = UDim2.fromOffset(LX, 232), Size = UDim2.fromOffset(LW, 420), BackgroundColor3 = INTEL.panel, BackgroundTransparency = 0.12,
+		BorderSizePixel = 0, ZIndex = 2 }, feed)
+	new("UIStroke", { Color = INTEL.line, Thickness = 1.5, Transparency = 0.25 }, plate)
+	fr({ Size = UDim2.fromOffset(LW, 4), BackgroundColor3 = INTEL.accent }, plate)
+	label(plate, "MISSION BRIEFING", 30, F.H, WHITE, { Position = UDim2.fromOffset(18, 14), Size = UDim2.fromOffset(300, 36), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	local stampL = label(plate, "REV A", 16, F.H, INTEL.accent, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(LW - 54, 32), Size = UDim2.fromOffset(70, 26), ZIndex = 4 })
+	new("UIStroke", { Color = INTEL.accent, Thickness = 2, Transparency = 0.15, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, stampL)
+	fr({ Position = UDim2.fromOffset(18, 60), Size = UDim2.fromOffset(LW - 36, 1), BackgroundTransparency = 0.55 }, plate)
 	local squadN = 0
 	for _, p in Players:GetPlayers() do if p.Team == player.Team then squadN += 1 end end
 	local timeStr = os.date("%H:%M")
@@ -481,53 +551,48 @@ local function buildBriefing(root, myCol)
 		{ "AREA", ("%d x %d STUDS"):format(math.floor(spanX), math.floor(spanZ)) },
 		{ "INSERTION", timeStr .. "  LOCAL" },
 	}
-	local intel = oneV1 and {
+	local notes = oneV1 and {
 		"ONE HOSTILE. FIRST TO " .. tostring(C.V1 and C.V1.KillsToWin or 5) .. " KILLS TAKES THE ROUND.",
 		"AFTER A DEATH YOU SIT OUT A FEW SECONDS AND WATCH THEM.",
 	} or {
 		"BOX DROPS EVERY " .. tostring(C.BOX and C.BOX.SpawnInterval or 60) .. " S ON BOTH SIDES OF THE LINE.",
-		"3 HOLES PER SIDE. MORE PLUGGED BOXES = THE LINE MOVES.",
+		"3 HOLES PER SIDE. MORE PLUGGED BOXES MOVES THE LINE.",
 		"THEIR PLUGGED BOXES CAN BE SHOT OR STOLEN.",
 	}
 	local typed = {}
-	local ry = 68
+	local ry = 74
 	for _, r in rows do
-		label(plate, r[1], 12, F.MB, INTEL.uiDim, { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(110, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-		local v = label(plate, "", 16, F.MB, WHITE, { Position = UDim2.fromOffset(130, ry), Size = UDim2.fromOffset(panelL.w - 148, 22), TextXAlignment = Enum.TextXAlignment.Left,
+		label(plate, r[1], 13, F.MB, INTEL.uiDim, { Position = UDim2.fromOffset(18, ry + 2), Size = UDim2.fromOffset(110, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+		local v = label(plate, "", 18, F.MB, WHITE, { Position = UDim2.fromOffset(132, ry), Size = UDim2.fromOffset(LW - 150, 24), TextXAlignment = Enum.TextXAlignment.Left,
 			ZIndex = 3, TextTruncate = Enum.TextTruncate.AtEnd })
 		table.insert(typed, { l = v, text = r[2] })
-		ry += 28
+		ry += 30
 	end
 	ry += 6
-	fr({ Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(panelL.w - 36, 1), BackgroundTransparency = 0.6 }, plate)
+	fr({ Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(LW - 36, 1), BackgroundTransparency = 0.55 }, plate)
 	ry += 10
-	label(plate, "INTEL", 12, F.MB, INTEL.ui, { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(200, 18), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-	ry += 22
-	for _, line in intel do
-		local v = label(plate, "", 13, F.M, rgb(214, 236, 228), { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(panelL.w - 36, 34), TextXAlignment = Enum.TextXAlignment.Left,
+	label(plate, "NOTES", 14, F.MB, INTEL.accent, { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(200, 20), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	ry += 26
+	for i, line in notes do
+		local v = label(plate, "", 14, F.M, rgb(222, 238, 255), { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(LW - 36, 38), TextXAlignment = Enum.TextXAlignment.Left,
 			TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true, ZIndex = 3 })
-		table.insert(typed, { l = v, text = "> " .. line })
-		ry += 38
+		table.insert(typed, { l = v, text = i .. ".  " .. line })
+		ry += 42
 	end
-	-- two redacted lines (black bars) under the intel
-	for k = 1, 2 do
-		label(plate, k == 1 and "SOURCE" or "HANDLER", 12, F.MB, INTEL.uiDim, { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(90, 18), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-		fr({ Position = UDim2.fromOffset(112, ry + 3), Size = UDim2.fromOffset(k == 1 and 190 or 130, 13), BackgroundColor3 = BLACK, BackgroundTransparency = 0.05 }, plate).ZIndex = 3
-		ry += 24
-	end
-	plate.Size = UDim2.fromOffset(panelL.w, ry + 14)
-	-- OBJECTIVES (left)
+	plate.Size = UDim2.fromOffset(LW, ry + 10)
+	-- OBJECTIVES (left, under the briefing)
 	local obj = oneV1 and { "WIN " .. tostring(C.V1 and C.V1.KillsToWin or 5) .. " GUNFIGHTS" } or { "PLUG BOXES INTO YOUR HOLES", "PUSH THE LINE TO THEIR FINISH", "BREAK THEIR PLUGGED BOXES" }
-	local op = new("Frame", { Position = UDim2.fromOffset(56, 290), Size = UDim2.fromOffset(360, 60 + #obj * 34), BackgroundColor3 = INTEL.panel, BackgroundTransparency = 0.2,
+	local oy = 232 + ry + 10 + 18
+	local op = new("Frame", { Position = UDim2.fromOffset(LX, oy), Size = UDim2.fromOffset(LW, 64 + #obj * 36), BackgroundColor3 = INTEL.panel, BackgroundTransparency = 0.12,
 		BorderSizePixel = 0, ZIndex = 2 }, feed)
-	new("UIStroke", { Color = INTEL.ui, Thickness = 1, Transparency = 0.55 }, op)
-	fr({ Size = UDim2.fromOffset(360, 3), BackgroundColor3 = myCol }, op)
-	label(op, "OBJECTIVES", 22, F.H, WHITE, { Position = UDim2.fromOffset(18, 12), Size = UDim2.fromOffset(300, 28), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+	new("UIStroke", { Color = INTEL.line, Thickness = 1.5, Transparency = 0.25 }, op)
+	fr({ Size = UDim2.fromOffset(LW, 4), BackgroundColor3 = INTEL.accent }, op)
+	label(op, "OBJECTIVES", 26, F.H, WHITE, { Position = UDim2.fromOffset(18, 12), Size = UDim2.fromOffset(300, 32), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
 	for k, o in obj do
-		local y = 48 + (k - 1) * 34
-		local bx = fr({ Position = UDim2.fromOffset(18, y + 4), Size = UDim2.fromOffset(14, 14), BackgroundTransparency = 1 }, op)
-		new("UIStroke", { Color = INTEL.ui, Thickness = 1.5 }, bx)
-		local v = label(op, "", 15, F.MB, rgb(220, 240, 232), { Position = UDim2.fromOffset(44, y), Size = UDim2.fromOffset(300, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
+		local y = 54 + (k - 1) * 36
+		local bx = fr({ Position = UDim2.fromOffset(18, y + 4), Size = UDim2.fromOffset(16, 16), BackgroundTransparency = 1 }, op)
+		new("UIStroke", { Color = INTEL.accent, Thickness = 2 }, bx)
+		local v = label(op, "", 17, F.MB, rgb(228, 243, 255), { Position = UDim2.fromOffset(46, y), Size = UDim2.fromOffset(LW - 60, 24), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
 		table.insert(typed, { l = v, text = o })
 	end
 	-- type every line in, one after another
@@ -548,20 +613,18 @@ local function buildBriefing(root, myCol)
 	local t0 = os.clock()
 	function api.update(_dt)
 		local t = os.clock() - t0
-		placeCam(t)
-		band.Position = UDim2.fromOffset(0, (t * 160) % 1360 - 140)
-		recDot.BackgroundTransparency = (math.floor(t * 1.6) % 2 == 0) and 0 or 0.85
-		stamp.Text = ("T+ %02d:%02d.%d   //   %s"):format(math.floor(t / 60), math.floor(t % 60), math.floor((t * 10) % 10), timeStr)
+		scan.Position = UDim2.fromOffset(VX, VY + (t * 90) % (VH - 3))
 		local vs = vp.AbsoluteSize
+		local sc = feed:FindFirstChildOfClass("UIScale")
+		local k = sc and sc.Scale or 1
 		for _, tg in tags do
 			local sp = project(cam, vs, tg.pos)
 			if sp then
-				local c = (sp - feed.AbsolutePosition) / feed.UIScale.Scale
-				tg.dia.Position = UDim2.fromOffset(c.X, c.Y)
-				tg.label.Position = UDim2.fromOffset(c.X + 16, c.Y)
-				tg.dia.Visible, tg.label.Visible = true, true
+				local c = Vector2.new(VX, VY) + sp / k
+				tg.label.Position = UDim2.fromOffset(c.X, c.Y - 14)
+				tg.label.Visible = true
 			else
-				tg.dia.Visible, tg.label.Visible = false, false
+				tg.label.Visible = false
 			end
 		end
 	end
