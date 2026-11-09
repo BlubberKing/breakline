@@ -1,4 +1,7 @@
--- CardShopUI v1 (ModuleScript in ReplicatedStorage) - LOBBY place only. NEW in v5.14 (GDD 5.9). Used by ShopClient (the CARDS tab).
+-- CardShopUI v1.1 (ModuleScript in ReplicatedStorage) - LOBBY place only. NEW in v5.14 (GDD 5.9). Used by ShopClient (the CARDS tab).
+-- v5.16 (owner Nov 8): FIRST STEPS cover = a SEEDLING (the walking feet looked AI); "1 CARD // 12 POSSIBLE" -> "12 CARDS" on a dark plate; BREAKLINE on the
+--   pack bigger + white with an outline; NEW CARDS IN sits right next to the DAILY SHOP title; opening: the light pool above SKIP ROLL is gone, the slash is
+--   a thin tapered anime crescent with afterimages + an impact frame (no blocks), tapered speed lines; CLAIM is a polished rarity-coloured button.
 -- The CARDS tab has its own layout (not the item grid + detail panel of the other tabs):
 --   DAILY SHOP  - three big cards side by side, picked every day (00:00 UTC) from the cards inside the packs that are on sale, by rarity weight
 --                 (CardShop.DailyOffer). Each: the card, its name + rarity, the price in souls, BUY (asks twice: BUY -> CONFIRM). One copy per card per day.
@@ -80,24 +83,39 @@ end
 -- ======================================================================================
 -- PACK ART (drawn from plain frames, design size 250 x 360). A foil pack: gradient body with a diagonal sheen, crimped top + bottom
 -- (little teeth on the edges), a dashed TEAR line under the top crimp (where the opening rips it), BREAKLINE, a ringed emblem
--- (FIRST STEPS = two footprints, SOUL PACK = the soul ghost, LEVEL UP = three stacked chevrons + a star), the pack name + tag.
+-- (FIRST STEPS = a seedling (v5.16, was two footprints), SOUL PACK = the soul ghost, LEVEL UP = three stacked chevrons + a star), the pack name + tag.
 -- ======================================================================================
 M.PACK_W, M.PACK_H = 250, 360
 M.TEAR_Y = 62 -- the tear line (design px from the top)
 
-local function footprint(parent, cx, cy, rot, col)
-	local s = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, cy), Size = UDim2.fromOffset(24, 42), Rotation = rot,
-		BackgroundColor3 = col, BorderSizePixel = 0, ZIndex = 4 }, parent)
-	corner(s)
-	local heel = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 1, 12), Size = UDim2.fromOffset(18, 16),
-		BackgroundColor3 = col, BorderSizePixel = 0, ZIndex = 4 }, s)
-	corner(heel)
-	for i, o in { { -8, -8, 7 }, { -1, -12, 7 }, { 6, -10, 6 }, { 11, -5, 5 } } do
-		local t = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, o[1], 0, o[2]), Size = UDim2.fromOffset(o[3], o[3]),
-			BackgroundColor3 = col, BorderSizePixel = 0, ZIndex = 4 }, s)
-		corner(t)
-		local _ = i
+-- v5.16 FIRST STEPS emblem = a SEEDLING (owner: the walking feet looked AI-drawn; make it something completely different). Flat, inked shapes like the
+-- other two emblems: a ground line with two seeds, a curved stem in three strokes, two capsule leaves with a vein + a highlight, a small bud on top.
+local function pill(parent, cx, cy, w, h, rot, col, transp, z)
+	local f = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(cx, cy), Size = UDim2.fromOffset(w, h), Rotation = rot or 0,
+		BackgroundColor3 = col, BackgroundTransparency = transp or 0, BorderSizePixel = 0, ZIndex = z or 5 }, parent)
+	corner(f)
+	return f
+end
+local function seedling(art, cx, col, ink)
+	-- ground + two seeds
+	pill(art, cx, 210, 96, 12, 0, col, 0.1, 5)
+	pill(art, cx - 30, 222, 9, 6, -10, col, 0.35, 5)
+	pill(art, cx + 26, 223, 7, 5, 12, col, 0.45, 5)
+	-- stem (three strokes = a gentle S curve)
+	bar(art, cx, 206, cx - 3, 186, 6, col, 0, 6)
+	bar(art, cx - 3, 186, cx + 1, 166, 6, col, 0, 6)
+	bar(art, cx + 1, 166, cx, 148, 5, col, 0, 6)
+	-- leaves: a long axis capsule each, a darker vein down the middle, a light highlight on the upper edge
+	local function leaf(lx, ly, w, h, rot)
+		pill(art, lx, ly, w, h, rot, col, 0, 6)
+		local r = math.rad(rot)
+		pill(art, lx - math.sin(r) * h * 0.18, ly - math.cos(r) * h * 0.18, w * 0.62, h * 0.28, rot, WHITE, 0.6, 7)
+		pill(art, lx, ly, w * 0.78, 2, rot, ink, 0.35, 7)
 	end
+	leaf(cx - 23, 160, 52, 22, 30)
+	leaf(cx + 24, 140, 58, 24, -35)
+	-- the new bud at the tip
+	pill(art, cx + 2, 143, 14, 9, -70, col, 0, 6)
 end
 
 function M.PackArt(parent, pack, width)
@@ -134,7 +152,9 @@ function M.PackArt(parent, pack, width)
 	for x = 10, W - 18, 12 do box(art, x, M.TEAR_Y, 7, 2, L.accent, 0.25, 5) end
 	lbl(art, "TEAR", 9, W - 40, M.TEAR_Y - 13, 34, 10, L.accent, F.MB, Enum.TextXAlignment.Right, 5).TextTransparency = 0.25
 	-- BREAKLINE
-	lbl(art, "B R E A K L I N E", 12, 0, 32, W, 18, L.accent, F.MB, Enum.TextXAlignment.Center, 5)
+	-- v5.16: bigger + white with an ink outline (it was a small, pale mono line that disappeared on the foil)
+	local bl = lbl(art, "B R E A K L I N E", 19, 0, 29, W, 24, WHITE, F.H, Enum.TextXAlignment.Center, 5)
+	stroke(bl, L.ink, 2).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 	-- emblem ring
 	local ring = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(W / 2, 168), Size = UDim2.fromOffset(140, 140),
 		BackgroundColor3 = L.accent, BackgroundTransparency = 0.82, BorderSizePixel = 0, ZIndex = 4 }, art)
@@ -146,8 +166,7 @@ function M.PackArt(parent, pack, width)
 	stroke(inner, L.accent, 1, 0.5)
 	local em = L.emblem
 	if em == "steps" then
-		footprint(art, W / 2 - 20, 176, -14, L.accent)
-		footprint(art, W / 2 + 22, 150, 12, L.accent)
+		seedling(art, W / 2, L.accent, L.ink) -- v5.16 (was two footprints)
 	elseif em == "soul" then
 		local s = UI.SoulIcon(art, 104)
 		s.AnchorPoint, s.Position, s.ZIndex = Vector2.new(0.5, 0.5), UDim2.fromOffset(W / 2, 170), 4
@@ -166,10 +185,15 @@ function M.PackArt(parent, pack, width)
 		end
 	end
 	-- name + tag
-	local nm = lbl(art, pack.name, 40, 0, 254, W, 48, WHITE, F.H, Enum.TextXAlignment.Center, 5)
+	local nm = lbl(art, pack.name, 40, 0, 248, W, 48, WHITE, F.H, Enum.TextXAlignment.Center, 5)
 	stroke(nm, L.ink, 2.5).ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-	lbl(art, pack.tag, 12, 0, 300, W, 16, L.accent, F.MB, Enum.TextXAlignment.Center, 5)
-	lbl(art, "1 CARD  //  12 POSSIBLE", 10, 0, 318, W, 14, L.accent, F.M, Enum.TextXAlignment.Center, 5).TextTransparency = 0.3
+	lbl(art, pack.tag, 12, 0, 293, W, 16, L.accent, F.MB, Enum.TextXAlignment.Center, 5)
+	-- v5.16: "1 CARD // 12 POSSIBLE" -> "12 CARDS", big and on a dark plate so it reads on every pack colour
+	local plate = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(W / 2, 312), Size = UDim2.fromOffset(108, 23),
+		BackgroundColor3 = L.ink, BackgroundTransparency = 0.25, BorderSizePixel = 0, ZIndex = 5 }, art)
+	corner(plate, 5)
+	stroke(plate, L.accent, 1, 0.5)
+	lbl(plate, tostring(#(pack.entries or {}) > 0 and #pack.entries or 12) .. " CARDS", 17, 0, 0, 108, 23, WHITE, F.H, Enum.TextXAlignment.Center, 6)
 	return holder
 end
 
@@ -238,8 +262,15 @@ function M.Mount(parent, ctx)
 		lbl(page, text, 40, 8, y, 700, 52, K.text, F.H, nil, 3)
 		box(page, 8, y + 58, 1792, 1, K.line, 0, 3)
 	end
-	header(0, "DAILY SHOP")
-	local timerLbl = lbl(page, "", 15, 1100, 18, 700, 22, K.dim, F.MB, Enum.TextXAlignment.Right, 3)
+	-- v5.16: NEW CARDS IN sits right next to the DAILY SHOP title (it was pushed all the way to the right edge)
+	local dRow = new("Frame", { Position = UDim2.fromOffset(8, 0), Size = UDim2.fromOffset(1792, 52), BackgroundTransparency = 1, ZIndex = 3 }, page)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Bottom, SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 20) }, dRow)
+	new("TextLabel", { BackgroundTransparency = 1, Text = "DAILY SHOP", TextSize = 40, FontFace = F.H, TextColor3 = K.text, AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, 52), LayoutOrder = 1, ZIndex = 3 }, dRow)
+	local timerLbl = new("TextLabel", { BackgroundTransparency = 1, Text = "", TextSize = 17, FontFace = F.MB, TextColor3 = K.dim, RichText = true,
+		AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 40), TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, ZIndex = 3 }, dRow)
+	box(page, 8, 58, 1792, 1, K.line, 0, 3)
 
 	-- ---------- DAILY SHOP (3 big cards) ----------
 	local DY, DH = 76, 540
@@ -389,7 +420,7 @@ function M.Mount(parent, ctx)
 			acc = 0
 			if not stateData then timerLbl.Text = "" return end
 			local remain = stateData.endsAt - workspace:GetServerTimeNow()
-			timerLbl.Text = "NEW CARDS IN  " .. fmt(remain)
+			timerLbl.Text = 'NEW CARDS IN  <font color="#FFFFFF">' .. fmt(remain) .. "</font>"
 			if remain <= 0 and not fetching then refreshState() end
 		end)
 	end
@@ -519,19 +550,14 @@ function M.Mount(parent, ctx)
 		for i = -6, 6 do
 			local s = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, -80), Size = UDim2.fromOffset(70, 1120), Rotation = i * 2.1,
 				BackgroundColor3 = rgb(255, 246, 226), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 2 }, beam)
-			new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(0.75, 0.82),
-				NumberSequenceKeypoint.new(1, 1) }) }, s)
+			new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(0.55, 0.84),
+				NumberSequenceKeypoint.new(0.74, 1), NumberSequenceKeypoint.new(1, 1) }) }, s)
 			table.insert(beamParts, { f = s, tr = 0.93 + math.abs(i) * 0.006 })
 		end
 		for _, b in beamParts do tween(b.f, ti(0.6), { BackgroundTransparency = b.tr }) end
+		-- v5.16: the stacked "pool of light" ellipses that sat right above SKIP ROLL are gone (owner: the gradient lighting there looked bad); the
+		-- beam itself now fades out before it reaches the lower part of the screen
 		local poolParts = {}
-		for i, cfg in { { 760, 150, 0.9 }, { 580, 112, 0.86 }, { 400, 78, 0.82 }, { 230, 46, 0.78 } } do
-			local e = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 860), Size = UDim2.fromOffset(cfg[1], cfg[2]),
-				BackgroundColor3 = rgb(255, 246, 226), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 2 + i }, stage)
-			corner(e)
-			table.insert(poolParts, { f = e, tr = cfg[3] })
-			tween(e, ti(0.6), { BackgroundTransparency = cfg[3] })
-		end
 
 		-- the pack, split along the tear line into two CanvasGroups (so the top can rip away cleanly)
 		local PS = 330 / M.PACK_W -- pack shown 330 wide
@@ -604,30 +630,82 @@ function M.Mount(parent, ctx)
 
 			-- 3) the anime slash: a white-hot streak rips across the tear line, flash, speed lines, the top flies off
 			local cutY = 500 - PHd * 1.05 / 2 + tearPx * 1.05
-			local slash = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromOffset(960 - PWd * 0.75, cutY), Size = UDim2.fromOffset(0, 7),
-				BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 40, Rotation = -4 }, stage)
-			corner(slash)
-			local slashGlow = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromScale(0, 0.5), Size = UDim2.new(1, 0, 0, 30),
-				BackgroundColor3 = L.accent, BackgroundTransparency = 0.55, BorderSizePixel = 0, ZIndex = 39 }, slash)
-			corner(slashGlow)
+			-- v5.16 ANIME SLASH (owner: less blocky, more anime, less AI): ONE thin crescent drawn from short segments along a shallow arc - sharp at both
+			-- ends, thickest in the middle - that is revealed tip-first in under a tenth of a second, with two thinner coloured afterimages trailing it,
+			-- a glint at the tip, an impact frame (a dark blink, then the white flash), and then it thins out to a hairline and is gone. No blocks, no bars.
+			local SEG = 40
+			local x0, x1 = 960 - PWd * 0.98, 960 + PWd * 0.98
+			local function arcPt(u, dy)
+				return Vector2.new(x0 + (x1 - x0) * u, cutY + (0.5 - u) * 26 + math.sin(u * math.pi) * 9 + (dy or 0))
+			end
+			local layers = {
+				{ th = 7, col = WHITE, tr = 0, delay = 0, dy = 0, z = 42 },
+				{ th = 4, col = L.accent, tr = 0.2, delay = 0.025, dy = 6, z = 41 },
+				{ th = 2.5, col = L.accent:Lerp(WHITE, 0.5), tr = 0.35, delay = 0.045, dy = -5, z = 41 },
+			}
+			local segs = {}
+			for li, ly in layers do
+				for k = 1, SEG do
+					local u0, u1 = (k - 1) / SEG, k / SEG
+					local a, b = arcPt(u0, ly.dy), arcPt(u1, ly.dy)
+					local th = math.max(0.6, ly.th * math.sin((u0 + u1) / 2 * math.pi) ^ 0.8)
+					local d = b - a
+					local f = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset((a.X + b.X) / 2, (a.Y + b.Y) / 2),
+						Size = UDim2.fromOffset(d.Magnitude + 1.2, th), Rotation = math.deg(math.atan2(d.Y, d.X)), BackgroundColor3 = ly.col,
+						BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = ly.z }, stage)
+					corner(f)
+					table.insert(segs, { f = f, u = u0, layer = li, th = th, tr = ly.tr, delay = ly.delay })
+				end
+			end
 			sfx("CardLand")
-			tween(slash, ti(0.14, Enum.EasingStyle.Quart), { Size = UDim2.fromOffset(PWd * 1.5, 7) })
-			task.wait(0.12)
+			local REVEAL = 0.085
+			local s0 = os.clock()
+			while alive do
+				local e = os.clock() - s0
+				local done = true
+				for _, sg in segs do
+					local prog = (e - sg.delay) / REVEAL
+					if prog < 1.05 then done = false end
+					if sg.f.BackgroundTransparency >= 1 and prog >= sg.u then sg.f.BackgroundTransparency = sg.tr end
+				end
+				if done then break end
+				RunService.RenderStepped:Wait()
+			end
+			-- glint at the tip (two crossed thin strokes that pop and shrink)
+			local tip = arcPt(1, 0)
+			for _, r in { 0, 90, 45 } do
+				local g = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(tip.X, tip.Y), Size = UDim2.fromOffset(r == 45 and 26 or 54, 2),
+					Rotation = r, BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 44 }, stage)
+				corner(g)
+				tween(g, ti(0.3, Enum.EasingStyle.Quint), { Size = UDim2.fromOffset(2, 1), BackgroundTransparency = 1 })
+				task.delay(0.32, function() g:Destroy() end)
+			end
+			-- impact frame: a dark blink first (the classic anime hit frame), then the white flash
+			local blink = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 59 }, openGui)
+			task.delay(0.045, function() blink:Destroy() end)
+			task.wait(0.045)
 			local flash = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = WHITE, BackgroundTransparency = 0.15, BorderSizePixel = 0, ZIndex = 60 }, openGui)
 			tween(flash, ti(0.45), { BackgroundTransparency = 1 })
+			-- the crescent thins to a hairline, slides on a touch and vanishes
+			for _, sg in segs do
+				local f = sg.f
+				tween(f, ti(0.28, Enum.EasingStyle.Quint), { Size = UDim2.fromOffset(f.Size.X.Offset, 0.4), BackgroundTransparency = 1,
+					Position = f.Position + UDim2.fromOffset(14, -4) })
+				task.delay(0.3, function() f:Destroy() end)
+			end
 			-- speed lines bursting out of the cut
 			for k = 1, 26 do
 				local ang = math.rad(k * (360 / 26) + rng:NextNumber() * 8)
 				local len = 140 + rng:NextNumber() * 320
 				local r0 = 60 + rng:NextNumber() * 40
 				local ln = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromOffset(960 + math.cos(ang) * r0, cutY + math.sin(ang) * r0),
-					Size = UDim2.fromOffset(10, 2 + rng:NextInteger(0, 2)), Rotation = math.deg(ang), BackgroundColor3 = (k % 3 == 0) and L.accent or WHITE,
+					Size = UDim2.fromOffset(10, 1 + rng:NextInteger(0, 1)), Rotation = math.deg(ang), BackgroundColor3 = (k % 3 == 0) and L.accent or WHITE,
 					BackgroundTransparency = 0.05, BorderSizePixel = 0, ZIndex = 45 }, stage)
+				-- v5.16: tapered (solid at the cut, fading to nothing at the tip) instead of flat rectangles
+				new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.6, 0.35), NumberSequenceKeypoint.new(1, 1) }) }, ln)
 				tween(ln, ti(0.42, Enum.EasingStyle.Quint), { Size = UDim2.fromOffset(len, 1), Position = UDim2.fromOffset(960 + math.cos(ang) * (r0 + len * 0.6), cutY + math.sin(ang) * (r0 + len * 0.6)), BackgroundTransparency = 1 })
 				task.delay(0.5, function() ln:Destroy() end)
 			end
-			tween(slash, ti(0.3), { BackgroundTransparency = 1 })
-			tween(slashGlow, ti(0.3), { BackgroundTransparency = 1 })
 			-- the torn top flies up and spins away, light pours out of the opening
 			tween(topG, ti(0.55, Enum.EasingStyle.Quad), { Position = UDim2.fromOffset(PWd * 0.55, -260), Rotation = 28, GroupTransparency = 1 })
 			local burst = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset(PWd / 2, tearPx + 4), Size = UDim2.fromOffset(PWd * 0.8, 10),
@@ -733,11 +811,58 @@ function M.Mount(parent, ctx)
 			tween(rn, ti(0.4), { TextTransparency = 0, Position = UDim2.fromOffset(0, 168) })
 			local got = lbl(stage, "NEW CARD  //  " .. string.upper(card and card.name or result.id), 14, 0, 976, 1920, 20, K.dim, F.MB, Enum.TextXAlignment.Center, 35)
 			got.Position = UDim2.fromOffset(0, 742)
-			local claim = new("TextButton", { Text = "CLAIM", TextSize = 26, FontFace = F.H, TextColor3 = K.text, BackgroundColor3 = K.red, AutoButtonColor = false,
-				BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 800), Size = UDim2.fromOffset(280, 64), ZIndex = 50,
-				BackgroundTransparency = 1, TextTransparency = 1 }, stage)
-			hot(claim, K.red, K.redHi)
-			tween(claim, ti(0.35), { BackgroundTransparency = 0, TextTransparency = 0 })
+			-- v5.16 CLAIM (owner: it looked basic / unpolished): a rarity-coloured button with a glossy top-to-bottom gradient, a light frame + a fine top
+			-- highlight, a soft pulsing glow behind it, a shine that sweeps across every couple of seconds, diamond marks either side of the word, and
+			-- it pops in, grows on hover and squashes when pressed.
+			local tint = resR.id == "signature" and K.red or resR.glow
+			local claimHolder = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(960, 796), Size = UDim2.fromOffset(330, 74),
+				BackgroundTransparency = 1, ZIndex = 50 }, stage)
+			local holdScale = new("UIScale", { Scale = 0.6 }, claimHolder)
+			local cGlow = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.new(1, 30, 1, 30), BackgroundColor3 = tint,
+				BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 49 }, claimHolder)
+			corner(cGlow, 18)
+			local claim = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = WHITE, BackgroundTransparency = 1, BorderSizePixel = 0,
+				Size = UDim2.fromScale(1, 1), ClipsDescendants = true, ZIndex = 50 }, claimHolder)
+			corner(claim, 9)
+			new("UIGradient", { Rotation = 90, Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, tint:Lerp(WHITE, 0.3)), ColorSequenceKeypoint.new(0.48, tint),
+				ColorSequenceKeypoint.new(1, tint:Lerp(BLACK, 0.5)) }) }, claim)
+			local cStroke = stroke(claim, WHITE, 2, 1)
+			local hiLine = box(claim, 10, 3, 310, 1, WHITE, 1, 51)
+			local cText = lbl(claim, "CLAIM", 32, 0, 0, 330, 74, WHITE, F.H, Enum.TextXAlignment.Center, 52)
+			cText.TextTransparency = 1
+			local cTextStroke = stroke(cText, BLACK, 2, 1)
+			cTextStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+			local marks = {}
+			for _, mx in { 92, 238 } do
+				local d = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(mx, 37), Size = UDim2.fromOffset(9, 9), Rotation = 45,
+					BackgroundColor3 = WHITE, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 52 }, claim)
+				table.insert(marks, d)
+			end
+			local shine = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(-80, 37), Size = UDim2.fromOffset(46, 180), Rotation = 22,
+				BackgroundColor3 = WHITE, BackgroundTransparency = 0.55, BorderSizePixel = 0, ZIndex = 51 }, claim)
+			new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.2), NumberSequenceKeypoint.new(1, 1) }) }, shine)
+			tween(holdScale, ti(0.4, Enum.EasingStyle.Back), { Scale = 1 })
+			tween(claim, ti(0.3), { BackgroundTransparency = 0 })
+			tween(cStroke, ti(0.3), { Transparency = 0.45 })
+			tween(hiLine, ti(0.3), { BackgroundTransparency = 0.45 })
+			tween(cText, ti(0.3), { TextTransparency = 0 })
+			tween(cTextStroke, ti(0.3), { Transparency = 0.55 })
+			for _, d in marks do tween(d, ti(0.3), { BackgroundTransparency = 0.15 }) end
+			task.spawn(function() -- glow pulse + shine sweep
+				local st0 = os.clock()
+				while alive and claim.Parent do
+					local e = os.clock() - st0
+					cGlow.BackgroundTransparency = 0.72 + 0.14 * math.sin(e * 3.2)
+					local u = (e % 2.4) / 0.7
+					shine.Position = UDim2.fromOffset(u <= 1 and (-80 + u * 490) or -80, 37)
+					RunService.RenderStepped:Wait()
+				end
+			end)
+			local hovering = false
+			claim.MouseEnter:Connect(function() hovering = true tween(holdScale, ti(0.18), { Scale = 1.06 }) tween(cStroke, ti(0.18), { Transparency = 0.05 }) end)
+			claim.MouseLeave:Connect(function() hovering = false tween(holdScale, ti(0.18), { Scale = 1 }) tween(cStroke, ti(0.18), { Transparency = 0.45 }) end)
+			claim.MouseButton1Down:Connect(function() tween(holdScale, ti(0.08), { Scale = 0.95 }) end)
+			claim.MouseButton1Up:Connect(function() tween(holdScale, ti(0.15, Enum.EasingStyle.Back), { Scale = hovering and 1.06 or 1 }) end)
 			local claimed = false
 			claim.MouseButton1Click:Connect(function()
 				if claimed then return end
@@ -746,6 +871,7 @@ function M.Mount(parent, ctx)
 				tween(bigScale, ti(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.2 })
 				tween(blocker, ti(0.35), { BackgroundTransparency = 1 })
 				for _, d in stage:GetDescendants() do
+					if d:IsA("UIStroke") then tween(d, ti(0.3), { Transparency = 1 }) end
 					if d:IsA("TextLabel") or d:IsA("TextButton") then tween(d, ti(0.3), { TextTransparency = 1 }) end
 					if d:IsA("Frame") or d:IsA("TextButton") then
 						if d.BackgroundTransparency < 1 then tween(d, ti(0.3), { BackgroundTransparency = 1 }) end
