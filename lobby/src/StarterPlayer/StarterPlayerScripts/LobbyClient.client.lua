@@ -1,3 +1,4 @@
+-- LobbyClient v6.4 (v5.18: a gun is EITHER the primary OR in the reserve - picking it as the primary clears it from the reserve, the reserve picker no longer offers your primary)
 -- LobbyClient v6.3 (v5.16: home-screen CARD INDEX button (above PLAY) - the three-card fan is centred on the button's height (it sat too low) and a bit
 --   further right, CARD INDEX + the DECK line moved right to make room; a gadget and a reserve slot can no longer hold the same item; the player cards
 --   show the equipped TITLE; "skin" wording -> COSTUME)
@@ -1057,6 +1058,10 @@ local function setSlot(kind, idx, id)
 	if kind == "weapon" then
 		if id == "" then return end
 		loadout.Weapon = id
+		-- v5.18: a gun is EITHER the primary OR in the reserve, never both: picking it as the primary takes it out of the reserve
+		for j = 1, 3 do if loadout.Reserve[j] == id then loadout.Reserve[j] = "" end end
+	elseif kind == "reserve" and id ~= "" and id == loadout.Weapon then
+		return -- v5.18: your primary gun can not also go in the reserve (it is not offered there either)
 	elseif kind == "move" then
 		loadout.Move = id
 	else
@@ -1164,7 +1169,9 @@ function buildPick()
 		end)
 	end
 	if kind ~= "weapon" then card(nil, 0) end
-	for i, item in itemsFor(kind) do card(item, i) end
+	for i, item in itemsFor(kind) do
+		if not (kind == "reserve" and item.id == loadout.Weapon) then card(item, i) end -- v5.18: the primary gun is not offered for the reserve
+	end
 end
 
 local function openPick(kind, idx)
