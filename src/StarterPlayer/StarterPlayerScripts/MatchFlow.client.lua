@@ -1,3 +1,4 @@
+-- MatchFlow v1.7 (v5.18: a gun is EITHER the primary OR in the reserve - picking it as the primary clears it from the reserve, the reserve picker no longer offers your primary)
 -- MatchFlow v1.6 (v5.17: the loadout background is a BLUEPRINT sheet (white lines on navy): SITE PLAN of the real map straight from above on the RIGHT, MISSION BRIEFING + OBJECTIVES on the LEFT, the middle left free for the squad)
 -- MatchFlow v1.5 (v5.16: the loadout screen background is a MISSION BRIEFING of the map you are about to play - a live night-vision / thermal recon picture
 --   of the real map (height-coloured blocks, outlines, grid, both insertion points, THE LINE), a feed look (scan lines, REC, clock, corner brackets), a typed
@@ -759,7 +760,12 @@ local function runPregame(token)
 		else return loadout.Reserve[idx] end
 	end
 	local function applyItem(kind, idx, id)
-		if kind == "weapon" then loadout.Weapon = id
+		if kind == "weapon" then
+			loadout.Weapon = id
+			-- v5.18: a gun is EITHER the primary OR in the reserve, never both: picking it as the primary takes it out of the reserve
+			for j = 1, 3 do if loadout.Reserve[j] == id then loadout.Reserve[j] = "" end end
+		elseif kind == "reserve" and id ~= "" and id == loadout.Weapon then
+			return -- v5.18: the primary gun can not also sit in the reserve (it is not offered there)
 		elseif kind == "move" then loadout.Move = id
 		else
 			-- v5.11: same rule as the lobby - picking an item that already sits in another slot of the same row SWAPS the two slots,
@@ -805,6 +811,8 @@ local function runPregame(token)
 		else
 			addOwned(Catalog.Gadgets)
 			addOwned(Catalog.Weapons)
+			-- v5.18: the gun you carry as your primary is not offered for a reserve slot
+			for i = #items, 1, -1 do if items[i].id == loadout.Weapon then table.remove(items, i) end end
 		end
 		-- v5.7: the big menu (same look as the lobby loadout), not the tiny horizontal scroll any more
 		bigPicker = LoadoutPicker.Big(cv, {
