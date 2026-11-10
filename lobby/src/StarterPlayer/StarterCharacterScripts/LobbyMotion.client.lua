@@ -1,8 +1,9 @@
+-- LobbyMotion v1.2 (v5.18: walk 17 / sprint 32, the same as a match)
 -- LobbyMotion v1.1 (v5.17: stands down while the player is inside the training zone) (v1 (LocalScript in StarterPlayer > StarterCharacterScripts) - LOBBY place only. NEW in v4.0.
 -- Gives the lobby the SAME movement as Breakline, without any gun: sprint speed, crouch speed and the mobile / gamepad sprint toggle.
 -- (Breakline's GunClient does this job there; Movement.client = slide / crouch / mantle / momentum jumps, AbilityClient = movement
 --  ability, AbilityPose = wall run / climb animation are the very same files as in Breakline.)
---   walk 16 / sprint 30 (hold Shift, or the mobile Sprint button / gamepad left stick click) / crouch 9
+--   walk 17 / sprint 32 (hold Shift, or the mobile Sprint button / gamepad left stick click) / crouch 9
 -- Camera: the normal Roblox camera (the gun third-person system is gone). Set FIRST_PERSON = true for the Breakline first person camera;
 -- it switches back to the free camera by itself while the lobby menu (PLAY screen) is open so the mouse works there.
 local Players = game:GetService("Players")
@@ -11,7 +12,7 @@ local UIS = game:GetService("UserInputService")
 local CAS = game:GetService("ContextActionService")
 
 local FIRST_PERSON = false
-local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
+local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 17, 32, 9 -- v5.18: the same as GunClient (was 16 / 30)
 
 local player = Players.LocalPlayer
 local char = script.Parent
