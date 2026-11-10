@@ -1,3 +1,4 @@
+-- GunServer (lobby, v5.18: entering the training zone / picking a test card = a fresh gun life (full magazine + DEEP POCKETS like a respawn))
 -- GunServer v2.2-lobby (LOBBY place, NEW in v5.17: the TRAINING ZONE - the same server code as Breakline's GunServer, with these differences: it only works for a player whose Player attribute
 --   InTraining is true (TrainingServer sets it while the player stands inside the part "TrainingZone"), only players / sentries inside the zone can be hit, nobody is ever really hurt
 --   (the lobby Vitals only returns the damage + a virtual kill), and the gun follows the lobby loadout equipped right now. Make nothing else of it: keep it as Breakline's when you change guns.)
@@ -61,6 +62,18 @@ local function onPlayer(p)
 	p.CharacterAdded:Connect(function() state[p] = nil pocketsReady[p] = true end)
 	pocketsReady[p] = true
 	-- v5.14: the card is picked after you spawned; if your gun was not used yet the extra magazine is loaded right then
+	-- v5.18 TRAINING ZONE: walking in (and every card you pick in there) starts a fresh "life" for the gun, exactly like a respawn in a match, so
+	-- DEEP POCKETS (extra magazine) and a full magazine show up every time you test a card. (TrainingClient restarts the client gun at the same moment.)
+	p:GetAttributeChangedSignal("InTraining"):Connect(function()
+		state[p] = nil
+		pocketsReady[p] = true
+	end)
+	p:GetAttributeChangedSignal("TrainingCard"):Connect(function()
+		if p:GetAttribute("InTraining") == true then
+			state[p] = nil
+			pocketsReady[p] = true
+		end
+	end)
 	p:GetAttributeChangedSignal("MatchCard"):Connect(function()
 		local s = state[p]
 		if pocketsReady[p] and CardFx.Has(p, "deep_pockets") and s and s.untouched then
