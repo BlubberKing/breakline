@@ -1,3 +1,4 @@
+-- GunClient (v5.18: walk 17 / sprint 32; hands + sleeves in your costume colours (Skins.ViewArms); cleans up when the attribute Stop is set (training zone exit))
 -- GunClient (v5.17: SETTINGS - mouse + aim sensitivity, field of view and screen shake read from ReplicatedStorage.Settings) (v5.16: LOWER SENSITIVITY - MatchConfig.MOUSE_SENS multiplies your Roblox setting (0.55); NO SHOOTING before the match starts - clicks, R and
 --   aiming are ignored and no gun sound plays while loading / on the loadout screen / in the cutscene / card roll / 3-2-1 (MatchConfig.LOCKED_PHASES);
 --   POSES - while your character holds a pose (character attribute Pose, PoseClient) the gun is put away and your body is not hidden)
@@ -28,6 +29,14 @@ local GunMath = require(RS:WaitForChild("GunMath"))
 local Spring = require(RS:WaitForChild("Spring"))
 local GunModels = require(RS:WaitForChild("GunModels"))
 local GunSkins = RS:FindFirstChild("GunSkins") and require(RS.GunSkins) or nil -- v5.10: the skin you painted on this gun in the lobby
+local SkinsMod = RS:FindFirstChild("Skins") and require(RS.Skins) or nil -- v5.18: hands + sleeves in the colours of the costume you wear
+local function armColors()
+	if SkinsMod and SkinsMod.ViewArms then
+		local ok, a = pcall(SkinsMod.ViewArms, player:GetAttribute("Skin"))
+		if ok then return a end
+	end
+	return nil
+end
 local Sfx = require(RS:WaitForChild("Sfx"))
 local TimeScale = require(RS:WaitForChild("TimeScale"))
 local HitFX = require(RS:WaitForChild("HitFX"))
@@ -51,7 +60,7 @@ local ADS_KICK_ROT = 0.06   -- viewmodel muzzle flip / twist (this is what used 
 local ADS_CAM_PUNCH = 0.10  -- camera flinch
 local ADS_FOV_PUNCH = 0.25  -- zoom pulse per shot
 local RELOAD_SPRINT_HOLD = 0.85 -- 0..1: how much of the sprint pose a reload drops (1 = gun stays exactly at the hip hold)
-local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 16, 30, 9
+local WALK_SPEED, SPRINT_SPEED, CROUCH_SPEED = 17, 32, 9 -- v5.18: a little faster (16 / 30 -> 17 / 32)
 local MatchCfg = require(RS:WaitForChild("MatchConfig"))
 local function isCarrying() return player:GetAttribute("Carrying") == true end -- holding a Wall Push box: no guns/gadgets
 -- speed feel (all subtle on purpose)
@@ -439,7 +448,7 @@ local function equip(id, sightId)
 	if not Weapons.HasSight(cfg, sightId) then sightId = cfg.DefaultSight end
 	INTERVAL = 60 / cfg.RPM
 
-	built = GunModels.BuildViewmodel(cfg.Model, sightId, VM_SCALE, nil, GunSkins and GunSkins.Equipped(player, cfg.Id) or nil) -- v5.10: + equipped gun skin
+	built = GunModels.BuildViewmodel(cfg.Model, sightId, VM_SCALE, nil, GunSkins and GunSkins.Equipped(player, cfg.Id) or nil, armColors()) -- v5.10: + equipped gun skin; v5.18: + costume arm colours
 	sight = built.Sight
 	local ownerTag = Instance.new("ObjectValue") -- lets MatchClient tell whose viewmodel this is (and remove leftovers after a respawn)
 	ownerTag.Name = "Owner"
@@ -696,6 +705,8 @@ local function onLoadoutChanged() -- deferred so Weapon + Sight changing togethe
 end
 table.insert(conns, player:GetAttributeChangedSignal("Weapon"):Connect(onLoadoutChanged))
 table.insert(conns, player:GetAttributeChangedSignal("Sight"):Connect(onLoadoutChanged))
+-- v5.18: a new costume repaints the hands + sleeves
+table.insert(conns, player:GetAttributeChangedSignal("Skin"):Connect(function() if built then equip(WEAPON, built.SightId) end end))
 equip(player:GetAttribute("Weapon"), player:GetAttribute("Sight"))
 -- v5.14 DEEP POCKETS: the card is picked after this life started; load the extra magazine if the gun was not used yet
 table.insert(conns, player:GetAttributeChangedSignal("MatchCard"):Connect(function()
@@ -1130,3 +1141,6 @@ end
 humanoid.Died:Connect(cleanup)
 character.AncestryChanged:Connect(function(_, parent) if not parent then cleanup() end end)
 script.Destroying:Connect(function() cleanup() end)
+-- v5.18: the lobby TRAINING ZONE sets the attribute Stop on this script BEFORE it destroys it: a script that is being destroyed is stopped by Roblox
+-- before its own Destroying handler can run, which left a copy of the hands + gun floating in the air after you walked out of the zone
+script:GetAttributeChangedSignal("Stop"):Connect(function() if script:GetAttribute("Stop") then cleanup() end end)
