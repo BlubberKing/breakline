@@ -1,3 +1,6 @@
+-- GadgetClient (v5.18: FRAG COOKING - pressing the click pulls the pin (FUSE readout under the crosshair), release throws with the fuse that is left, right click
+--   while cooking = underhand toss; the held-gadget arm is a square block in your costume colours that starts at the back of the hand; placeables can go
+--   on any surface up to GM.REACH (60) studs away)
 -- GadgetClient (v5.16: a POSE puts the held gadget away and blocks gadgets until it ends)
 -- GadgetClient v2.1 (v4.9: STRONGER THROWS - fast flat throw with light in-flight gravity, released from the throwing hand, RIGHT CLICK = underhand toss;
 --   new first-person hold pose + keyframed throw: cock back, whip forward (item leaves the hand at the whip), follow-through, next one rises) (was v2: LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v4.0, reworked in v4.1.
@@ -24,6 +27,15 @@ local camera = workspace.CurrentCamera
 local Remotes = RS:WaitForChild("GadgetRemotes")
 local UseR, FxR = Remotes:WaitForChild("Use"), Remotes:WaitForChild("FX")
 local EquipR, PlaceR = Remotes:WaitForChild("Equip"), Remotes:WaitForChild("Place")
+local CookR = Remotes:WaitForChild("Cook", 5) -- v5.18: frag cooking (nil on an old GadgetServer = no cooking)
+local SkinsMod = RS:FindFirstChild("Skins") and require(RS.Skins) or nil -- v5.18: first-person arm in your costume colours
+local function armColors()
+	if SkinsMod and SkinsMod.ViewArms then
+		local ok, a = pcall(SkinsMod.ViewArms, player:GetAttribute("Skin"))
+		if ok then return a end
+	end
+	return nil
+end
 local Cfg = require(RS:WaitForChild("GadgetConfig"))
 local GM = require(RS:WaitForChild("GadgetModels"))
 local MatchState = RS:FindFirstChild("MatchState")
@@ -50,6 +62,7 @@ local traj = {} -- pooled line segments
 local landMark
 local lastValid = false
 local lastSpot, lastNormal
+local cooking -- v5.18: nil | { slot, id, at = server time the pin was pulled, fuse }
 
 local function menuOpen()
 	return player:GetAttribute("GunMenuOpen") == true or player:GetAttribute("LobbyMenuOpen") == true
@@ -106,7 +119,9 @@ local function simulate(id, look)
 	local pts, pos = { origin }, origin
 	local dt, t, bounces = 0.035, 0, 0
 	local final
-	while t < math.min(cfg.fuse or 2.5, 2.6) and #pts < 140 do
+	local fuseLeft = cfg.fuse or 2.5
+	if cooking and cooking.id == id then fuseLeft = math.max(cfg.minFuse or 0.15, cooking.fuse - (workspace:GetServerTimeNow() - cooking.at)) end
+	while t < math.min(fuseLeft, 2.6) and #pts < 140 do -- v5.18: a cooked frag's line ends where the fuse runs out
 		local nxt = pos + vel * dt + g * (0.5 * dt * dt)
 		local hit = workspace:Raycast(pos, nxt - pos, rayParams)
 		if hit then
@@ -254,7 +269,7 @@ local function updateGhost(dt)
 	local head = char and char:FindFirstChild("Head")
 	if not head then ghost.model.Parent = nil return end
 	local cf = camera.CFrame
-	local hit = workspace:Raycast(cf.Position, cf.LookVector * (pl.range + 6), rayParams)
+	local hit = workspace:Raycast(cf.Position, cf.LookVector * pl.range, rayParams) -- v5.18: placeable as far as the preview reaches (GM.REACH)
 	local pos, normal, valid
 	if hit then
 		pos, normal = hit.Position, hit.Normal
@@ -286,6 +301,7 @@ end
 ------------------------------------------------------------------ first-person hand model (gadget in your hand)
 local vm -- { folder, model, glove, sleeve, id, t0 }
 local SLEEVE, GLOVE = Color3.fromRGB(58, 70, 98), Color3.fromRGB(30, 33, 40)
+local ARM_T, CUFF_T = 0.38, 0.42 -- v5.18: square forearm (was a round cylinder that read as an oval) + a cuff where it meets the hand
 local function destroyVM()
 	if vm then vm.folder:Destroy() vm = nil end
 end
@@ -300,20 +316,24 @@ local function buildVM(id)
 	local model = GM.Build(id, nil, { anchored = true, scale = vmScale })
 	if not model then return end
 	model.Parent = folder
-	-- v4.8: a real gloved hand (fingers curl round the item, thumb on the side) built by GadgetModels, and a round sleeve
-	local glove = GM.BuildHand(folder)
+	-- v5.18: one block hand + a SQUARE block forearm and a cuff, all in your costume's colours (Skins.ViewArms); the arm starts at the back of the hand
+	local arms = armColors()
+	local glove = GM.BuildHand(folder, arms)
 	local sleeve = Instance.new("Part")
 	sleeve.Name = "Sleeve"
-	sleeve.Shape = Enum.PartType.Cylinder
-	sleeve.Color, sleeve.Material = SLEEVE, Enum.Material.SmoothPlastic
-	for _, pt in { sleeve } do
+	sleeve.Color, sleeve.Material = (arms and arms.sleeve) or SLEEVE, (arms and arms.mat) or Enum.Material.SmoothPlastic
+	local cuff = Instance.new("Part")
+	cuff.Name = "Cuff"
+	cuff.Color, cuff.Material = (arms and arms.cuff) or GLOVE, Enum.Material.SmoothPlastic
+	cuff.Size = Vector3.new(CUFF_T, CUFF_T, 0.12)
+	for _, pt in { sleeve, cuff } do
 		pt.Anchored = true
 		pt.CanCollide, pt.CanQuery, pt.CanTouch, pt.CastShadow = false, false, false, false
 		pt.TopSurface, pt.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
 		pt.Parent = folder
 	end
 	folder.Parent = camera
-	vm = { folder = folder, model = model, glove = glove, sleeve = sleeve, id = id, t0 = os.clock(), bob = 0, scale = vmScale }
+	vm = { folder = folder, model = model, glove = glove, sleeve = sleeve, cuff = cuff, id = id, t0 = os.clock(), bob = 0, scale = vmScale }
 end
 
 local function easeOut(a) return 1 - (1 - clamp(a, 0, 1)) ^ 3 end
@@ -394,11 +414,16 @@ local function updateVM(dt, now)
 	vm.model:PivotTo(cf * CFrame.new(0, place and 0.2 * vm.scale or 0, 0))
 	local gloveCF = cf * CFrame.new(-0.03, place and -0.1 or -0.2, 0.01)
 	vm.glove:PivotTo(gloveCF)
-	local a = gloveCF.Position
+	-- v5.18: the forearm starts at the BACK face of the hand block (the hand sits at the end of the arm, not on its side) and runs to a shoulder point
+	-- below + behind the camera; square block, no cylinder turn
+	local H = GM.HAND_SIZE or Vector3.new(0.3, 0.28, 0.36)
+	local a = (gloveCF * CFrame.new(0, -0.02, 0.04 + H.Z / 2)).Position
 	local b = camera.CFrame * CFrame.new(1.5, -2.4, 0.9).Position
 	local len = (b - a).Magnitude
-	vm.sleeve.Size = Vector3.new(len, 0.3, 0.3)
-	vm.sleeve.CFrame = CFrame.lookAt(a, b) * CFrame.new(0, 0, -len / 2) * CFrame.Angles(0, math.pi / 2, 0)
+	local armCF = CFrame.lookAt(a, b)
+	vm.sleeve.Size = Vector3.new(ARM_T, ARM_T, len)
+	vm.sleeve.CFrame = armCF * CFrame.new(0, 0, -len / 2)
+	if vm.cuff then vm.cuff.CFrame = armCF * CFrame.new(0, 0, -0.07) end
 end
 
 ------------------------------------------------------------------ equip / use
@@ -409,6 +434,7 @@ local onPrimaryDown, onPrimaryUp
 local function unequip(silent)
 	if not held then return end
 	held = nil
+	cooking = nil -- (the server drops a cooked frag at your feet)
 	aimingThrow, throwing = false, false
 	hideTraj()
 	destroyGhost()
@@ -423,6 +449,7 @@ local function equip(slot)
 	local cfg = id and id ~= "" and Cfg.Items[id]
 	if not cfg or slotCount(slot) <= 0 then return end
 	if held and held.slot == slot then unequip() return end -- same key again = put it away
+	cooking = nil
 	held = { slot = slot, id = id, cfg = cfg, since = os.clock() }
 	aimingThrow, throwing = false, false
 	hideTraj()
@@ -449,6 +476,7 @@ local function doThrow(under)
 	if slotCount(slot) <= 0 then return end
 	if workspace:GetServerTimeNow() < (player:GetAttribute("GadReady" .. slot) or 0) then return end
 	lastThrowAt = now
+	cooking = nil -- v5.18: the server keeps the cooked time (the fuse left goes with the throw)
 	throwing = true
 	throwKick = 1
 	throwUnder = under == true
@@ -475,11 +503,26 @@ local function doPlace()
 	sound("GadPlaceTry") -- v5.7: sound hook (the click when you press place; the placed sound itself plays from the object)
 end
 
+-- v5.18 COOK: can the pin be pulled right now? (same conditions as a throw)
+local function canCookNow()
+	if not held or not held.cfg.cook or not CookR or cooking or blockedNow() then return false end
+	local now = os.clock()
+	if now - held.since < Cfg.Throw.EquipTime or now - lastThrowAt < 0.3 then return false end
+	if slotCount(held.slot) <= 0 then return false end
+	return workspace:GetServerTimeNow() >= (player:GetAttribute("GadReady" .. held.slot) or 0)
+end
+local function startCook()
+	if not canCookNow() then return end
+	cooking = { slot = held.slot, id = held.id, at = workspace:GetServerTimeNow(), fuse = held.cfg.fuse }
+	CookR:FireServer(held.slot)
+	sound("GadCook") -- sound hook (pin pull; silent until added to the SoundBank)
+end
+
 onPrimaryDown = function()
 	if not held or blockedNow() then return end
 	if held.cfg.kind == "throw" then
 		aimingThrow, aimStart = true, os.clock()
-	else
+		startCook() -- v5.18: pressing pulls the pin (frag), the fuse runs from now
 		doPlace()
 	end
 end
@@ -507,7 +550,10 @@ UIS.InputBegan:Connect(function(input, gpe)
 	if gpe then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then onPrimaryDown()
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-		if aimingThrow then
+		if aimingThrow and cooking then
+			aimingThrow = false hideTraj()
+			doThrow(true) -- v5.18: the pin is out - right click while cooking = an underhand toss with the fuse that is left (it can not be cancelled any more)
+		elseif aimingThrow then
 			aimingThrow = false hideTraj() -- right click cancels a throw you are charging
 		elseif held and held.cfg.kind == "throw" then
 			doThrow(true) -- v4.9: right click (not charging) = short underhand toss
@@ -560,10 +606,66 @@ local function syncOthers()
 	for char in others do if not char.Parent then dropOther(char) end end
 end
 
+------------------------------------------------------------------ v5.18: the fuse readout while you cook a frag (under the crosshair)
+local cookGui = Instance.new("ScreenGui")
+cookGui.Name = "CookHUD"
+cookGui.IgnoreGuiInset = true
+cookGui.ResetOnSpawn = false
+cookGui.DisplayOrder = 6
+cookGui.Parent = player:WaitForChild("PlayerGui")
+local cookLbl = Instance.new("TextLabel")
+cookLbl.AnchorPoint = Vector2.new(0.5, 0)
+cookLbl.Position = UDim2.new(0.5, 0, 0.5, 46)
+cookLbl.Size = UDim2.fromOffset(220, 30)
+cookLbl.BackgroundTransparency = 1
+cookLbl.Font = Enum.Font.GothamBlack
+cookLbl.TextSize = 22
+cookLbl.TextColor3 = Color3.new(1, 1, 1)
+cookLbl.TextStrokeTransparency = 0.4
+cookLbl.Visible = false
+cookLbl.Parent = cookGui
+local cookBar = Instance.new("Frame")
+cookBar.AnchorPoint = Vector2.new(0.5, 0)
+cookBar.Position = UDim2.new(0.5, 0, 0.5, 78)
+cookBar.Size = UDim2.fromOffset(120, 4)
+cookBar.BackgroundColor3 = Color3.new(0, 0, 0)
+cookBar.BackgroundTransparency = 0.5
+cookBar.BorderSizePixel = 0
+cookBar.Visible = false
+cookBar.Parent = cookGui
+local cookFill = Instance.new("Frame")
+cookFill.Size = UDim2.fromScale(1, 1)
+cookFill.BackgroundColor3 = Color3.new(1, 1, 1)
+cookFill.BorderSizePixel = 0
+cookFill.Parent = cookBar
+local function updateCook()
+	if held and aimingThrow and held.cfg.cook and not cooking then startCook() end -- pressed while the grenade was still coming up: pull the pin once it can be thrown
+	local left
+	if cooking then
+		left = cooking.fuse - (workspace:GetServerTimeNow() - cooking.at)
+		if left <= 0 or not held then -- it went off in your hand (the server does the explosion)
+			cooking = nil
+			aimingThrow = false
+			hideTraj()
+			left = nil
+		end
+	end
+	local show = left ~= nil
+	cookLbl.Visible, cookBar.Visible = show, show
+	if show then
+		cookLbl.Text = string.format("FUSE  %.1f", math.max(0, left))
+		local danger = left < 1
+		cookLbl.TextColor3 = danger and Color3.fromRGB(255, 70, 70) or Color3.new(1, 1, 1)
+		cookFill.BackgroundColor3 = cookLbl.TextColor3
+		cookFill.Size = UDim2.fromScale(math.clamp(left / cooking.fuse, 0, 1), 1)
+	end
+end
+
 ------------------------------------------------------------------ frame loop
 local acc, sync = 0, 0
 RunService.RenderStepped:Connect(function(dt)
 	local now = os.clock()
+	updateCook()
 	acc += dt
 	if acc > 0.5 then acc = 0 refreshFilter() end
 	sync += dt
