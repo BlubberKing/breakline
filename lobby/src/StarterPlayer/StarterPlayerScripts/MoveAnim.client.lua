@@ -1,3 +1,5 @@
+-- MoveAnim v3.4 (v5.18: calmer run arms - the arms follow a slower, smoothed swing with a smaller arc while the legs keep the pace, longer strides at a sprint;
+--   new athletic JUMP pose - both knees gently tucked, slight lean, arms low and out for balance, no more fist thrown over the head) (both games, identical)
 -- MoveAnim v3.3 (v5.16: stands down while a character holds a POSE - PoseClient animates it) (v3.2 v4.9: new grenade-ready hold pose + a real 3-beat throw - cock, whip, follow-through - and an underhand toss, timed to the release) (was v3.1 v4.7: crouch + slide GROUND CLEARANCE - the lowest part of the body is measured every frame and the body is lifted until nothing sinks into the floor; slide wobble removed (no more shaking right hand / swaying body)) (v3: v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
 -- (v2 header:) MoveAnim v2 (v4.5: smooth distance-driven stride, big arm swing, new slide + dust) - was v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games. NEW in v4.1. Keep the two copies identical.
 -- Real animations for WALKING, RUNNING (sprint), CROUCHING (idle + crouch-walk) and SLIDING, for EVERY player (what you see on other people; in the
@@ -199,7 +201,7 @@ local function frame(st, dt)
 
 	-- stride clock follows DISTANCE travelled, so feet match the ground speed and never skate or stutter
 	local run = st.run
-	local radPerStud = 0.86 - 0.16 * run
+	local radPerStud = 0.86 - 0.3 * run -- v5.18: longer, calmer strides at sprint speed (0.70 -> 0.56 rad per stud): legs + arms cycle slower, the speed stays
 	local rate = hs * radPerStud * (1 - 0.3 * st.crouch)
 	st.phase = (st.phase + dt * rate) % (math.pi * 2)
 	local p = st.phase
@@ -230,46 +232,58 @@ local function frame(st, dt)
 		blend(st.waist, CF(-rad(1 + 2 * run), -twist * 0.65, -roll * 0.6), w)
 		blend(st.neck, CF(rad(2 + 10 * run) * st.moveAmt, twist * 0.9, roll * 0.5), w) -- head stays level + forward while the body works
 		if not hasGun then
-			-- big arm swing, opposite to the legs; elbows fold up hard on the forward swing
-			local sw = 0.55 + 0.85 * run
-			local rS, lS = -s1 * sw, -s2 * sw
-			local base = 0.3 + 0.55 * run
-			local fwdR, fwdL = pos2(-s1), pos2(-s2)
-			blend(st.rSh, CF(rS - 0.05, 0, rad(5 + 6 * run)), w)
-			blend(st.lSh, CF(lS - 0.05, 0, -rad(5 + 6 * run)), w)
-			blend(st.rEl, CF(base + (0.3 + 0.7 * run) * fwdR, 0, 0), w)
-			blend(st.lEl, CF(base + (0.3 + 0.7 * run) * fwdL, 0, 0), w)
+			-- arm swing, opposite to the legs. v5.18 (owner: "the hands move really really quick when running, slow the arm swinging, keep the character fast"):
+			-- the arms have their OWN swing clock: walking it stays locked to the legs, sprinting it runs 40 % slower than the stride (ARM_SLOW), with a
+			-- smaller arc and a calmer elbow pump, so the hands no longer flicker back and forth
+			local ARM_SLOW = 0.4
+			st.armPhase = st.armPhase or p
+			local d = (p - st.armPhase + math.pi) % (2 * math.pi) - math.pi
+			st.armPhase = (st.armPhase + dt * rate * (1 - ARM_SLOW * run) + d * math.min(1, dt * 6) * (1 - run)) % (2 * math.pi)
+			local a1, a2 = sin(st.armPhase), sin(st.armPhase + math.pi)
+			local sw = 0.5 + 0.45 * run
+			local rS, lS = -a1 * sw, -a2 * sw
+			local base = 0.35 + 0.45 * run
+			local fwdR, fwdL = pos2(-a1), pos2(-a2)
+			blend(st.rSh, CF(rS - 0.08 * run, 0, rad(5 + 5 * run)), w)
+			blend(st.lSh, CF(lS - 0.08 * run, 0, -rad(5 + 5 * run)), w)
+			blend(st.rEl, CF(base + (0.25 + 0.35 * run) * fwdR, 0, 0), w)
+			blend(st.lEl, CF(base + (0.25 + 0.35 * run) * fwdL, 0, 0), w)
 		end
 	end
 
-	------------------------------------------------ air: sprint-leap pose (no more going limp when you jump)
+	------------------------------------------------ air: v5.18 ATHLETIC JUMP (owner: the old one looked like Mario punching up at a block - one knee up high and one fist
+	-- thrown up over the head). Now: both legs gently tucked (the lead knee a little higher), a slight forward lean, arms low + a little out to the sides for
+	-- balance (no arm goes above the shoulder); on the way down the legs open up and reach for the ground and the arms drift out.
 	if st.airW > 0.01 then
 		local w = st.airW
 		local fwd = clamp(hs / 22, 0, 1)                                  -- how fast you are going
 		local vy = root.AssemblyLinearVelocity.Y
 		local fall = clamp(-vy / 45, 0, 1)                                -- coming down: legs reach for the ground
 		local rise = clamp(vy / 30, 0, 1)
+		local tuck = (1 - fall) * (0.55 + 0.45 * rise)                    -- how tucked the legs are (most at take-off / the top)
 		local rightLeads = st.lead == 1
 		local lHipJ, lKneeJ, lAnkJ = rightLeads and st.rHip or st.lHip, rightLeads and st.rKnee or st.lKnee, rightLeads and st.rAnk or st.lAnk
 		local tHipJ, tKneeJ, tAnkJ = rightLeads and st.lHip or st.rHip, rightLeads and st.lKnee or st.rKnee, rightLeads and st.lAnk or st.rAnk
-		blend(lHipJ, CF(0.3 + 0.85 * fwd + 0.15 * rise - 0.4 * fall, 0, 0), w)
-		blend(lKneeJ, CF(-(0.85 + 0.55 * fwd - 0.6 * fall), 0, 0), w)
-		blend(lAnkJ, CF(0.15 + 0.2 * fall, 0, 0), w)
-		blend(tHipJ, CF(-0.1 - 0.55 * fwd + 0.4 * fall, 0, 0), w)
-		blend(tKneeJ, CF(-(0.75 + 0.95 * fwd - 0.45 * fall), 0, 0), w)
-		blend(tAnkJ, CF(-0.35 * fwd, 0, 0), w)
-		-- torso leans into the jump, head stays level, a touch of tuck at the top
-		if st.rootJ then blend(st.rootJ, CF(-rad(3 + 11 * fwd) * (1 - 0.6 * fall), 0, 0), w) end
-		blend(st.waist, CF(-rad(2 + 2 * fwd), 0, 0), w)
-		blend(st.neck, CF(rad(4 + 12 * fwd), 0, 0), w)
+		-- lead leg: thigh a bit forward, knee bent; trail leg: thigh under / slightly back, knee bent more (heel up behind) - a calm, compact shape
+		blend(lHipJ, CF(0.25 + 0.35 * fwd * tuck + 0.25 * tuck - 0.2 * fall, 0, rad(2)), w)
+		blend(lKneeJ, CF(-(0.45 + 0.45 * tuck - 0.25 * fall), 0, 0), w)
+		blend(lAnkJ, CF(0.1 + 0.15 * fall, 0, 0), w)
+		blend(tHipJ, CF(-0.12 - 0.22 * fwd + 0.15 * tuck + 0.15 * fall, 0, -rad(2)), w)
+		blend(tKneeJ, CF(-(0.6 + 0.4 * tuck + 0.15 * fwd - 0.3 * fall), 0, 0), w)
+		blend(tAnkJ, CF(-0.15 - 0.15 * fwd, 0, 0), w)
+		-- torso: a slight lean into the jump, head level
+		if st.rootJ then blend(st.rootJ, CF(-rad(2 + 7 * fwd) * (1 - 0.5 * fall), 0, 0), w) end
+		blend(st.waist, CF(-rad(2 + 3 * fwd), 0, 0), w)
+		blend(st.neck, CF(rad(3 + 8 * fwd), 0, 0), w)
 		if not hasGun then
-			-- arms counter the legs like in a run: the arm opposite the lead leg drives forward, the other one back; both lift a bit on the way up
-			local fArm, bArm = 0.5 + 0.95 * fwd + 0.3 * rise, -0.2 - 0.8 * fwd
+			-- arms: low, slightly forward (the one opposite the lead leg a touch more), out to the sides for balance; they spread a bit more on the way down
+			local out = rad(14 + 12 * fall)
+			local fArm, bArm = 0.25 + 0.25 * fwd + 0.1 * rise, -0.1 - 0.2 * fwd
 			local rS, lS = rightLeads and bArm or fArm, rightLeads and fArm or bArm
-			blend(st.rSh, CF(rS, 0, rad(8)), w)
-			blend(st.lSh, CF(lS, 0, -rad(8)), w)
-			blend(st.rEl, CF(rightLeads and 0.5 or 0.95, 0, 0), w)
-			blend(st.lEl, CF(rightLeads and 0.95 or 0.5, 0, 0), w)
+			blend(st.rSh, CF(rS, 0, out), w)
+			blend(st.lSh, CF(lS, 0, -out), w)
+			blend(st.rEl, CF(0.45 + 0.15 * rise, 0, 0), w)
+			blend(st.lEl, CF(0.45 + 0.15 * rise, 0, 0), w)
 		end
 	end
 
