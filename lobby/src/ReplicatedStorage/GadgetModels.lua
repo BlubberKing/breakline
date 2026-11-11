@@ -1,3 +1,4 @@
+-- GadgetModels v2.2 (v5.18: one-block first-person hand in your costume colours; placeables go on floors / walls / ceilings / ramps, place range 60 = as far as the preview)
 -- GadgetModels v2 (ModuleScript in ReplicatedStorage) - BOTH games (Breakline + Lobby), keep the two copies IDENTICAL. NEW in v4.1, v4.8: full remodel.
 -- One place that knows what every gadget LOOKS like, so the same model is used for:
 --   * the thing you hold in first person / others see in your hand        GM.Build(id, accent, opts)
@@ -390,11 +391,13 @@ end
 -- ============================================================ the gloved first-person hand (v4.8)
 -- Origin = the middle of the palm, +Y up toward the item, -Z forward. The item is held about 0.2 studs above the palm: four fingers
 -- curl up the front of it, the thumb wraps the left side. Everything is anchored; move it with model:PivotTo(cf).
-function GM.BuildHand(parent)
-	-- v8 BLOCK HAND: palm slab, a finger block that curls up the front of the item (pad lines for the finger splits), thumb block, wrist block
+-- v5.18: GM.HAND_SIZE = the one hand block (studs, first person); GM.BuildHand(parent, arms) - arms = Skins.ViewArms(...) colours (optional)
+GM.HAND_SIZE = Vector3.new(0.3, 0.28, 0.36)
+function GM.BuildHand(parent, arms)
+	-- v5.18 ONE BLOCK (owner: one block for the whole hand, matching the costume): no finger block, no wrist block - just the hand, in your glove colour
 	local model = Instance.new("Model")
 	model.Name = "GadgetHand"
-	local GLOVE, PAD = rgb(30, 30, 34), rgb(56, 58, 64)
+	local GLOVE = (arms and arms.glove) or rgb(30, 30, 34)
 	local function part(name, size, cf, color)
 		local p = Instance.new("Part")
 		p.Name = name
@@ -406,10 +409,7 @@ function GM.BuildHand(parent)
 		p.TopSurface, p.BottomSurface = Enum.SurfaceType.Smooth, Enum.SurfaceType.Smooth
 		p.Parent = model
 	end
-	-- v9: plain block hand: one palm block, one block that curls up the front of the item, one wrist block. No finger lines, no thumb.
-	part("Palm", Vector3.new(0.34, 0.12, 0.34), CFrame.new(0, -0.01, 0.04), GLOVE)
-	part("Fingers", Vector3.new(0.34, 0.3, 0.12), CFrame.new(0, 0.12, -0.19), GLOVE)
-	part("Wrist", Vector3.new(0.3, 0.22, 0.2), CFrame.new(0, -0.03, 0.27), PAD)
+	part("Palm", GM.HAND_SIZE, CFrame.new(0, -0.02, 0.04), GLOVE)
 	model.WorldPivot = CFrame.identity
 	model.Parent = parent
 	return model
@@ -449,10 +449,13 @@ end
 -- ============================================================ placement rules (client preview AND server)
 -- range: how far from your head the spot may be | ground: needs a floor-ish surface (not a wall) | box: clearance box | foot: half-size of the
 -- footprint that must all rest on the surface (no hanging over an edge)
+-- v5.18 (owner): every placeable goes on floors, walls, ceilings AND ramps (ground = false for all), and you can place it as far out as the preview
+-- reaches (range 60 for all; the blue / red copy follows your view up to that distance, then hangs red at the end of it).
+GM.REACH = 60
 GM.Place = {
-	SENTRY = { range = 15, ground = true, box = Vector3.new(3.4, 3.2, 3.4), foot = 1.2 },
-	SHIELD = { range = 15, ground = true, box = Vector3.new(2.6, 2.2, 2.6), foot = 1.0 },
-	MINE   = { range = 13, ground = false, box = Vector3.new(1.5, 0.9, 1.5), foot = 0 },
+	SENTRY = { range = GM.REACH, ground = false, box = Vector3.new(3.4, 3.2, 3.4), foot = 1.2 },
+	SHIELD = { range = GM.REACH, ground = false, box = Vector3.new(2.6, 2.2, 2.6), foot = 1.0 },
+	MINE   = { range = GM.REACH, ground = false, box = Vector3.new(1.5, 0.9, 1.5), foot = 0 },
 }
 
 -- a CFrame sitting ON a surface (up = normal) turned to face `facing`
