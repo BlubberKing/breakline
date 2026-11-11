@@ -1,4 +1,4 @@
--- Skins v11.1 (v5.16: figures can hold a POSE - opts.pose / figure.pose, see the Poses module) (ModuleScript in ReplicatedStorage) - used by BOTH games (Lobby + Breakline). Keep the two copies identical.
+-- Skins v11.2 (v5.18: Skins.ViewArms(skinId) = glove / cuff / sleeve colours for the first-person arms) (v11.1 v5.16: figures can hold a POSE - opts.pose / figure.pose, see the Poses module) (ModuleScript in ReplicatedStorage) - used by BOTH games (Lobby + Breakline). Keep the two copies identical.
 -- v11 (Nov 7): ALL THREE OUTFITS REBUILT with real detail (OPERATOR ~160 parts, SOULBOUND ~154, CHASSIS ~118), new kit pieces (K.pouch / K.sidePouch, B.cyl for robots),
 --   colourway EDITIONS for the cosmetics shop (S.List entries with `base` + `price`; S.Price / S.IsFree), figure option opts.gunSkin (shows the equipped gun skin).
 -- v9 (Nov 4): slim glove hands, showcase gun hold across the chest (gun visible in menus), chamfered body blocks, OPERATOR + SOULBOUND polish, see GDD 5.4 + 5.4d SKIN QUALITY STANDARD.
@@ -122,6 +122,26 @@ S.Order, S.ById = {}, {}
 for _, s in S.List do
 	table.insert(S.Order, s.id)
 	S.ById[s.id] = s
+end
+
+-- v5.18: the colours of the FIRST-PERSON arms (GunModels viewmodel + the GadgetClient hand) so they match the costume you wear:
+--   Skins.ViewArms(skinId) -> { glove = Color3, cuff = Color3, sleeve = Color3, mat = Enum.Material }
+-- (the same keys the outfit uses for its glove, its cuff band and its forearm, colourways included)
+local VIEW_ARMS = {
+	OPERATOR = { glove = "Glove", cuff = "TopDark", sleeve = "Top", mat = Enum.Material.Fabric },
+	SOULBOUND = { glove = "Wrap", cuff = "TopDark", sleeve = "Top", mat = Enum.Material.Fabric },
+	CHASSIS = { glove = "Graphite", cuff = "Graphite", sleeve = "SteelDark", mat = Enum.Material.Metal },
+}
+function S.ViewArms(skinId)
+	local skin = S.ById[skinId] or S.ById[S.Default]
+	local map = VIEW_ARMS[skin.base or skin.id] or VIEW_ARMS.OPERATOR
+	local c = skin.colors
+	return {
+		glove = c[map.glove] or c.Glove or rgb(26, 26, 30),
+		cuff = c[map.cuff] or c.TopDark or rgb(34, 36, 42),
+		sleeve = c[map.sleeve] or c.Top or rgb(52, 55, 62),
+		mat = map.mat,
+	}
 end
 function S.Is(id) return type(id) == "string" and S.ById[id] ~= nil end
 function S.Price(id) local s = S.ById[id]; return s and s.price or nil end
