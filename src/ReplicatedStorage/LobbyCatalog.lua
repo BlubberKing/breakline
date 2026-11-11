@@ -64,7 +64,7 @@ K.Starter = {
 
 -- text for the shop's detail panel. Guns show their real stats (WeaponConfig), gadgets their numbers (GadgetConfig); movement uses MoveStats below.
 K.Desc = {
-	FRAG = "Cook-free frag. Press 2 / 3 / 4 to equip it, hold the click to see the throw line, release to throw. Explodes after a short fuse and hurts everything in the blast, boxes and shields too.",
+	FRAG = "Press 2 / 3 / 4 to equip it. Pressing the click pulls the pin and starts the fuse (cook it), hold to see the throw line, release to throw. Hold it too long and it goes off in your hand. Hurts everything in the blast, boxes and shields too.",
 	SMOKE = "Throw it to drop a thick smoke cloud that blocks sight for everybody. Use it to cross open ground or to cover a box carry.",
 	FLASH = "Blinds every enemy who is looking at the blast and deafens them for a moment. You are blinded too if you look at it.",
 	SENTRY = "Place a small turret that tracks and shoots enemies on its own. It has health and a short lifetime, and enemies can destroy it.",
