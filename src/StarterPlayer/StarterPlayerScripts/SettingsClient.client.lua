@@ -1,4 +1,5 @@
--- SettingsClient v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.17 (GDD 5.12).
+-- SettingsClient v1.1 (v5.18: the gear sits a little lower + further right (it sat right on top of the Roblox buttons) - ICON_X / ICON_DOWN; the panel is now a TALL
+--   single column (CONTROLS, then AUDIO + VISUALS, then INTERFACE stacked) instead of a wide three-column strip) (v1 LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.17 (GDD 5.12).
 -- SETTINGS: a round gear button in the top left, right next to the Roblox chat / microphone buttons (ICON_X below: move it left / right if it overlaps
 -- yours). Click it (or press ESC to close) = a long horizontal panel in the middle of the screen with three columns:
 --   CONTROLS          MOUSE SENSITIVITY (the sensitivity bar), AIM SENSITIVITY, FIELD OF VIEW
@@ -16,7 +17,8 @@ local HttpService = game:GetService("HttpService")
 local GuiService = game:GetService("GuiService")
 local Stats = game:GetService("Stats")
 
-local ICON_X = 176 -- left edge of the gear button in pixels (Roblox menu + chat + mic sit to its left). Make it bigger / smaller to move it.
+local ICON_X = 200    -- left edge of the gear button in pixels (Roblox menu + chat + mic sit to its left). Bigger = further right. (v5.18: 176 -> 200)
+local ICON_DOWN = 14  -- v5.18: pixels the gear sits BELOW the middle of the Roblox top bar. Bigger = lower. (0 = level with the Roblox buttons)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -57,7 +59,7 @@ local gui = new("ScreenGui", { Name = "SettingsGui", ResetOnSpawn = false, Ignor
 -- ======================================================================================
 local inset = GuiService:GetGuiInset().Y
 local BTN = math.clamp(inset - 10, 30, 44)
-local btn = new("TextButton", { Name = "GearButton", Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(ICON_X, math.floor((inset - BTN) / 2)), Size = UDim2.fromOffset(BTN, BTN),
+local btn = new("TextButton", { Name = "GearButton", Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(ICON_X, math.floor((inset - BTN) / 2) + ICON_DOWN), Size = UDim2.fromOffset(BTN, BTN),
 	BackgroundColor3 = rgb(18, 19, 24), BackgroundTransparency = 0.12, BorderSizePixel = 0, ZIndex = 5 }, gui)
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, btn)
 local btnStroke = new("UIStroke", { Color = rgb(150, 154, 166), Thickness = 1.5, Transparency = 0.2 }, btn)
@@ -87,7 +89,7 @@ do
 		tween(btnStroke, 0.14, { Color = rgb(150, 154, 166) })
 	end)
 end
-local statsLbl = new("TextLabel", { Name = "Stats", BackgroundTransparency = 1, Position = UDim2.fromOffset(ICON_X + BTN + 10, math.floor((inset - BTN) / 2)), Size = UDim2.fromOffset(230, BTN),
+local statsLbl = new("TextLabel", { Name = "Stats", BackgroundTransparency = 1, Position = UDim2.fromOffset(ICON_X + BTN + 10, math.floor((inset - BTN) / 2) + ICON_DOWN), Size = UDim2.fromOffset(230, BTN),
 	Text = "", TextSize = 15, FontFace = F.MB, TextColor3 = K.text, TextXAlignment = Enum.TextXAlignment.Left, Visible = false, ZIndex = 5 }, gui)
 new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.35 }, statsLbl)
 
@@ -106,7 +108,22 @@ end
 rescale()
 camera:GetPropertyChangedSignal("ViewportSize"):Connect(rescale)
 
-local PW, PH = 1560, 580
+-- v5.18: TALL single column (was a 1560 x 580 strip with three columns). The height follows the rows (computed below).
+local PW = 660
+local SEC_H, SLIDER_H, TOGGLE_H, SEC_GAP = 38, 96, 66, 12
+local PH = 116
+do
+	local cols = {}
+	for _, d in Settings.LIST do cols[d.col] = cols[d.col] or {} table.insert(cols[d.col], d) end
+	for c = 1, 3 do
+		if cols[c] then
+			PH += SEC_H
+			for _, d in cols[c] do PH += (d.kind == "slider") and SLIDER_H or TOGGLE_H end
+			PH += SEC_GAP
+		end
+	end
+	PH += 84
+end
 local panel = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 540), Size = UDim2.fromOffset(PW, PH), BackgroundColor3 = rgb(10, 11, 14),
 	BackgroundTransparency = 0.04, BorderSizePixel = 0, ZIndex = 22, Active = true }, canvas)
 new("UIStroke", { Color = K.line2, Thickness = 1.5, Transparency = 0.1 }, panel)
@@ -122,10 +139,21 @@ local savedLbl = label(panel, "", 14, PW - 152 - 36 - 220, 46, 200, 20, F.MB, K.
 new("Frame", { Position = UDim2.fromOffset(44, 100), Size = UDim2.fromOffset(PW - 88, 1), BackgroundColor3 = K.line, BorderSizePixel = 0, ZIndex = 23 }, panel)
 
 local COLS = { { name = "CONTROLS" }, { name = "AUDIO + VISUALS" }, { name = "INTERFACE" } }
-local COL_X, COL_W = { 44, 44 + 508, 44 + 1016 }, 464
-for i, c in COLS do
-	label(panel, c.name, 24, COL_X[i], 118, COL_W, 30, F.H, K.redHi)
-	if i > 1 then new("Frame", { Position = UDim2.fromOffset(COL_X[i] - 22, 118), Size = UDim2.fromOffset(1, 360), BackgroundColor3 = K.line, BorderSizePixel = 0, ZIndex = 23 }, panel) end
+local COL_W = PW - 88
+-- v5.18: the sections are stacked: each one gets its title row, then its settings, then a thin divider
+local secY = {} -- col -> y of its first row
+do
+	local y = 116
+	local byCol = {}
+	for _, d in Settings.LIST do byCol[d.col] = (byCol[d.col] or 0) + ((d.kind == "slider") and SLIDER_H or TOGGLE_H) end
+	for i, c in COLS do
+		if byCol[i] then
+			if i > 1 then new("Frame", { Position = UDim2.fromOffset(44, y - SEC_GAP / 2 - 1), Size = UDim2.fromOffset(COL_W, 1), BackgroundColor3 = K.line, BorderSizePixel = 0, ZIndex = 23 }, panel) end
+			label(panel, c.name, 22, 44, y, COL_W, 28, F.H, K.redHi)
+			secY[i] = y + SEC_H
+			y += SEC_H + byCol[i] + SEC_GAP
+		end
+	end
 end
 
 local widgets = {} -- key -> { refresh = fn }
@@ -160,9 +188,9 @@ end
 local rowY = {}
 for _, d in Settings.LIST do
 	local col = d.col
-	rowY[col] = rowY[col] or 168
+	rowY[col] = rowY[col] or secY[col] or 160
 	local y = rowY[col]
-	local x = COL_X[col]
+	local x = 44
 	label(panel, d.name, 22, x, y, COL_W - 130, 28, F.H, K.text)
 	label(panel, d.note or "", 12, x, y + 30, COL_W, 18, F.M, K.mute)
 	if d.kind == "slider" then
@@ -200,7 +228,7 @@ for _, d in Settings.LIST do
 			end
 		end)
 		widgets[d.key] = { refresh = show }
-		rowY[col] += 126
+		rowY[col] += SLIDER_H
 	else
 		local sw = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(x + COL_W - 86, y), Size = UDim2.fromOffset(86, 40), BackgroundColor3 = K.panel3, BorderSizePixel = 0, ZIndex = 25 }, panel)
 		new("UICorner", { CornerRadius = UDim.new(1, 0) }, sw)
@@ -222,7 +250,7 @@ for _, d in Settings.LIST do
 			changed()
 		end)
 		widgets[d.key] = { refresh = show }
-		rowY[col] += 96
+		rowY[col] += TOGGLE_H
 	end
 end
 
@@ -244,7 +272,7 @@ reset.MouseButton1Click:Connect(function()
 	for _, w in widgets do w.refresh() end
 	changed()
 end)
-label(panel, "Your settings are saved and follow you into every match.", 14, 372, PH - 64, 800, 20, F.B, K.mute)
+label(panel, "Saved + used in every match.", 13, 362, PH - 64, PW - 400, 20, F.B, K.mute)
 
 -- slider dragging (global, so the knob keeps following outside the track)
 UIS.InputChanged:Connect(function(input)
