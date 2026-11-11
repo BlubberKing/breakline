@@ -1,3 +1,5 @@
+-- Movement v3.4 (v5.18: a slide now GAINS speed on flat ground at its start (SLIDE_FLAT_GAIN), bigger start boost, longer flat slide, slide-jumps keep all the speed;
+--   jumps carry further (sprint-jump boost 3 -> 5, softer fall gravity 1.25 -> 1.1)) (Breakline + Lobby, identical)
 -- Movement v3.3 (v4.7: stands down while DASH is active, then carries the dash speed into the air) (v3.2: v4.6: jumps and falls NEVER bleed horizontal speed - no air drag, takeoff speed is kept until you steer or brake; softer fall gravity; lower crouch hip height to match the new half-kneel pose)
 -- (v3.1) (v3.8: stands down while AbilityMode is set): crouch (C / LeftCtrl / ButtonB while NOT sprinting), slide (same keys while sprinting),
 -- momentum slide (keeps speed on flat, gains downhill, loses a little uphill), slide-out blend, mantle,
@@ -15,31 +17,35 @@ local hum = char:WaitForChild("Humanoid")
 local root = char:WaitForChild("HumanoidRootPart")
 
 local CFG = {
-	-- slide (walk = 16, sprint = 30, both set in GunClient)
+	-- slide (walk = 17, sprint = 32, both set in GunClient / LobbyMotion)
 	SLIDE_MIN_SPEED     = 20,   -- need to be sprinting to slide; slower than this = crouch instead
-	SLIDE_BOOST         = 6,    -- extra speed when the slide starts
-	SLIDE_MAX_START     = 40,
+	SLIDE_BOOST         = 8,    -- extra speed when the slide starts (v5.18: 6 -> 8)
+	SLIDE_MAX_START     = 44,   -- (v5.18: 40 -> 44)
+	-- v5.18 (owner: "make slides actually gain momentum"): on flat ground a slide now SPEEDS UP for its first moments instead of only holding its speed
+	SLIDE_FLAT_GAIN     = 24,   -- studs/s gained per second on flat ground ...
+	SLIDE_GAIN_TIME     = 0.45, -- ... during the first this-many seconds of the slide
+	SLIDE_GAIN_CAP      = 50,   -- the flat gain never pushes you past this speed (downhill can still go to SLIDE_MAX_SPEED)
 	SLIDE_MAX_SPEED     = 58,   -- cap when gaining speed downhill
 	SLIDE_FLAT_TOL      = 0.06, -- slopes gentler than ~3.5 degrees count as flat
 	SLIDE_FLAT_FRICTION = 0,    -- studs/s^2 lost on flat ground (0 = keep all momentum)
 	SLIDE_DOWNHILL_ACCEL= 70,   -- gain per second on downhill (scaled by steepness)
 	SLIDE_UPHILL_BASE   = 4,    -- loss per second when sliding up any slope
 	SLIDE_UPHILL_ACCEL  = 28,   -- extra loss per second (scaled by steepness)
-	SLIDE_FLAT_TIME     = 0.95, -- slide length on flat/uphill; the timer pauses while going downhill
+	SLIDE_FLAT_TIME     = 1.1,  -- slide length on flat/uphill; the timer pauses while going downhill (v5.18: 0.95 -> 1.1)
 	SLIDE_MAX_TIME      = 4,    -- hard safety cap
 	SLIDE_END_SPEED     = 14,
 	SLIDE_STEER         = 1.8,  -- rad/s
 	SLIDE_COOLDOWN      = 0.5,
 	SLIDE_HIP_FACTOR    = 0.4,  -- lower = lower camera + hitbox
 	SLIDE_BUFFER        = 0.2,  -- press slide just before landing
-	SLIDE_JUMP_KEEP     = 0.95, -- momentum kept on slide-jump
+	SLIDE_JUMP_KEEP     = 1.0,  -- momentum kept on slide-jump (v5.18: 0.95 -> 1.0, a slide-jump keeps all of the slide's speed)
 	SLIDE_EXIT_BLEND    = 0.28, -- seconds to blend from slide speed back to run/crouch speed
 	CAM_SLIDE_DROP      = -0.35,
 
 	-- jump + air (Roblox default jump height is 7.2 = tall and floaty)
 	JUMP_HEIGHT         = 4.6,  -- studs; ledges higher than this are reached with mantle
-	FALL_GRAVITY_MULT   = 1.25, -- extra gravity on the way down only (was 1.4; softer so the arc does not look like it drops out from under you)
-	SPRINT_JUMP_BOOST   = 3,  -- extra forward speed when jumping at sprint speed
+	FALL_GRAVITY_MULT   = 1.1,  -- extra gravity on the way down only (v5.18: 1.25 -> 1.1 = a little more hang time, so jumps carry further)
+	SPRINT_JUMP_BOOST   = 5,    -- extra forward speed when jumping at sprint speed (v5.18: 3 -> 5, jumps carry you further)
 	SPRINT_JUMP_FROM    = 24,   -- need at least this speed for the boost
 	AIR_MAX_SPEED       = 62,
 	AIR_ACCEL           = 40,   -- speed gained per second when slower than your run speed
@@ -297,8 +303,11 @@ local function updateSlide(dt)
 	elseif slope < -CFG.SLIDE_FLAT_TOL then -- uphill: lose a little
 		slideSpeed -= (CFG.SLIDE_UPHILL_BASE - slope * CFG.SLIDE_UPHILL_ACCEL) * dt
 		slideFlatTime += dt
-	else -- flat: keep momentum
+	else -- flat: keep momentum (v5.18: and GAIN some at the start of the slide)
 		slideSpeed -= CFG.SLIDE_FLAT_FRICTION * dt
+		if slideTime <= CFG.SLIDE_GAIN_TIME and slideAir == 0 and slideSpeed < CFG.SLIDE_GAIN_CAP then
+			slideSpeed = math.min(slideSpeed + CFG.SLIDE_FLAT_GAIN * dt, CFG.SLIDE_GAIN_CAP)
+		end
 		slideFlatTime += dt
 	end
 	if slideAir > 0 then slideFlatTime += dt end
