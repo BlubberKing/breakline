@@ -1,4 +1,4 @@
--- PoseClient v1.1 (v5.17 FIXES: (1) the lobby cursor stayed stuck in the middle of the screen after a pose (the pose camera locked the mouse every frame and never gave it back; now the mouse is only locked while you really look around, it is freed whenever a menu opens and handed back (Default) the moment the pose ends); (2) in a match your body turned to face away from the camera, so you could never see your front (Roblox first-person auto-rotates the body to the camera; AutoRotate is now OFF while you pose); (3) poses did not show on the lobby character: the default Animator tracks are now stopped on a posing character and the joints are written in Stepped AND again at render time; (4) one line in the Output says what the pose found (motors / tracks) if something is still wrong) (v1 LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.16 (GDD 5.10).
+-- PoseClient v1.2 (v5.18 FIX: poses work on AnimationConstraint rigs too - StarterPlayer.AvatarJointUpgrade - the lobby printed "0 joints found" and froze) (v1.1 v5.17 FIXES: (1) the lobby cursor stayed stuck in the middle of the screen after a pose (the pose camera locked the mouse every frame and never gave it back; now the mouse is only locked while you really look around, it is freed whenever a menu opens and handed back (Default) the moment the pose ends); (2) in a match your body turned to face away from the camera, so you could never see your front (Roblox first-person auto-rotates the body to the camera; AutoRotate is now OFF while you pose); (3) poses did not show on the lobby character: the default Animator tracks are now stopped on a posing character and the joints are written in Stepped AND again at render time; (4) one line in the Output says what the pose found (motors / tracks) if something is still wrong) (v1 LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.16 (GDD 5.10).
 -- POSES (emotes):
 --   * T opens the POSE WHEEL (the 6 poses you put on it in the cosmetics locker, POSES tab). Move the mouse over a slot (it follows the direction of
 --     the mouse from the middle) and click, or press 1 - 6. T / ESC closes it. Breakline: only while the round is Playing.
@@ -42,7 +42,15 @@ local function motorsOf(char)
 	for key, spec in Poses.MOTORS do
 		local part = char:FindFirstChild(spec[1])
 		local mot = part and part:FindFirstChild(spec[2])
-		if mot and mot:IsA("Motor6D") then m[key] = mot end
+		-- v5.18 FIX (lobby emotes froze and did nothing, Output: "0 joints found"): with StarterPlayer.AvatarJointUpgrade ON the joints are
+		-- AnimationConstraints, not Motor6Ds. Both have the same Transform property, so both are used now (also searched anywhere in the rig).
+		if not (mot and (mot:IsA("Motor6D") or mot:IsA("AnimationConstraint"))) then
+			mot = nil
+			for _, d in char:GetDescendants() do
+				if d.Name == spec[2] and (d:IsA("Motor6D") or d:IsA("AnimationConstraint")) then mot = d break end
+			end
+		end
+		if mot then m[key] = mot end
 	end
 	return m
 end
