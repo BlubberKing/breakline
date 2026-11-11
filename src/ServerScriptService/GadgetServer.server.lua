@@ -1,3 +1,5 @@
+-- GadgetServer (v5.18: FRAG COOKING - remote GadgetRemotes.Cook pulls the pin, the fuse counts from the press, held too long = it goes off in your hand, putting it away
+--   drops it; SENTRY + BUBBLE SHIELD can be placed on floors / walls / ceilings / ramps (they orient to the surface); the PROX MINE trigger works on walls + ceilings)
 -- GadgetServer (v5.14: GLASS CANNON +15% gadget damage dealt, gadget kills start HOT BARREL - ReplicatedStorage.CardEffects)
 -- GadgetServer v2.1 (v4.9: throws are much stronger - ~115 studs/s, light gravity in flight via a VectorForce until the first bounce, 60% run-speed
 --   carry-over, released from the throwing hand AFTER the windup so it leaves the hand when the arm whips; Use(slot, dir, underhand) for the right-click toss) (was v2: Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0, reworked in v4.1:
@@ -34,6 +36,7 @@ local UseR = Instance.new("RemoteEvent"); UseR.Name = "Use"; UseR.Parent = remot
 local FxR = Instance.new("RemoteEvent"); FxR.Name = "FX"; FxR.Parent = remotes
 local EquipR = Instance.new("RemoteEvent"); EquipR.Name = "Equip"; EquipR.Parent = remotes
 local PlaceR = Instance.new("RemoteEvent"); PlaceR.Name = "Place"; PlaceR.Parent = remotes
+local CookR = Instance.new("RemoteEvent"); CookR.Name = "Cook"; CookR.Parent = remotes -- v5.18: frag cooking (the press pulls the pin)
 remotes.Parent = RS
 local DamageEvent = Instance.new("BindableEvent")
 DamageEvent.Name = "GadgetDamage"
@@ -173,12 +176,14 @@ DamageEvent.Event:Connect(function(part, dmg)
 	if typeof(part) == "Instance" and shields[part] and type(dmg) == "number" and dmg > 0 then damageShield(part, dmg) end
 end)
 
-local function buildShield(owner, pos)
+local function buildShield(owner, pos, normal)
+	-- v5.18: the projector can sit on a floor, a wall, a ceiling or a ramp: the dome grows out of the surface along its normal
+	normal = (typeof(normal) == "Vector3" and normal.Magnitude > 0.1) and normal.Unit or Vector3.yAxis
 	local cfg = Cfg.Items.SHIELD
 	local R = cfg.radius
 	local col = teamColor(owner)
 	local dome = mkPart({
-		Name = "BubbleShield", Shape = Enum.PartType.Ball, Size = Vector3.one * 1.5, Position = pos + Vector3.new(0, R * 0.45, 0),
+		Name = "BubbleShield", Shape = Enum.PartType.Ball, Size = Vector3.one * 1.5, Position = pos + normal * (R * 0.45),
 		Material = Enum.Material.ForceField, Color = col, Transparency = 0.35, CanQuery = true,
 	})
 	dome:SetAttribute("ShieldTeam", teamName(owner) or "none")
@@ -187,14 +192,14 @@ local function buildShield(owner, pos)
 	local ringD = 2 * R * math.sqrt(1 - 0.45 ^ 2)
 	local ring = mkPart({
 		Name = "ShieldRing", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, 1, 1), Material = Enum.Material.Neon, Color = col, Transparency = 0.25,
-		CFrame = CFrame.new(pos + Vector3.new(0, 0.12, 0)) * CFrame.Angles(0, 0, math.rad(90)),
+		CFrame = CFrame.lookAt(pos + normal * 0.12, pos + normal * 2) * CFrame.Angles(0, math.rad(90), 0), -- (a cylinder's axis is X: turned onto the surface normal)
 	})
 	-- v4.1: the real projector (GadgetModels) sits in the middle of the dome
 	local extra = {}
 	local desc = GM.Describe("SHIELD", col)
 	if desc then
 		for _, d in desc.Parts do
-			table.insert(extra, mkPart({ Name = "Projector", Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = CFrame.new(pos) * d.CF,
+			table.insert(extra, mkPart({ Name = "Projector", Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = cfFromUp(pos, normal) * d.CF,
 				Color = d.Color, Material = d.Material, Transparency = d.Transparency or 0 }))
 		end
 	end
@@ -318,13 +323,28 @@ local function buildSmoke(owner, pos)
 end
 
 ------------------------------------------------------------------ sentry
-local function buildSentry(owner, pos, facing)
+-- v5.18: a sentry can stand on a floor / ramp, hang from a ceiling or stick out of a wall. `up` = the surface normal; the head turns with `up` as its
+-- up direction. Floor + ceiling: it looks the way you faced and sweeps round the normal; wall: it looks straight out of the wall and sweeps left / right.
+local function sentryLook(aim, up)
+	if math.abs(aim:Dot(up)) > 0.985 then -- looking (almost) straight along `up`: pick any side as the head's up so lookAt never breaks
+		up = math.abs(up.Y) < 0.9 and Vector3.yAxis or Vector3.xAxis
+	end
+	return up
+end
+local function buildSentry(owner, pos, facing, normal)
+	normal = (typeof(normal) == "Vector3" and normal.Magnitude > 0.1) and normal.Unit or Vector3.yAxis
 	local cfg = Cfg.Items.SENTRY
 	local col = teamColor(owner)
 	local desc = GM.Describe("SENTRY", col)
 	local model = Instance.new("Model")
 	model.Name = "Sentry"
-	local headPos = pos + desc.HeadPivot
+	local baseCF = GM.CFOnSurface(pos, normal, facing)
+	local onWall = math.abs(normal.Y) < 0.5
+	local lookDir = onWall and normal or (facing - normal * facing:Dot(normal))
+	if lookDir.Magnitude < 0.05 then lookDir = baseCF.LookVector end
+	lookDir = lookDir.Unit
+	facing = lookDir
+	local headPos = baseCF * desc.HeadPivot
 	local pivotInv = CFrame.new(desc.HeadPivot):Inverse()
 	local parts, eye, base = {}, nil, nil -- parts = { part, offset from the turning head }
 	-- v4.8: the head has ~75 detail parts now. Only ONE of them (the head body) is moved every frame; all the others are welded to it, so the
@@ -332,7 +352,7 @@ local function buildSentry(owner, pos, facing)
 	local headRoot, headRootOff, headParts = nil, nil, {}
 	for _, d in desc.Parts do
 		local isHead = d.Group == "head"
-		local cf = isHead and (CFrame.lookAt(headPos, headPos + facing) * (pivotInv * d.CF)) or (CFrame.new(pos) * d.CF)
+		local cf = isHead and (CFrame.lookAt(headPos, headPos + facing, sentryLook(facing, normal)) * (pivotInv * d.CF)) or (baseCF * d.CF)
 		local p = mkPart({ Name = d.Name, Shape = d.Shape or Enum.PartType.Block, Size = d.Size, CFrame = cf, Color = d.Color, Material = d.Material,
 			CanQuery = true, CanCollide = d.Collide == true }, model)
 		if isHead then
@@ -368,7 +388,7 @@ local function buildSentry(owner, pos, facing)
 	FxR:FireAllClients("SentryDeploy", headPos) -- v5.7: sound hook
 	local rec = {
 		model = model, hum = hum, owner = owner, headPos = headPos, parts = parts, eye = eye, muzzleOff = muzzleOff, alive = true,
-		aim = facing, base = facing, scan = 0, nextFire = 0, nextScan = 0, armAt = os.clock() + cfg.armTime, dieAt = os.clock() + cfg.life, target = nil,
+		aim = facing, base = facing, up = normal, scanAxis = onWall and Vector3.yAxis or normal, scan = 0, nextFire = 0, nextScan = 0, armAt = os.clock() + cfg.armTime, dieAt = os.clock() + cfg.life, target = nil,
 	}
 	-- one sentry per player
 	for _, s in table.clone(sentries) do
@@ -403,7 +423,7 @@ local function sentryFindTarget(rec, cfg)
 				if d <= cfg.range and (not bestD or d < bestD) then
 					local h = char:FindFirstChild("Head")
 					local tp = (h and h.Position) or root.Position
-					local origin = head + Vector3.new(0, 0.2, 0)
+					local origin = head + (rec.up or Vector3.yAxis) * 0.2
 					if not workspace:Raycast(origin, tp - origin, params) and not smokeBlocks(origin, tp) then
 						best, bestD = { player = p, char = char, root = root, point = tp }, d
 					end
@@ -415,7 +435,7 @@ local function sentryFindTarget(rec, cfg)
 end
 
 local function sentryShoot(rec, cfg, target)
-	local muzzle = (CFrame.lookAt(rec.headPos, rec.headPos + rec.aim) * rec.muzzleOff).Position
+	local muzzle = (CFrame.lookAt(rec.headPos, rec.headPos + rec.aim, sentryLook(rec.aim, rec.up or Vector3.yAxis)) * rec.muzzleOff).Position
 	local dir = (target.point - muzzle)
 	if dir.Magnitude < 0.5 then return end
 	dir = dir.Unit
@@ -524,10 +544,10 @@ game:GetService("RunService").Heartbeat:Connect(function()
 		else
 			s.target = nil
 			s.scan += dt * 0.9
-			desired = (CFrame.Angles(0, math.sin(s.scan) * 1.2, 0) * CFrame.lookAt(Vector3.zero, s.base)).LookVector
+			desired = CFrame.fromAxisAngle(s.scanAxis or Vector3.yAxis, math.sin(s.scan) * 1.2):VectorToWorldSpace(s.base)
 		end
 		s.aim = s.aim:Lerp(desired, math.min(1, dt * cfg.turn)).Unit
-		local cf = CFrame.lookAt(s.headPos, s.headPos + s.aim)
+		local cf = CFrame.lookAt(s.headPos, s.headPos + s.aim, sentryLook(s.aim, s.up or Vector3.yAxis))
 		for _, e in s.parts do e[1].CFrame = cf * e[2] end
 		if s.target and armed and now >= s.nextFire and s.aim:Dot(desired) > 0.995 then
 			s.nextFire = math.max(s.nextFire, now - 0.05) + 60 / cfg.rpm
@@ -559,9 +579,11 @@ game:GetService("RunService").Heartbeat:Connect(function()
 				-- v5.11 FIX: the height test used to be `d.Y - m.pos.Y` (d is ALREADY relative to the mine), so on any map that is not
 				-- sitting at Y = 0 an enemy was never "close enough" and the mine never went off. Now: a sphere-ish check round the mine
 				-- (flat distance <= trigger, height -2 .. +6 studs over it) against every enemy player AND every enemy bot.
+				-- v5.18: measured in the mine's OWN frame (along its surface normal), so a mine on a wall or a ceiling works too
 				for _, t in enemyTargets(m.owner) do
 					local d = t.root.Position - m.pos
-					if Vector3.new(d.X, 0, d.Z).Magnitude <= mc.trigger and d.Y > -2 and d.Y < 6 then
+					local h = d:Dot(m.normal)
+					if (d - m.normal * h).Magnitude <= mc.trigger and h > -2 and h < 6 then
 						m.trig = now + mc.delay
 						FxR:FireAllClients("MineTrigger", m.pos) -- v5.7: sound hook
 						break
@@ -637,8 +659,11 @@ local function throwOrigin(from, dir)
 	return want
 end
 
-local function launch(player, slot, id, dir, under)
+-- v5.18: `cookAt` = server time the pin was pulled (frag cooking): the fuse left = cfg.fuse - time already cooked. `speedMult` (optional) = a drop.
+local function launch(player, slot, id, dir, under, cookAt, speedMult)
 	local cfg = Cfg.Items[id]
+	local fuse = cfg.fuse
+	if cookAt then fuse = math.max(cfg.minFuse or 0.15, cfg.fuse - (nowT() - cookAt)) end
 	local T = Cfg.Throw
 	local char, _, root = aliveChar(player)
 	if not char then return false end
@@ -664,7 +689,7 @@ local function launch(player, slot, id, dir, under)
 		GM.WeldTo(p, p)
 	end
 	pcall(function() p:SetNetworkOwner(nil) end)
-	local speed = cfg.speed * (under and (T.UnderMult or 0.45) or 1)
+	local speed = cfg.speed * (under and (T.UnderMult or 0.45) or 1) * (speedMult or 1)
 	p.AssemblyLinearVelocity = dir * speed + root.AssemblyLinearVelocity * (T.Inherit or 0.35)
 	-- v4.9: lighter gravity while it flies (a VectorForce cancels part of it), normal gravity from the first bounce on
 	if T.Gravity and T.Gravity < workspace.Gravity then
@@ -701,7 +726,7 @@ local function launch(player, slot, id, dir, under)
 	tr.Parent = p
 
 	if id == "FRAG" then
-		task.delay(cfg.fuse, function()
+		task.delay(fuse, function()
 			if not p.Parent then return end
 			local pos = p.Position
 			p:Destroy()
@@ -753,6 +778,60 @@ local function commit(player, s, slot, cfg, t, char)
 	char:SetAttribute("GadgetThrowAt", t) -- everybody's client plays the throwing arm (v4.9: windup -> whip -> follow-through, MoveAnim)
 end
 
+------------------------------------------------------------------ v5.18 COOKING (frag): the press pulls the pin, the fuse runs in your hand
+local cooks = {} -- player -> { slot, id, at = server time, token }
+local cookToken = 0
+local function useCharge(player, s, slot, cfg)
+	local t = nowT()
+	s.count[slot] -= 1
+	s.ready[slot] = t + cfg.cooldown
+	if not s.nextCharge[slot] then s.nextCharge[slot] = t + cfg.recharge end
+	publish(player, s, slot)
+end
+local function clearCook(player)
+	cooks[player] = nil
+	local ch = player.Character
+	if ch then ch:SetAttribute("GadgetCookAt", nil) end
+end
+CookR.OnServerEvent:Connect(function(player, slot)
+	if cooks[player] then return end
+	local s, id, cfg, char = prep(player, slot, "throw")
+	if not s or not cfg.cook then return end
+	cookToken += 1
+	local tok = cookToken
+	local at = nowT()
+	cooks[player] = { slot = slot, id = id, at = at, token = tok }
+	char:SetAttribute("GadgetCookAt", at) -- (GadgetClient shows the fuse ring; everybody could read it)
+	task.delay(cfg.fuse, function()
+		local c = cooks[player]
+		if not c or c.token ~= tok then return end
+		-- held for the whole fuse: it goes off in your hand
+		clearCook(player)
+		local s2 = state[player]
+		local ch = player.Character
+		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+		if not s2 or not ch or not hum or hum.Health <= 0 or s2.count[slot] <= 0 then return end
+		useCharge(player, s2, slot, cfg)
+		local hand = ch:FindFirstChild("RightHand") or ch:FindFirstChild("Head") or ch:FindFirstChild("HumanoidRootPart")
+		if hand then explode(hand.Position, player, cfg.radius, cfg.damage, cfg.boxDamage, cfg.selfMult, cfg.shieldDamage) end
+	end)
+end)
+-- putting a cooked frag away (1 / Q / another gadget) drops it at your feet - the pin is out, it still goes off
+local function dropCook(player)
+	local c = cooks[player]
+	if not c then return end
+	clearCook(player)
+	local s = state[player]
+	local cfg = Cfg.Items[c.id]
+	local ch = player.Character
+	if not s or not cfg or not ch or s.count[c.slot] <= 0 then return end
+	useCharge(player, s, c.slot, cfg)
+	local root = ch:FindFirstChild("HumanoidRootPart")
+	local fwd = root and Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z) or Vector3.zAxis
+	if fwd.Magnitude < 0.1 then fwd = Vector3.zAxis end
+	launch(player, c.slot, c.id, (fwd.Unit - Vector3.yAxis * 1.5).Unit, true, c.at, 0.12)
+end
+
 local lastUse, lastEquip = {}, {}
 UseR.OnServerEvent:Connect(function(player, slot, dir, under)
 	if typeof(dir) ~= "Vector3" then return end
@@ -768,10 +847,14 @@ UseR.OnServerEvent:Connect(function(player, slot, dir, under)
 	-- v4.9: the throw is committed now (GadgetThrowAt starts everybody's throwing arm), the item leaves the hand after the windup,
 	-- exactly when the arm whips forward
 	lastUse[player] = now
+	-- v5.18: a cooked frag keeps the time it already spent in your hand
+	local c = cooks[player]
+	local cookAt = (c and c.slot == slot and c.id == id) and c.at or nil
+	if c then clearCook(player) end
 	commit(player, s, slot, cfg, t, char)
 	char:SetAttribute("GadgetThrowUnder", under)
 	task.delay(T.Windup or 0.12, function()
-		if player.Parent then launch(player, slot, id, dir, under) end
+		if player.Parent then launch(player, slot, id, dir, under, cookAt) end
 	end)
 end)
 
@@ -782,6 +865,7 @@ EquipR.OnServerEvent:Connect(function(player, slot)
 	local now = os.clock()
 	if now - (lastEquip[player] or 0) < 0.12 then return end
 	lastEquip[player] = now
+	if cooks[player] and cooks[player].slot ~= slot then dropCook(player) end -- v5.18: put a cooked frag away = it drops at your feet
 	if slot == nil or slot == 0 then
 		char:SetAttribute("HeldGadget", nil)
 		char:SetAttribute("HeldSlot", nil)
@@ -834,8 +918,8 @@ PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing)
 	end
 	face = face.Unit
 	lastUse[player] = now
-	if id == "SENTRY" then buildSentry(player, pos, face)
-	elseif id == "SHIELD" then buildShield(player, pos)
+	if id == "SENTRY" then buildSentry(player, pos, face, normal)
+	elseif id == "SHIELD" then buildShield(player, pos, normal)
 	elseif id == "MINE" then buildMine(player, pos, normal) end
 	commit(player, s, slot, cfg, t, char)
 	FxR:FireAllClients("Placed", pos, normal, id)
@@ -862,12 +946,12 @@ end)
 
 local function onPlayer(p)
 	p:GetAttributeChangedSignal("LoadoutJson"):Connect(function() resetState(p) end)
-	p.CharacterAdded:Connect(function() resetState(p) end)
+	p.CharacterAdded:Connect(function() cooks[p] = nil resetState(p) end)
 	resetState(p)
 end
 Players.PlayerAdded:Connect(onPlayer)
 for _, p in Players:GetPlayers() do onPlayer(p) end
 Players.PlayerRemoving:Connect(function(p)
-	state[p], lastUse[p], lastEquip[p] = nil, nil, nil
+	state[p], lastUse[p], lastEquip[p], cooks[p] = nil, nil, nil, nil
 	for part, rec in shields do if rec.owner == p then breakShield(part, true) end end
 end)
