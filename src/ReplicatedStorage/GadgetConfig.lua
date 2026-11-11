@@ -1,3 +1,4 @@
+-- GadgetConfig (v5.18: FRAG can be COOKED - cook = true, fuse 3.0 counted from the press; minFuse)
 -- GadgetConfig (ModuleScript in ReplicatedStorage) - BREAKLINE place only. NEW in v4.0.
 -- Every number of the 6 gadgets lives here. Ids match LobbyCatalog (FRAG, SMOKE, FLASH, SENTRY, SHIELD, MINE).
 -- Used by GadgetServer (rules, damage) and GadgetClient (keys, effects).
@@ -17,8 +18,12 @@ G.Keys = { "Two", "Three", "Four" } -- loadout gadget slots 1 / 2 / 3 (matches t
 G.Items = {
 	FRAG = {
 		name = "Frag Grenade", kind = "throw", charges = 2, recharge = 24, cooldown = 0.9, speed = 118,
-		fuse = 2.3, radius = 17, damage = 120, selfMult = 0.5, boxDamage = 260, shieldDamage = 220,
+		fuse = 3.0, radius = 17, damage = 120, selfMult = 0.5, boxDamage = 260, shieldDamage = 220,
 		projSize = 0.95, projColor = Color3.fromRGB(70, 92, 62),
+		-- v5.18 COOK (owner): the fuse starts the moment you PRESS the click (the pin comes out), not when it leaves your hand. Release = throw
+		-- (same throw as before) with whatever fuse is left. Hold it for the whole `fuse` and it goes off in your hand (selfMult still applies).
+		-- fuse 2.3 -> 3.0 so a normal hold-aim-release throw still has about the old time in the air.
+		cook = true, minFuse = 0.15, -- the shortest fuse a thrown (cooked) frag can get
 	},
 	SMOKE = {
 		name = "Smoke Grenade", kind = "throw", charges = 2, recharge = 30, cooldown = 0.9, speed = 110,
