@@ -1,3 +1,4 @@
+-- GunModels v3.2 (v5.18: first-person hands = ONE block each, both the same size (HAND_SIZE); thicker forearms; BuildViewmodel takes an optional `arms` colour table so hands + sleeves match your costume)
 -- GunModels v3.1 (v5.10: optional gun SKIN - Describe / BuildViewmodel / BuildWorld take a GunSkins id as their last argument and repaint the gun with it) (v3: v4.8: FULL REMODEL - every gun rebuilt with real foregrips / hand rests, no glowing team parts, nothing floating, fingered gloves)
 -- GunModels: procedural gun models + attachable sights. Replaces GunModelBuilder + RifleModel.
 -- Gun space: origin = top of the pistol grip, -Z = downrange, +Y = up. Unit scale ~ one Roblox rifle.
@@ -997,6 +998,7 @@ local function gripSize(desc)
 	return V(0.2, 0.52, 0.32)
 end
 
+GunModels.HAND_SIZE = V(0.3, 0.3, 0.36) -- v5.18: the one hand block (gun units), the same for both hands
 -- GunModels.HandParts(desc, glove, pad) -> { right = { {Name, Size, CF, Color, Shape}, ... }, left = { ... } }, all in gun units.
 --   right: CF is in GUN space (the hand is built round the pistol grip)
 --   left : CF is relative to the palm point (gun axes), so the caller places it at Points.Palm (+ any animation)
@@ -1014,20 +1016,22 @@ function GunModels.HandParts(desc, glove, pad)
 	end
 
 	-- ---------- right hand (frame = pistol grip: X right, Y up the grip, Z back) ----------
-	-- v9 PLAIN BLOCK HANDS: one mitten block per hand (+ a wrist block). No finger blocks, no thumb, no pad lines, no web.
+	-- v5.18 ONE BLOCK PER HAND (owner: "the hand should be one block, not a block with a side block like a thumb" + "the right hand is REALLY large, make them
+	-- the same size"): the extra wrist blocks (which read as a thumb) are gone and BOTH hands are the very same block (GunModels.HAND_SIZE), so they
+	-- match. The right one is just big enough to close round the pistol grip.
 	local G = pts.Grip
-	put("right", "Hand", V(gw + 0.22, 0.4, gd + 0.12), G * CF(0, 0.0, 0.04), glove)
-	put("right", "WristR", V(0.22, 0.22, 0.22), G * CF(gw / 2 + 0.03, 0.0, 0.3), glove)
+	local H = GunModels.HAND_SIZE
+	put("right", "Hand", V(math.max(H.X, gw + 0.08), H.Y, math.max(H.Z, gd + 0.04)), G * CF(0, 0.0, 0.02), glove)
 
 	-- ---------- left hand (frame = palm point, gun axes) ----------
 	local L = CFrame.identity
-	put("left", "LHand", V(0.3, 0.28, 0.34), L * CF(-0.03, 0.0, 0.02), glove)
-	put("left", "LWrist", V(0.22, 0.22, 0.22), L * CF(-0.12, -0.02, 0.26), glove)
+	put("left", "LHand", H, L * CF(-0.03, 0.0, 0.02), glove)
+	local _ = { gw, gd, pad }
 	return out
 end
 
-local function addHands(model, groups, desc, scaled, s)
-	local hands = GunModels.HandParts(desc)
+local function addHands(model, groups, desc, scaled, s, glove)
+	local hands = GunModels.HandParts(desc, glove)
 	for side, list in pairs(hands) do
 		local group = side == "right" and "gun" or "left"
 		for _, h in ipairs(list) do
@@ -1041,7 +1045,8 @@ end
 
 -- First-person viewmodel: anchored parts moved every frame by GunClient with BulkMoveTo.
 -- Groups: gun, mag, cycle (bolt/pump/slide), left (left arm, relative to the palm point), flash. Each entry = { Part, Offset } in gun space (scaled).
-function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor, skinId)
+-- v5.18: optional `arms` = { glove = Color3, cuff = Color3, sleeve = Color3, mat = Material } (Skins.ViewArms) so the hands + sleeves match your costume
+function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor, skinId, arms)
 	local desc = GunModels.Describe(modelId, sightId, skinId)
 	local pts = desc.Points
 	local model = Instance.new("Model")
@@ -1097,8 +1102,10 @@ function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor, skinId)
 
 	local SLEEVE_LEN = 3.6
 	-- sleeves are rounded (cylinders). Cyl = true tells GunClient to add the 90 degree turn a cylinder needs when it re-aims the left sleeve each frame.
+	arms = arms or {}
+	local SLEEVE_C, CUFF_C, ARM_MAT = arms.sleeve or C.Sleeve, arms.cuff or C.Dark, arms.mat or SP
 	local function arm(group, size, offset, color, shape)
-		local p = makePart({ Name = "Arm", Size = size, Color = color, Material = SP, Shape = shape }, 1)
+		local p = makePart({ Name = "Arm", Size = size, Color = color, Material = (color == SLEEVE_C) and ARM_MAT or SP, Shape = shape }, 1)
 		p.Anchored = true
 		p.Parent = model
 		local entry = { Part = p, Offset = offset, Cyl = shape == CYL }
@@ -1110,13 +1117,15 @@ function GunModels.BuildViewmodel(modelId, sightId, s, reticleColor, skinId)
 	local turn = ang(0, 90, 0)
 	-- v8: sleeves + cuffs are BLOCKS again (long axis = Z, so no cylinder turn; Cyl = false tells GunClient not to add it)
 	local _ = turn
-	arm("gun", V(0.32, 0.32, 1.7), CFrame.lookAt(rHand + rDir * 1.0, rHand + rDir * 2), C.Sleeve)
-	arm("gun", V(0.36, 0.36, 0.16), CFrame.lookAt(rHand + rDir * 0.2, rHand + rDir), C.Dark)
+	-- v5.18: thicker forearms (0.32 -> 0.42; at a wide FOV like 110 the old ones looked like sticks) in your costume's colours
+	local ARM_T, CUFF_T = 0.42, 0.46
+	arm("gun", V(ARM_T, ARM_T, 1.7), CFrame.lookAt(rHand + rDir * 1.0, rHand + rDir * 2), SLEEVE_C)
+	arm("gun", V(CUFF_T, CUFF_T, 0.16), CFrame.lookAt(rHand + rDir * 0.2, rHand + rDir), CUFF_C)
 	local lDir = V(-0.6, -0.55, 1).Unit
-	arm("left", V(0.32, 0.32, SLEEVE_LEN), CFrame.lookAt(lDir * 1.1, lDir * 2), C.Sleeve).Dyn = "sleeve"
-	arm("left", V(0.36, 0.36, 0.16), CFrame.lookAt(lDir * 0.2, lDir), C.Dark).Dyn = "cuff"
+	arm("left", V(ARM_T, ARM_T, SLEEVE_LEN), CFrame.lookAt(lDir * 1.1, lDir * 2), SLEEVE_C).Dyn = "sleeve"
+	arm("left", V(CUFF_T, CUFF_T, 0.16), CFrame.lookAt(lDir * 0.2, lDir), CUFF_C).Dyn = "cuff"
 
-	addHands(model, groups, desc, scaled, s)
+	addHands(model, groups, desc, scaled, s, arms.glove)
 
 	return {
 		Model = model, Groups = groups, Points = scaled,
