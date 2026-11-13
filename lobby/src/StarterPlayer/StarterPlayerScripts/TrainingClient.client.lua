@@ -1,4 +1,6 @@
--- TrainingClient v1.1 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. (v1 NEW in v5.17, GDD 5.13 TRAINING ZONE)
+-- TrainingClient v1.2 (LocalScript in StarterPlayer > StarterPlayerScripts) - LOBBY place only. (v1 NEW in v5.17, GDD 5.13 TRAINING ZONE)
+-- v5.19 FIX: the CROSSHAIR stayed on screen after leaving the zone - every gun restart (entering, CHANGE CARD, respawn) left its own GunHUD; now every
+--   GunHUD is removed when the gun stops and when you leave (and GunClient destroys its own HUD when it cleans up).
 -- v5.18 FIXES + ADDITIONS (owner Nov 9):
 --   * walking OUT of the zone no longer leaves a copy of your hands + gun floating in the air: the gun script is told to clean up (attribute Stop) BEFORE it is
 --     destroyed (Roblox stops a script that is being destroyed before its own Destroying handler can run), and every leftover viewmodel in the camera is removed
@@ -517,6 +519,9 @@ local function stopGun()
 	for _, sc in list do pcall(function() sc:SetAttribute("Stop", true) end) end
 	if #list > 0 then RunService.RenderStepped:Wait() end
 	for _, sc in list do pcall(function() sc:Destroy() end) end
+	-- v5.19: a stopped gun's HUD never stays (the crosshair that was left on screen after leaving the zone)
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg then for _, g in pg:GetChildren() do if g.Name == "GunHUD" then g:Destroy() end end end
 	for _, c in camera:GetChildren() do
 		if c:IsA("Model") and (c.Name == "Viewmodel" or c.Name == "GadgetVM" or c:FindFirstChild("Owner")) then c:Destroy() end
 	end
@@ -574,9 +579,9 @@ local function leave()
 	local ch = myChar()
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
-		for _, n in { "GunHUD", "GadgetFX" } do
-			local g = pg:FindFirstChild(n)
-			if g then g:Destroy() end
+		-- v5.19: remove EVERY copy (each gun restart in the zone used to leave its own GunHUD behind = the crosshair that stayed on screen)
+		for _, g in pg:GetChildren() do
+			if g.Name == "GunHUD" or g.Name == "GadgetFX" then g:Destroy() end
 		end
 	end
 	gui.Enabled = false
@@ -599,6 +604,8 @@ local function leave()
 			if c:IsA("Model") and (c.Name == "Viewmodel" or c.Name == "GadgetVM" or c:FindFirstChild("Owner")) then c:Destroy() end
 		end
 		if player.CameraMode ~= Enum.CameraMode.Classic then player.CameraMode = Enum.CameraMode.Classic end
+		local pg2 = player:FindFirstChild("PlayerGui")
+		if pg2 then for _, g in pg2:GetChildren() do if g.Name == "GunHUD" then g:Destroy() end end end -- v5.19
 		UIS.MouseIconEnabled = true
 		UIS.MouseBehavior = Enum.MouseBehavior.Default
 		local c2 = myChar()
