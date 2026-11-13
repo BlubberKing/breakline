@@ -1,3 +1,4 @@
+-- GunClient (v5.19: destroys its own HUD (GunHUD: crosshair, scope) when it cleans up - the crosshair no longer stays after leaving the training zone)
 -- GunClient (v5.18: walk 17 / sprint 32; hands + sleeves in your costume colours (Skins.ViewArms); cleans up when the attribute Stop is set (training zone exit))
 -- GunClient (v5.17: SETTINGS - mouse + aim sensitivity, field of view and screen shake read from ReplicatedStorage.Settings) (v5.16: LOWER SENSITIVITY - MatchConfig.MOUSE_SENS multiplies your Roblox setting (0.55); NO SHOOTING before the match starts - clicks, R and
 --   aiming are ignored and no gun sound plays while loading / on the loadout screen / in the cutscene / card roll / 3-2-1 (MatchConfig.LOCKED_PHASES);
@@ -1137,6 +1138,9 @@ cleanup = function()
 	camera.FieldOfView = BASE_FOV
 	if windSound then windSound:Destroy() end
 	pcall(function() CAS:UnbindAction(SPRINT_ACTION) end)
+	-- v5.19: the gun HUD (crosshair, scope, speed lines) goes with this script. Before, every restart of the gun (entering the training zone,
+	-- picking a card, a respawn) made a NEW GunHUD and left the old one on screen - so a crosshair stayed after you left the training zone.
+	pcall(function() gui:Destroy() end)
 end
 humanoid.Died:Connect(cleanup)
 character.AncestryChanged:Connect(function(_, parent) if not parent then cleanup() end end)
