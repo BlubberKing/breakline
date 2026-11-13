@@ -1,4 +1,4 @@
--- LoadoutPicker (ModuleScript in ReplicatedStorage, named "LoadoutPicker") - BREAKLINE place only. NEW in v5.7. v5.9: bold dock captions, fitted pictures, CloseButton.
+-- LoadoutPicker (ModuleScript in ReplicatedStorage, named "LoadoutPicker") - BREAKLINE place only. NEW in v5.7. v5.9: bold dock captions, fitted pictures, CloseButton. v5.19: Dock spec.sq = tile size (the pre-game dock is bigger).
 -- The loadout dock + item pickers that are shared by the pre-game loadout screen (MatchFlow) and the dead-screen RESERVE screen (DeathScreen).
 --   LoadoutPicker.Dock(cv, spec)  -> dock     the row of tiles (MOVE, PRIMARY, 3 GADGETS, 3 RESERVE) with captions
 --        spec = { y = 962, z = 8, itemAt = function(kind, idx) -> id, onClick = function(tile), enabled = function(tile) -> bool (optional) }
@@ -85,7 +85,10 @@ local CAPTIONS = { "MOVEMENT", "WEAPON", "GADGETS", "RESERVE" }
 
 function P.Dock(cv, spec)
 	local Catalog = require(RS:WaitForChild("LobbyCatalog"))
-	local SQ, GAP, GGAP = 92, 12, 40
+	-- v5.19: spec.sq = tile size (default 92; the Breakline pre-game screen uses 118). Gaps, icons and text grow with it.
+	local SQ = spec.sq or 92
+	local U = SQ / 92
+	local GAP, GGAP = math.floor(12 * U + 0.5), math.floor(40 * U + 0.5)
 	local y = spec.y or 962
 	local z = spec.z or 8
 	local holder = new("Frame", { Name = "LoadoutDock", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = z, Active = false }, cv)
@@ -108,15 +111,15 @@ function P.Dock(cv, spec)
 		if it and it.kind == "weapon" then
 			P.GunPicture(t.content, it.id)
 		elseif it and it.kind == "move" then
-			local ic = UI.AbilityIcon(t.content, it.icon or it.id, 44, it.color)
+			local ic = UI.AbilityIcon(t.content, it.icon or it.id, math.floor(44 * U + 0.5), it.color)
 			ic.AnchorPoint, ic.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5)
 		elseif it and it.kind == "gadget" and GM then
 			local h = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, t.content) -- v5.9: the whole picture area (was the top 72 %: off centre)
 			GM.Picture(h, it.id)
 		elseif it then
-			label(t.content, it.glyph or "?", 30, F.H, it.color, { Size = UDim2.fromScale(1, 1) })
+			label(t.content, it.glyph or "?", math.floor(30 * U), F.H, it.color, { Size = UDim2.fromScale(1, 1) })
 		else
-			label(t.content, "+", 34, F.H, K.mute, { Size = UDim2.fromScale(1, 1) })
+			label(t.content, "+", math.floor(34 * U), F.H, K.mute, { Size = UDim2.fromScale(1, 1) })
 		end
 		t.name.Text = it and string.upper(it.name) or "EMPTY"
 		t.name.TextColor3 = it and K.text or K.mute
@@ -140,9 +143,9 @@ function P.Dock(cv, spec)
 		local btn = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(SQ, SQ),
 			BackgroundColor3 = K.panel, BackgroundTransparency = 0.05, BorderSizePixel = 0, ZIndex = z }, holder)
 		local stroke = new("UIStroke", { Color = K.line2, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, btn)
-		local content = new("Frame", { Position = UDim2.fromOffset(6, 16), Size = UDim2.new(1, -12, 1, -38), BackgroundTransparency = 1, ZIndex = z + 1 }, btn) -- v5.9: below the tag, above the name
-		local nameL = label(btn, "", 12, F.M, K.text, { Position = UDim2.new(0, 2, 1, -20), Size = UDim2.new(1, -4, 0, 18), ZIndex = z + 1 })
-		label(btn, d.tag, 12, F.MB, K.dim, { Position = UDim2.fromOffset(6, 3), Size = UDim2.fromOffset(40, 14), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = z + 2 })
+		local content = new("Frame", { Position = UDim2.fromOffset(6, math.floor(16 * U)), Size = UDim2.new(1, -12, 1, -math.floor(38 * U)), BackgroundTransparency = 1, ZIndex = z + 1 }, btn) -- v5.9: below the tag, above the name
+		local nameL = label(btn, "", math.floor(12 * U + 0.5), F.M, K.text, { Position = UDim2.new(0, 2, 1, -math.floor(20 * U)), Size = UDim2.new(1, -4, 0, math.floor(18 * U)), ZIndex = z + 1 })
+		label(btn, d.tag, math.floor(12 * U + 0.5), F.MB, K.dim, { Position = UDim2.fromOffset(6, 3), Size = UDim2.fromOffset(math.floor(40 * U), math.floor(14 * U)), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = z + 2 })
 		local t = { kind = d.kind, idx = d.idx, btn = btn, stroke = stroke, content = content, name = nameL }
 		table.insert(dock.tiles, t)
 		btn.MouseEnter:Connect(function() if enabled(t) then tween(btn, QUICK, { BackgroundColor3 = K.panel3 }) end end)
@@ -154,7 +157,7 @@ function P.Dock(cv, spec)
 	end
 	for g, r in groupX do
 		-- v5.9: bold + bright (was 13 px grey mono and hard to read)
-		local cap = label(holder, CAPTIONS[g], 18, F.H, K.text, { Position = UDim2.fromOffset(r[1], y - 30), Size = UDim2.fromOffset(r[2] - r[1], 24), ZIndex = z })
+		local cap = label(holder, CAPTIONS[g], math.floor(18 * U + 0.5), F.H, K.text, { Position = UDim2.fromOffset(r[1], y - math.floor(30 * U)), Size = UDim2.fromOffset(r[2] - r[1], math.floor(24 * U)), ZIndex = z })
 		new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.45 }, cap)
 	end
 	dock:Paint()
