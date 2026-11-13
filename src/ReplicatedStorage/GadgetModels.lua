@@ -450,8 +450,8 @@ end
 -- range: how far from your head the spot may be | ground: needs a floor-ish surface (not a wall) | box: clearance box | foot: half-size of the
 -- footprint that must all rest on the surface (no hanging over an edge)
 -- v5.18 (owner): every placeable goes on floors, walls, ceilings AND ramps (ground = false for all), and you can place it as far out as the preview
--- reaches (range 60 for all; the blue / red copy follows your view up to that distance, then hangs red at the end of it).
-GM.REACH = 60
+-- reaches; v5.19 (owner): that reach is 20 studs (was 60) - the blue / red copy follows your view up to 20 studs, then hangs red at the end of it.
+GM.REACH = 20
 GM.Place = {
 	SENTRY = { range = GM.REACH, ground = false, box = Vector3.new(3.4, 3.2, 3.4), foot = 1.2 },
 	SHIELD = { range = GM.REACH, ground = false, box = Vector3.new(2.6, 2.2, 2.6), foot = 1.0 },
