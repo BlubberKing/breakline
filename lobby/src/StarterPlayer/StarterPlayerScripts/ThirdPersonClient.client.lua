@@ -1,3 +1,6 @@
+-- (v5.18 FIX: "Unable to assign property C0. Property is read only" spammed the Output (hundreds of times) the moment you walked out of the training zone. The place has
+--   StarterPlayer.AvatarJointUpgrade ON, so the character joints are AnimationConstraints whose C0 is a READ-ONLY alias of Attachment0.CFrame. Every joint write now goes
+--   through setC0 (Motor6D -> C0, AnimationConstraint -> Attachment0.CFrame), and a broken rig is dropped once instead of erroring every frame.)
 -- (v5.17: first-person restore() always switches the gun IK off, so your own poses are no longer dragged to the gun grips)
 -- ThirdPersonClient (LOBBY copy, NEW in v5.17: the TRAINING ZONE) - the same file as Breakline's; it only does something for characters that carry a world gun (TPGun), i.e. players inside the zone.
 -- ThirdPersonClient (v5.16: a character that holds a POSE gets no gun IK and its world gun is hidden; your own gear shows while you pose)
@@ -39,8 +42,8 @@ local CFG = {
 	CARRY_TORSO_SHARE = 0.25,              -- how much of the aim pitch the torso takes while carrying
 	POUCH      = V3(-0.6, -0.05, -0.55), -- LowerTorso space
 	KICK_BACK = 0.14, KICK_UP_DEG = 4, KICK_TORSO_DEG = 1.2,
-	BOB = 0.03,
-	STRIDE_TWIST_DEG = 3.2, -- slim body: a little hip/shoulder counter-twist while running (reads as a longer stride)
+	BOB = 0,              -- v5.19: 0.03 -> 0 (owner: the body must stay stable while walking / running - no bob / tilt)
+	STRIDE_TWIST_DEG = 0, -- v5.19: 3.2 -> 0 (no hip / shoulder counter-twist every step)
 	TURN_LAG_DEG = 1.2, TURN_LAG_MAX = 7,
 	SLIDE_LEAN = 0,     -- v4.1: body leans BACK while sliding (positive = back); MoveAnim now poses the legs + arms, so this is a bit less than before (25)
 	CROUCH_LEAN = 0,
@@ -51,6 +54,26 @@ local Sfx
 pcall(function() Sfx = require(RS:WaitForChild("Sfx", 3)) end)
 
 local function approach(a, b, speed, dt) return a + (b - a) * (1 - exp(-speed * dt)) end
+-- v5.18: a body joint is a Motor6D (old rigs) OR an AnimationConstraint (StarterPlayer.AvatarJointUpgrade). An AnimationConstraint's C0 can only be READ
+-- (it mirrors Attachment0.CFrame), so writes go to the attachment instead. Never errors.
+local function getC0(j)
+	if j:IsA("AnimationConstraint") then
+		local a = j.Attachment0
+		return a and a.CFrame or CFrame.identity
+	end
+	return j.C0
+end
+local function setC0(j, cf)
+	if not j or not j.Parent then return end
+	if j:IsA("Motor6D") then
+		j.C0 = cf
+	elseif j:IsA("AnimationConstraint") then
+		local a = j.Attachment0
+		if a then a.CFrame = cf end
+	else
+		pcall(function() j.C0 = cf end)
+	end
+end
 local function poseCF(p, k)
 	return CFrame.new(p[1] * k) * CFrame.fromEulerAnglesYXZ(rad(p[2].X), rad(p[2].Y), rad(p[2].Z))
 end
@@ -99,7 +122,7 @@ local function setup(char)
 	local st = {
 		char = char, hum = hum, root = root, k = k, created = created,
 		waist = waist, neck = neck, rootJ = rootJ, joint = joint,
-		waistC0 = waist.C0, neckC0 = neck.C0, rootC0 = rootJ.C0,
+		waistC0 = getC0(waist), neckC0 = getC0(neck), rootC0 = getC0(rootJ),
 		rHip = (char:FindFirstChild("RightUpperLeg") or {}).RightHip,
 		lHip = (char:FindFirstChild("LeftUpperLeg") or {}).LeftHip,
 		rKnee = (char:FindFirstChild("RightLowerLeg") or {}).RightKnee,
@@ -147,10 +170,15 @@ local function getState(char)
 	local st = states[char]
 	if st then
 		if st.gun.Parent then return st end
-		-- gun was swapped: reset the joints, remove the old IK rig so it can be rebuilt on the new gun
-		st.waist.C0, st.neck.C0, st.rootJ.C0 = st.waistC0, st.neckC0, st.rootC0
-		for _, inst in ipairs(st.created) do inst:Destroy() end
+		-- gun was swapped / removed (leaving the training zone): reset the joints, remove the old IK rig so it can be rebuilt on the new gun.
+		-- v5.18: the state is ALWAYS cleared first, so a joint that cannot be written can never make this run (and error) again every frame
 		states[char] = nil
+		pcall(function()
+			setC0(st.waist, st.waistC0)
+			setC0(st.neck, st.neckC0)
+			setC0(st.rootJ, st.rootC0)
+		end)
+		for _, inst in ipairs(st.created) do pcall(function() inst:Destroy() end) end
 	end
 	if (retryAt[char] or 0) > os.clock() then return nil end
 	st = setup(char)
@@ -165,7 +193,9 @@ local function restore(st)
 	st.ikR.Weight, st.ikL.Weight = 0, 0
 	if st.restored then return end
 	st.restored = true
-	st.waist.C0, st.neck.C0, st.rootJ.C0 = st.waistC0, st.neckC0, st.rootC0
+	setC0(st.waist, st.waistC0)
+	setC0(st.neck, st.neckC0)
+	setC0(st.rootJ, st.rootC0)
 end
 
 ------------------------------------------------------------------ carrying a Wall Push box
@@ -223,7 +253,7 @@ local function update(st, dt, t, isLocal)
 	st.bobT += dt * hs * 0.55
 	local amp = clamp(hs / 16, 0, 1.5) * (1 - 0.75 * st.ads) * (1 - st.slide) * (onGround and 1 or 0.25)
 	local bob = CFrame.new(sin(st.bobT) * CFG.BOB * amp, -abs(cos(st.bobT)) * CFG.BOB * amp, 0)
-		* CFrame.Angles(0, 0, sin(st.bobT) * rad(2.5) * amp)
+		* CFrame.Angles(0, 0, sin(st.bobT) * rad(2.5) * amp * (CFG.BOB > 0 and 1 or 0)) -- v5.19: no side tilt either when BOB = 0
 
 	-- blended pose
 	local P = st.poses
@@ -239,11 +269,11 @@ local function update(st, dt, t, isLocal)
 	-- body
 	local torsoShare = CFG.TORSO_SHARE + (CFG.CARRY_TORSO_SHARE - CFG.TORSO_SHARE) * st.carry
 	local torsoPitch = st.pitch * torsoShare * (1 - 0.5 * lowered) + rad(CFG.KICK_TORSO_DEG * st.kick) * (1 - st.carry) - rad(12) * st.slide
-	st.waist.C0 = st.waistC0 * CFrame.Angles(torsoPitch, 0, 0)
-	st.neck.C0 = st.neckC0 * CFrame.Angles(st.pitch * CFG.NECK_SHARE - rad(14) * st.slide, 0, 0)
+	local waistCF = st.waistC0 * CFrame.Angles(torsoPitch, 0, 0)
+	setC0(st.neck, st.neckC0 * CFrame.Angles(st.pitch * CFG.NECK_SHARE - rad(14) * st.slide, 0, 0))
 	local twist = sin(st.bobT * 0.5) * rad(CFG.STRIDE_TWIST_DEG) * clamp(hs / 20, 0, 1) * (onGround and 1 or 0) * (1 - st.slide) * (1 - st.crouch * 0.6)
-	st.rootJ.C0 = st.rootC0 * CFrame.Angles(rad(CFG.SLIDE_LEAN) * st.slide - rad(CFG.CROUCH_LEAN) * st.crouch, twist, 0)
-	st.waist.C0 = st.waist.C0 * CFrame.Angles(0, -twist * 1.4, 0)
+	setC0(st.rootJ, st.rootC0 * CFrame.Angles(rad(CFG.SLIDE_LEAN) * st.slide - rad(CFG.CROUCH_LEAN) * st.crouch, twist, 0))
+	setC0(st.waist, waistCF * CFrame.Angles(0, -twist * 1.4, 0))
 
 	-- left hand: foregrip, or reload sequence (mag -> pouch -> mag -> foregrip)
 	local target, smooth = st.lFore, 0
