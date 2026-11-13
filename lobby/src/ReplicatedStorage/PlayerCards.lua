@@ -1,4 +1,4 @@
--- PlayerCards v4 (ModuleScript in ReplicatedStorage, named "PlayerCards") - LOBBY place only. NEW in v5.11, v2 in v5.12, v3 in v5.13, v4 in v5.16.
+-- PlayerCards v4.1 (ModuleScript in ReplicatedStorage, named "PlayerCards") - LOBBY place only. NEW in v5.11, v2 in v5.12, v3 in v5.13, v4 in v5.16. v4.1 (v5.19): LV n moved LEFT of the name so the name sits right next to the avatar; the title is bigger (24 px).
 -- v5.16: (1) a COSTUME in a showcase slot can hold a POSE (PlayerCard.poses = { 3 x pose id / "" }, set with ADD POSE in the cosmetics locker); the
 --   item pictures are cached per item + pose (PC.MakeView / ViewCam / BuildItem / ShowcaseItem take the pose as their last argument). (2) the TITLE
 --   the player wears (data.title, Titles module) sits above the name when PlayerCard.showTitle is on (default on). PC.Read returns poses + showTitle.
@@ -683,7 +683,7 @@ function PC.Render(parent, data, width)
 		end
 	end
 
-	-- INFO (always on top of the items): small avatar top right, NAME + LV left of it, @username under the name
+	-- INFO (always on top of the items): small avatar top right, NAME right next to it, LV n left of the name (v5.19), @username under the name
 	local AV = 85
 	local avX = W - 20 - AV
 	local av = new("ImageLabel", { Position = UDim2.fromOffset(avX, 20), Size = UDim2.fromOffset(AV, AV), BackgroundColor3 = K.panel3, BorderSizePixel = 0, ZIndex = 10,
@@ -694,23 +694,24 @@ function PC.Render(parent, data, width)
 	local Tm = RS:FindFirstChild("Titles") and require(RS.Titles) or nil
 	local tdef = Tm and data.title and Tm.ById[data.title] or nil
 	local showT = tdef ~= nil and cd.showTitle ~= false
-	local TY = showT and 16 or 0
+	-- v5.19 (owner): the title is bigger (17 -> 24 px)
+	local TY = showT and 22 or 0
 	if showT then
-		local tl = new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 12), Size = UDim2.fromOffset(460, 20),
-			Text = tdef.text, TextSize = 17, FontFace = F.H, TextColor3 = tdef.color, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 11 }, card)
-		new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.35 }, tl)
+		local tl = new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 10), Size = UDim2.fromOffset(500, 28),
+			Text = tdef.text, TextSize = 24, FontFace = F.H, TextColor3 = tdef.color, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 11 }, card)
+		new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.4, Transparency = 0.3 }, tl)
 	end
 	local row = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 20 + TY), Size = UDim2.fromOffset(460, 46), BackgroundTransparency = 1, ZIndex = 10 }, card)
 	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right,
 		VerticalAlignment = Enum.VerticalAlignment.Bottom, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 10) }, row)
 	local nm = new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 46), Text = string.upper(data.name or ""),
-		TextSize = 38, FontFace = F.H, TextColor3 = K.text, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11, LayoutOrder = 1 }, row)
+		TextSize = 38, FontFace = F.H, TextColor3 = K.text, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11, LayoutOrder = 2 }, row) -- v5.19: the NAME sits right next to the avatar (LayoutOrder 2 = the right end of the row)
 	new("UISizeConstraint", { MaxSize = Vector2.new(360, 46) }, nm)
 	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.5, Transparency = 0.35 }, nm)
 	-- v5.13: LV + the level number a bit bigger (LV 14 -> 17 px, number 20 -> 25 px)
 	local lvT = new("TextLabel", { BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 36), RichText = true,
 		Text = ('<font color="#9499A4" size="17">LV</font> %s'):format(data.level and tostring(data.level) or "-"),
-		TextSize = 25, FontFace = F.H, TextColor3 = K.text, ZIndex = 11, LayoutOrder = 2 }, row)
+		TextSize = 25, FontFace = F.H, TextColor3 = K.text, ZIndex = 11, LayoutOrder = 1 }, row) -- v5.19: LV n sits LEFT of the name (was right of it, between the name and the avatar)
 	new("UIStroke", { Color = Color3.new(0, 0, 0), Thickness = 1.2, Transparency = 0.4 }, lvT)
 	if data.username then
 		local un = new("TextLabel", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromOffset(right, 66 + TY), Size = UDim2.fromOffset(460, 20),
