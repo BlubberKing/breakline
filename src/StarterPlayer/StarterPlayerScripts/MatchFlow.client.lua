@@ -1,3 +1,7 @@
+-- MatchFlow v1.8 (v5.19: the 20 s loadout screen is BLACK SPACE with stars again (the blueprint is gone) + a bigger loadout dock; the WARP is a METEOR SOUL DROP:
+--   your soul starts in space right above your spawn, burns down through the atmosphere like a re-entering rocket (cel fire with ink outlines + an
+--   anime layer drawn 12x a second: speed lines, flame tongues, impact frames, DON!), slams into your spawn, then the normal respawn reveal builds your
+--   body and the camera wooshes into your head as the card roll starts. The watercolour painting + fly-through + white flash are gone.)
 -- MatchFlow v1.7 (v5.18: a gun is EITHER the primary OR in the reserve - picking it as the primary clears it from the reserve, the reserve picker no longer offers your primary)
 -- MatchFlow v1.6 (v5.17: the loadout background is a BLUEPRINT sheet (white lines on navy): SITE PLAN of the real map straight from above on the RIGHT, MISSION BRIEFING + OBJECTIVES on the LEFT, the middle left free for the squad)
 -- MatchFlow v1.5 (v5.16: the loadout screen background is a MISSION BRIEFING of the map you are about to play - a live night-vision / thermal recon picture
@@ -10,8 +14,8 @@
 --   win streak xN), instead of sitting on thrones) (v1.2 v5.9: watercolor fly-through warp, no run-in; loadout picker texts trimmed) (v1.1 v3.8: cursor fix on menu screens, XP bar on the summary) (LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only.
 -- Everything that happens around the match, driven by ReplicatedStorage.MatchState.Phase (set by MatchServer):
 --   Pregame   (20 s)  you + teammates stand side by side, loadout dock at the bottom (changeable), clock on top, big numbers flash for 5..1
---   Warp      (5.6 s) v5.9: the map's watercolor painting -> your soul lights up and flies INTO it, through a 3D watercolor version of
---                     the real map, down onto your spawn -> slow white flash -> you stand on your spawn (first person) -> card roll
+--   Warp      (6.0 s) v5.19: METEOR SOUL DROP - space above your spawn -> the soul burns down through the atmosphere -> impact on your spawn ->
+--                     the respawn reveal builds your body -> the camera wooshes into your head -> card roll
 --   Countdown (3 s)   3 - 2 - 1 on the real map, everybody frozen on their spawn
 --   Playing           "GO", then the normal match
 --   Result    (3.5 s) cutscene: the winning team celebrates in the middle of the screen
@@ -111,6 +115,7 @@ local function setOthersHidden(hide)
 	end
 end
 local warpActive = false
+local warpCleanup -- v5.19: set by the WARP section (meteor soul drop) - removes its effects and the local reveal flags
 local function restoreWorld()
 	pcall(function() RunService:UnbindFromRenderStep("BreaklineWarpCam") end) -- first-person run-in camera (v3.7)
 	if player:GetAttribute("CutsceneRun") ~= nil then player:SetAttribute("CutsceneRun", nil) end
@@ -120,6 +125,7 @@ local function restoreWorld()
 	end
 	for g in hiddenGuis do if g.Parent then g.Enabled = true end end
 	table.clear(hiddenGuis)
+	if warpCleanup then pcall(warpCleanup) end
 	if warpFolder then warpFolder:Destroy() warpFolder = nil end
 	if camera.CameraType == Enum.CameraType.Scriptable then
 		camera.CameraType = Enum.CameraType.Custom
@@ -227,412 +233,6 @@ local function popText(text, color, size, hold)
 end
 
 -- ======================================================================================
--- v5.16 PREGAME BACKGROUND = a MISSION BRIEFING of the map you are about to play (replaces the black starfield).
--- Owner: "change the background from a black spacey area into something more on brand, that represents the map they are loading into, but not the
--- same loading picture ... like a stealth mission: a stealth image of the map and stuff that looks like a briefing".
---   * RECON MAP (whole screen, behind the squad): the REAL map (the <name>_map folder MatchServer cloned, MatchState.MapFolder) redrawn live as a
---     night-vision / thermal recon picture seen from high above: floors dark, every block coloured by its HEIGHT (low = deep teal, tall = pale
---     green), bright outlines on the tallest blocks, a faint grid, both teams' insertion points (from the RedSpawn / BlueSpawn markers) as glowing
---     pillars + rings with a tag, and THE LINE across the middle (Breakline). The camera drifts slowly over it from your team's side.
---   * FEED LOOK on top: scan lines, a slow scan band, vignette, corner brackets, a blinking REC + RECON FEED // <map> + a running clock.
---   * MISSION BRIEFING panel (right): operation (map), mode, squad, area (real size in studs), insertion time + INTEL lines that are true game facts,
---     typed in line by line, with a red CLASSIFIED stamp. OBJECTIVES panel (left).
--- Nothing is uploaded: everything is built from the map that is already loaded + GUI frames.
--- ======================================================================================
-local INTEL = {
-	base = rgb(9, 32, 78), base2 = rgb(4, 18, 50), floor = rgb(14, 48, 110), fill = rgb(34, 92, 178), line = rgb(228, 243, 255), lineDim = rgb(120, 170, 228),
-	grid = rgb(74, 126, 206), ui = rgb(228, 243, 255), uiDim = rgb(132, 178, 232), accent = rgb(122, 216, 255), panel = rgb(7, 26, 66), hostile = rgb(255, 126, 104),
-	MAX_PARTS = 600, MAX_EDGED = 260,
-}
-local function intelMapFolder()
-	local n = State:GetAttribute("MapFolder")
-	if type(n) == "string" and n ~= "" then
-		local f = workspace:FindFirstChild(n)
-		if f then return f end
-	end
-	for _, ch in workspace:GetChildren() do
-		if (ch:IsA("Folder") or ch:IsA("Model")) and string.lower(ch.Name):match(string.lower(C.MAPS.Suffix) .. "$") then return ch end
-	end
-	return nil
-end
-local function boxCorners(cf, size)
-	local h, out = size / 2, {}
-	for _, sx in { -1, 1 } do for _, sy in { -1, 1 } do for _, sz in { -1, 1 } do
-		table.insert(out, cf:PointToWorldSpace(Vector3.new(sx * h.X, sy * h.Y, sz * h.Z)))
-	end end end
-	return out
-end
-
--- v5.17 BLUEPRINT: the loadout background is a blueprint sheet (white lines on navy). Layout rule (owner): everything important sits on the SIDES,
--- the middle (x 520 - 1400 of the 1920 canvas) is only faint paper + construction circles because the squad stands there.
---   LEFT  column (x 56 - 466): MISSION BRIEFING (operation, mode, squad, area, insertion + numbered NOTES) and OBJECTIVES.
---   RIGHT column (x 1400 - 1872): SITE PLAN = the real map seen straight from above as clean white outlines (drawn live from the loaded map folder),
---     both insertion points, THE LINE, dimension lines, a legend.
-local function buildBriefing(root, myCol)
-	local api = {}
-	local mode = tostring(State:GetAttribute("Mode") or "Breakline")
-	local oneV1 = string.lower(mode) == "1v1"
-	local myTeam = player.Team and player.Team.Name or ""
-	local feed = makeCanvas(root, 2)
-	local function fr(props, parent)
-		local f = new("Frame", { BorderSizePixel = 0, BackgroundColor3 = INTEL.ui, ZIndex = 2 }, parent or feed)
-		for k, v in props do f[k] = v end
-		return f
-	end
-
-	-- ---------- 1) paper: navy sheet, fine + major grid, a soft light behind the squad, construction circles, border + ticks ----------
-	local sheet = new("Frame", { Name = "BlueprintSheet", Size = UDim2.fromScale(1, 1), BackgroundColor3 = INTEL.base, BorderSizePixel = 0, ZIndex = 1 }, root)
-	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(rgb(13, 42, 96), rgb(5, 21, 56)) }, sheet)
-	for x = 0, 1920, 48 do
-		local major = x % 240 == 0
-		fr({ Position = UDim2.fromOffset(x, 0), Size = UDim2.fromOffset(major and 2 or 1, 1080), BackgroundColor3 = INTEL.grid, BackgroundTransparency = major and 0.78 or 0.9 })
-	end
-	for y = 0, 1080, 48 do
-		local major = y % 240 == 0
-		fr({ Position = UDim2.fromOffset(0, y), Size = UDim2.fromOffset(1920, major and 2 or 1), BackgroundColor3 = INTEL.grid, BackgroundTransparency = major and 0.78 or 0.9 })
-	end
-	-- soft light behind the squad so the dark outfits read on the navy paper
-	local glow = fr({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 560), Size = UDim2.fromOffset(1000, 900), BackgroundColor3 = rgb(70, 140, 230), BackgroundTransparency = 0.55 })
-	new("UICorner", { CornerRadius = UDim.new(1, 0) }, glow)
-	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(0.6, 0.86), NumberSequenceKeypoint.new(1, 1) }) }, glow)
-	-- construction circles + centre lines (only behind the squad)
-	for _, r in { 330, 470 } do
-		local c = fr({ AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 600), Size = UDim2.fromOffset(r * 2, r * 2), BackgroundTransparency = 1 })
-		new("UICorner", { CornerRadius = UDim.new(1, 0) }, c)
-		new("UIStroke", { Color = INTEL.lineDim, Thickness = 1.5, Transparency = 0.72 }, c)
-	end
-	fr({ Position = UDim2.fromOffset(960, 215), Size = UDim2.fromOffset(1, 700), BackgroundColor3 = INTEL.lineDim, BackgroundTransparency = 0.8 })
-	-- sheet border (double line) with tick marks round the edge
-	for _, inset in { 22, 32 } do
-		local b = fr({ Position = UDim2.fromOffset(inset, inset), Size = UDim2.fromOffset(1920 - inset * 2, 1080 - inset * 2), BackgroundTransparency = 1 })
-		new("UIStroke", { Color = INTEL.line, Thickness = inset == 22 and 2 or 1, Transparency = inset == 22 and 0.35 or 0.6 }, b)
-	end
-	for x = 80, 1840, 80 do
-		fr({ Position = UDim2.fromOffset(x, 22), Size = UDim2.fromOffset(1, 10), BackgroundTransparency = 0.45 })
-		fr({ Position = UDim2.fromOffset(x, 1048), Size = UDim2.fromOffset(1, 10), BackgroundTransparency = 0.45 })
-	end
-	for y = 80, 1000, 80 do
-		fr({ Position = UDim2.fromOffset(22, y), Size = UDim2.fromOffset(10, 1), BackgroundTransparency = 0.45 })
-		fr({ Position = UDim2.fromOffset(1888, y), Size = UDim2.fromOffset(10, 1), BackgroundTransparency = 0.45 })
-	end
-
-	-- ---------- 2) the SITE PLAN (right column): the real map from straight above, white outlines ----------
-	local BX, BY, BW, BH = 1400, 232, 472, 556 -- the whole plan box (canvas px)
-	local VX, VY, VW, VH = BX + 30, BY + 74, BW - 44, BH - 120 -- the viewport inside it (margins left for dimension lines)
-	local boxF = fr({ Position = UDim2.fromOffset(BX, BY), Size = UDim2.fromOffset(BW, BH), BackgroundColor3 = INTEL.panel, BackgroundTransparency = 0.12 })
-	new("UIStroke", { Color = INTEL.line, Thickness = 1.5, Transparency = 0.25 }, boxF)
-	fr({ Position = UDim2.fromOffset(BX, BY), Size = UDim2.fromOffset(BW, 4), BackgroundColor3 = INTEL.accent })
-	local mapName = string.upper(tostring(State:GetAttribute("MapName") or "UNKNOWN"))
-	label(feed, "SITE PLAN", 30, F.H, WHITE, { Position = UDim2.fromOffset(BX + 18, BY + 12), Size = UDim2.fromOffset(300, 34), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-	label(feed, "SHEET 01  //  " .. mapName, 14, F.MB, INTEL.accent, { Position = UDim2.fromOffset(BX + 18, BY + 46), Size = UDim2.fromOffset(BW - 36, 20), TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 3, TextTruncate = Enum.TextTruncate.AtEnd })
-
-	local vp = new("ViewportFrame", { Name = "SitePlan", Position = UDim2.fromOffset(VX, VY), Size = UDim2.fromOffset(VW, VH), BackgroundColor3 = INTEL.base2, BorderSizePixel = 0, ZIndex = 2,
-		Ambient = WHITE, LightColor = WHITE, LightDirection = Vector3.new(0, -1, 0) }, feed)
-	new("UIStroke", { Color = INTEL.lineDim, Thickness = 1, Transparency = 0.35 }, vp)
-	local cam = new("Camera", { FieldOfView = 20 }, vp)
-	vp.CurrentCamera = cam
-	local world = new("Model", { Name = "Plan" }, vp)
-	local folder = intelMapFolder()
-	local lo, hi
-	local mb = folder and folder:FindFirstChild("MapBounds", true) or workspace:FindFirstChild("MapBounds")
-	if mb and mb:IsA("BasePart") then
-		for _, c in boxCorners(mb.CFrame, mb.Size) do lo = lo and lo:Min(c) or c; hi = hi and hi:Max(c) or c end
-	end
-	local spawns = { Red = {}, Blue = {} }
-	local srcList = {}
-	if folder then
-		for _, d in folder:GetDescendants() do
-			if d:IsA("BasePart") then
-				local team = (d.Name == "RedSpawn" or (d.Parent and d.Parent.Name == "RedSpawn")) and "Red"
-					or ((d.Name == "BlueSpawn" or (d.Parent and d.Parent.Name == "BlueSpawn")) and "Blue") or nil
-				if team then
-					table.insert(spawns[team], d.Position)
-				elseif d.Transparency < 0.95 and d.Name ~= "MapBounds" then
-					table.insert(srcList, d)
-				end
-			end
-		end
-		table.sort(srcList, function(a, b) return a.Size.X * a.Size.Y * a.Size.Z > b.Size.X * b.Size.Y * b.Size.Z end)
-	end
-	if not lo then
-		for _, d in srcList do
-			if math.max(d.Size.X, d.Size.Z) < 600 then
-				for _, c in boxCorners(d.CFrame, d.Size) do lo = lo and lo:Min(c) or c; hi = hi and hi:Max(c) or c end
-			end
-		end
-	end
-	if not lo then lo, hi = Vector3.new(-70, 0, -130), Vector3.new(70, 30, 130) end
-	local center = (lo + hi) / 2
-	local floorY = lo.Y
-	local spanX, spanZ = hi.X - lo.X, hi.Z - lo.Z
-
-	-- which way is "up" on the plan: from YOUR insertion towards the enemy's, so you read the map from your own side
-	local mineAvg, theirAvg
-	local function avg(list) local s = Vector3.zero for _, q in list do s += q end return s / #list end
-	if #spawns.Red > 0 then spawns.RedAvg = avg(spawns.Red) end
-	if #spawns.Blue > 0 then spawns.BlueAvg = avg(spawns.Blue) end
-	mineAvg, theirAvg = spawns[myTeam .. "Avg"], spawns[(myTeam == "Red") and "BlueAvg" or "RedAvg"]
-	local upDir = Vector3.new(0, 0, -1)
-	if mineAvg and theirAvg then
-		local d = theirAvg - mineAvg
-		if Vector2.new(d.X, d.Z).Magnitude > 1 then upDir = Vector3.new(d.X, 0, d.Z).Unit end
-	elseif mineAvg then
-		local d = center - mineAvg
-		if Vector2.new(d.X, d.Z).Magnitude > 1 then upDir = Vector3.new(d.X, 0, d.Z).Unit end
-	end
-	local rightDir = upDir:Cross(Vector3.new(0, 1, 0)) -- screen right when looking straight down with `upDir` as screen up
-	-- extents along the plan's own axes (so a map turned by the camera still fits)
-	local function ext(vv) return math.abs(vv.X * rightDir.X + vv.Z * rightDir.Z), math.abs(vv.X * upDir.X + vv.Z * upDir.Z) end
-	local halfW, halfH = 0, 0
-	for _, c in { Vector3.new(lo.X, 0, lo.Z), Vector3.new(hi.X, 0, lo.Z), Vector3.new(lo.X, 0, hi.Z), Vector3.new(hi.X, 0, hi.Z) } do
-		local w, h = ext(c - Vector3.new(center.X, 0, center.Z))
-		halfW, halfH = math.max(halfW, w), math.max(halfH, h)
-	end
-	halfW, halfH = math.max(halfW, 20), math.max(halfH, 20)
-	local tanH = math.tan(math.rad(cam.FieldOfView / 2))
-	local aspect = VW / VH
-	local dist = math.max(halfH / tanH, halfW / (tanH * aspect)) * 1.1
-	cam.CFrame = CFrame.lookAt(Vector3.new(center.X, floorY + dist, center.Z), Vector3.new(center.X, floorY, center.Z), upDir)
-	local studPx = (2 * dist * tanH) / VH -- studs per screen pixel (line thickness)
-	local lineTh = math.max(0.25, studPx * 1.7)
-
-	-- the play area (a thin dashed-looking border) + a fine grid every ~10 % of the long side
-	do
-		local y = floorY + 0.2
-		local function seg(a, b, th, col, tr)
-			local len = (b - a).Magnitude
-			if len > 0.05 then part(world, Vector3.new(th, 0.1, len), CFrame.lookAt((a + b) / 2, b), col, true, tr) end
-		end
-		local corners = { Vector3.new(lo.X, y, lo.Z), Vector3.new(hi.X, y, lo.Z), Vector3.new(hi.X, y, hi.Z), Vector3.new(lo.X, y, hi.Z) }
-		for k = 1, 4 do seg(corners[k], corners[k % 4 + 1], lineTh * 1.3, INTEL.line, 0.05) end
-		local step = math.max(8, math.floor(math.max(spanX, spanZ) / 18))
-		local n = 0
-		for x = math.ceil(lo.X / step) * step, hi.X, step do
-			n += 1 if n > 40 then break end
-			seg(Vector3.new(x, y - 0.05, lo.Z), Vector3.new(x, y - 0.05, hi.Z), lineTh * 0.5, INTEL.grid, 0.55)
-		end
-		n = 0
-		for z = math.ceil(lo.Z / step) * step, hi.Z, step do
-			n += 1 if n > 40 then break end
-			seg(Vector3.new(lo.X, y - 0.05, z), Vector3.new(hi.X, y - 0.05, z), lineTh * 0.5, INTEL.grid, 0.55)
-		end
-	end
-	-- every solid block: a pale fill + a white outline of its footprint (flat floors are skipped, they would just fill the sheet)
-	do
-		local edged = 0
-		for i, src in srcList do
-			if i > INTEL.MAX_PARTS then break end
-			local sz, cf = src.Size, src.CFrame
-			local flat = sz.Y < 0.3 * math.min(sz.X, sz.Z) and math.abs(cf.UpVector.Y) > 0.9
-			if not flat and math.max(sz.X, sz.Z) < 900 then
-				local top = floorY
-				local corners = boxCorners(cf, sz)
-				for _, c in corners do top = math.max(top, c.Y) end
-				local topY = floorY + 0.4 + math.min(top - floorY, 40) * 0.01
-				if src:IsA("Part") and src.Shape == Enum.PartType.Block then
-					local h = sz / 2
-					local tc = { cf:PointToWorldSpace(Vector3.new(-h.X, 0, -h.Z)), cf:PointToWorldSpace(Vector3.new(h.X, 0, -h.Z)),
-						cf:PointToWorldSpace(Vector3.new(h.X, 0, h.Z)), cf:PointToWorldSpace(Vector3.new(-h.X, 0, h.Z)) }
-					-- fill: a flat slab the footprint's size at the block's height
-					local fill = part(world, Vector3.new(sz.X, 0.1, sz.Z), CFrame.new(cf.Position.X, topY - 0.05, cf.Position.Z) * CFrame.Angles(0, math.atan2(-cf.LookVector.X, -cf.LookVector.Z), 0), INTEL.fill, true, 0.55)
-					fill.Name = "Fill"
-					if edged < INTEL.MAX_EDGED and sz.Y > 1.5 then
-						edged += 1
-						for k = 1, 4 do
-							local a, b = tc[k], tc[k % 4 + 1]
-							a, b = Vector3.new(a.X, topY, a.Z), Vector3.new(b.X, topY, b.Z)
-							local len = (b - a).Magnitude
-							if len > 0.05 then part(world, Vector3.new(lineTh, 0.1, len + lineTh), CFrame.lookAt((a + b) / 2, b), INTEL.line, true, 0.05) end
-						end
-					end
-				else
-					local ok, c = pcall(function() return src:Clone() end)
-					if ok and c then
-						for _, ch in c:GetChildren() do ch:Destroy() end
-						c.Anchored, c.CanCollide, c.CanQuery, c.CanTouch, c.CastShadow = true, false, false, false, false
-						if c:IsA("UnionOperation") then c.UsePartColor = true end
-						if c:IsA("MeshPart") then pcall(function() c.TextureID = "" end) end
-						c.Material, c.Color, c.Transparency = Enum.Material.Neon, INTEL.fill, 0.45
-						c.Parent = world
-					end
-				end
-			end
-		end
-	end
-	-- THE LINE across the middle (Breakline): a dashed white line, perpendicular to the way you face
-	if not oneV1 then
-		local y = floorY + 0.9
-		local dash = math.max(3, halfW * 2 / 28)
-		local x = -halfW
-		while x < halfW do
-			local len = math.min(dash, halfW - x)
-			local mid = Vector3.new(center.X, y, center.Z) + rightDir * (x + len / 2)
-			part(world, Vector3.new(lineTh * 2.2, 0.1, len), CFrame.lookAt(mid, mid + rightDir), INTEL.accent, true, 0)
-			x += dash * 1.8
-		end
-	end
-	-- insertion points: a ring + a cross per team
-	local insert = {}
-	for _, team in { "Red", "Blue" } do
-		local s = spawns[team .. "Avg"]
-		if s then
-			local own = team == myTeam
-			local col = own and INTEL.accent or INTEL.hostile
-			local rr = math.max(4, halfW * 0.11)
-			local up = CFrame.Angles(0, 0, math.rad(90))
-			part(world, Vector3.new(0.1, rr * 2, rr * 2), CFrame.new(s.X, floorY + 1.2, s.Z) * up, col, true, 0.1, Enum.PartType.Cylinder)
-			part(world, Vector3.new(0.12, rr * 2 - lineTh * 3.2, rr * 2 - lineTh * 3.2), CFrame.new(s.X, floorY + 1.3, s.Z) * up, INTEL.base2, true, 0, Enum.PartType.Cylinder)
-			part(world, Vector3.new(lineTh * 1.6, 0.1, rr * 1.6), CFrame.new(s.X, floorY + 1.5, s.Z), col, true, 0)
-			part(world, Vector3.new(rr * 1.6, 0.1, lineTh * 1.6), CFrame.new(s.X, floorY + 1.5, s.Z), col, true, 0)
-			insert[team] = { pos = Vector3.new(s.X, floorY + 1.5, s.Z), col = col, own = own }
-		end
-	end
-
-	-- dimension lines in the plan box margins (GUI): width under the plan, length on its left
-	do
-		local dy = VY + VH + 12
-		fr({ Position = UDim2.fromOffset(VX, dy), Size = UDim2.fromOffset(VW, 1), BackgroundColor3 = INTEL.accent, BackgroundTransparency = 0.2 })
-		for _, x in { VX, VX + VW - 1 } do fr({ Position = UDim2.fromOffset(x, dy - 6), Size = UDim2.fromOffset(1, 13), BackgroundColor3 = INTEL.accent }) end
-		local wLabel = label(feed, ("%d  STUDS"):format(math.floor(halfW * 2 + 0.5)), 14, F.MB, INTEL.accent, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(VX + VW / 2, dy + 5),
-			Size = UDim2.fromOffset(200, 18), BackgroundTransparency = 1, ZIndex = 3 })
-		local dx = VX - 12
-		fr({ Position = UDim2.fromOffset(dx, VY), Size = UDim2.fromOffset(1, VH), BackgroundColor3 = INTEL.accent, BackgroundTransparency = 0.2 })
-		for _, y in { VY, VY + VH - 1 } do fr({ Position = UDim2.fromOffset(dx - 6, y), Size = UDim2.fromOffset(13, 1), BackgroundColor3 = INTEL.accent }) end
-		label(feed, ("%d  STUDS"):format(math.floor(halfH * 2 + 0.5)), 14, F.MB, INTEL.accent, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(dx - 14, VY + VH / 2),
-			Size = UDim2.fromOffset(200, 18), Rotation = -90, ZIndex = 3 })
-		local _ = wLabel
-	end
-	-- legend under the plan
-	do
-		local ly = BY + BH + 14
-		local function legend(y, text, col, kind)
-			if kind == "ring" then
-				local r = fr({ Position = UDim2.fromOffset(BX + 14, y + 3), Size = UDim2.fromOffset(16, 16), BackgroundTransparency = 1 })
-				new("UICorner", { CornerRadius = UDim.new(1, 0) }, r)
-				new("UIStroke", { Color = col, Thickness = 2 }, r)
-			else
-				for k = 0, 2 do fr({ Position = UDim2.fromOffset(BX + 12 + k * 8, y + 10), Size = UDim2.fromOffset(5, 3), BackgroundColor3 = col }) end
-			end
-			label(feed, text, 15, F.MB, INTEL.ui, { Position = UDim2.fromOffset(BX + 44, y), Size = UDim2.fromOffset(BW - 60, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-		end
-		legend(ly, "YOUR INSERTION", INTEL.accent, "ring")
-		legend(ly + 26, "HOSTILE INSERTION", INTEL.hostile, "ring")
-		if not oneV1 then legend(ly + 52, "THE LINE", INTEL.accent, "dash") end
-	end
-	-- tags for the insertion points (follow the plan)
-	local tags = {}
-	for team, ins in insert do
-		local t = label(feed, ins.own and "YOU" or "HOSTILE", 15, F.H, ins.col, { AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(120, 20), ZIndex = 4 })
-		new("UIStroke", { Color = INTEL.base2, Thickness = 2.5, Transparency = 0.1 }, t)
-		table.insert(tags, { label = t, pos = ins.pos })
-		local _ = team
-	end
-	-- a slow scan line across the plan
-	local scan = fr({ Position = UDim2.fromOffset(VX, VY), Size = UDim2.fromOffset(VW, 3), BackgroundColor3 = INTEL.accent, BackgroundTransparency = 0.55, ZIndex = 3 })
-	new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1) }) }, scan)
-
-	-- ---------- 3) MISSION BRIEFING + OBJECTIVES (left column) ----------
-	local LX, LW = 56, 410
-	local plate = new("Frame", { Position = UDim2.fromOffset(LX, 232), Size = UDim2.fromOffset(LW, 420), BackgroundColor3 = INTEL.panel, BackgroundTransparency = 0.12,
-		BorderSizePixel = 0, ZIndex = 2 }, feed)
-	new("UIStroke", { Color = INTEL.line, Thickness = 1.5, Transparency = 0.25 }, plate)
-	fr({ Size = UDim2.fromOffset(LW, 4), BackgroundColor3 = INTEL.accent }, plate)
-	label(plate, "MISSION BRIEFING", 30, F.H, WHITE, { Position = UDim2.fromOffset(18, 14), Size = UDim2.fromOffset(300, 36), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-	local stampL = label(plate, "REV A", 16, F.H, INTEL.accent, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(LW - 54, 32), Size = UDim2.fromOffset(70, 26), ZIndex = 4 })
-	new("UIStroke", { Color = INTEL.accent, Thickness = 2, Transparency = 0.15, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, stampL)
-	fr({ Position = UDim2.fromOffset(18, 60), Size = UDim2.fromOffset(LW - 36, 1), BackgroundTransparency = 0.55 }, plate)
-	local squadN = 0
-	for _, p in Players:GetPlayers() do if p.Team == player.Team then squadN += 1 end end
-	local timeStr = os.date("%H:%M")
-	local rows = {
-		{ "OPERATION", mapName },
-		{ "MODE", oneV1 and "1V1  //  DUEL" or "BREAKLINE  //  3V3" },
-		{ "SQUAD", (myTeam ~= "" and string.upper(myTeam) or "-") .. (oneV1 and "" or ("  //  " .. squadN .. (squadN == 1 and " OPERATOR" or " OPERATORS"))) },
-		{ "AREA", ("%d x %d STUDS"):format(math.floor(spanX), math.floor(spanZ)) },
-		{ "INSERTION", timeStr .. "  LOCAL" },
-	}
-	local notes = oneV1 and {
-		"ONE HOSTILE. FIRST TO " .. tostring(C.V1 and C.V1.KillsToWin or 5) .. " KILLS TAKES THE ROUND.",
-		"AFTER A DEATH YOU SIT OUT A FEW SECONDS AND WATCH THEM.",
-	} or {
-		"BOX DROPS EVERY " .. tostring(C.BOX and C.BOX.SpawnInterval or 60) .. " S ON BOTH SIDES OF THE LINE.",
-		"3 HOLES PER SIDE. MORE PLUGGED BOXES MOVES THE LINE.",
-		"THEIR PLUGGED BOXES CAN BE SHOT OR STOLEN.",
-	}
-	local typed = {}
-	local ry = 74
-	for _, r in rows do
-		label(plate, r[1], 13, F.MB, INTEL.uiDim, { Position = UDim2.fromOffset(18, ry + 2), Size = UDim2.fromOffset(110, 22), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-		local v = label(plate, "", 18, F.MB, WHITE, { Position = UDim2.fromOffset(132, ry), Size = UDim2.fromOffset(LW - 150, 24), TextXAlignment = Enum.TextXAlignment.Left,
-			ZIndex = 3, TextTruncate = Enum.TextTruncate.AtEnd })
-		table.insert(typed, { l = v, text = r[2] })
-		ry += 30
-	end
-	ry += 6
-	fr({ Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(LW - 36, 1), BackgroundTransparency = 0.55 }, plate)
-	ry += 10
-	label(plate, "NOTES", 14, F.MB, INTEL.accent, { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(200, 20), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-	ry += 26
-	for i, line in notes do
-		local v = label(plate, "", 14, F.M, rgb(222, 238, 255), { Position = UDim2.fromOffset(18, ry), Size = UDim2.fromOffset(LW - 36, 38), TextXAlignment = Enum.TextXAlignment.Left,
-			TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true, ZIndex = 3 })
-		table.insert(typed, { l = v, text = i .. ".  " .. line })
-		ry += 42
-	end
-	plate.Size = UDim2.fromOffset(LW, ry + 10)
-	-- OBJECTIVES (left, under the briefing)
-	local obj = oneV1 and { "WIN " .. tostring(C.V1 and C.V1.KillsToWin or 5) .. " GUNFIGHTS" } or { "PLUG BOXES INTO YOUR HOLES", "PUSH THE LINE TO THEIR FINISH", "BREAK THEIR PLUGGED BOXES" }
-	local oy = 232 + ry + 10 + 18
-	local op = new("Frame", { Position = UDim2.fromOffset(LX, oy), Size = UDim2.fromOffset(LW, 64 + #obj * 36), BackgroundColor3 = INTEL.panel, BackgroundTransparency = 0.12,
-		BorderSizePixel = 0, ZIndex = 2 }, feed)
-	new("UIStroke", { Color = INTEL.line, Thickness = 1.5, Transparency = 0.25 }, op)
-	fr({ Size = UDim2.fromOffset(LW, 4), BackgroundColor3 = INTEL.accent }, op)
-	label(op, "OBJECTIVES", 26, F.H, WHITE, { Position = UDim2.fromOffset(18, 12), Size = UDim2.fromOffset(300, 32), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-	for k, o in obj do
-		local y = 54 + (k - 1) * 36
-		local bx = fr({ Position = UDim2.fromOffset(18, y + 4), Size = UDim2.fromOffset(16, 16), BackgroundTransparency = 1 }, op)
-		new("UIStroke", { Color = INTEL.accent, Thickness = 2 }, bx)
-		local v = label(op, "", 17, F.MB, rgb(228, 243, 255), { Position = UDim2.fromOffset(46, y), Size = UDim2.fromOffset(LW - 60, 24), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3 })
-		table.insert(typed, { l = v, text = o })
-	end
-	-- type every line in, one after another
-	task.spawn(function()
-		task.wait(0.5)
-		for _, tl in typed do
-			for i = 1, #tl.text, 2 do
-				if not tl.l.Parent then return end
-				tl.l.Text = string.sub(tl.text, 1, i + 1)
-				task.wait(0.012)
-			end
-			tl.l.Text = tl.text
-			task.wait(0.05)
-		end
-	end)
-
-	-- ---------- per frame ----------
-	local t0 = os.clock()
-	function api.update(_dt)
-		local t = os.clock() - t0
-		scan.Position = UDim2.fromOffset(VX, VY + (t * 90) % (VH - 3))
-		local vs = vp.AbsoluteSize
-		local sc = feed:FindFirstChildOfClass("UIScale")
-		local k = sc and sc.Scale or 1
-		for _, tg in tags do
-			local sp = project(cam, vs, tg.pos)
-			if sp then
-				local c = Vector2.new(VX, VY) + sp / k
-				tg.label.Position = UDim2.fromOffset(c.X, c.Y - 14)
-				tg.label.Visible = true
-			else
-				tg.label.Visible = false
-			end
-		end
-	end
-	return api
-end
-
--- ======================================================================================
 -- PREGAME
 -- ======================================================================================
 local SLOT_X = { [1] = { 0 }, [2] = { -3.4, 3.4 }, [3] = { 0, -5.6, 5.6 } }
@@ -672,14 +272,13 @@ local function runPregame(token)
 		edges[i] = e
 	end
 
-	local PREGAME_LOOK_Y = 4.2 -- v5.8: camera look height on the squad (about 70 px higher on a 1080p screen than v5.7)
+	local PREGAME_LOOK_Y = 3.8 -- v5.19: 4.2 -> 3.8 (the squad sits ~30 px higher, clear of the bigger loadout dock). Lower = squad higher on screen
 	local scene = newScene(root, 3, true)
 	scene.cam.FieldOfView = 34
 	local cam = scene.cam
 	local baseCam = Vector3.new(0, 4.2, 28) -- v5.8: squad raised again (v5.7 4.9 / look 5.3 put the feet into the loadout dock); LOOK_Y below
-	-- v5.16: the black starfield is gone; the background is the MISSION BRIEFING of the map (buildBriefing above)
-	local okB, brief = pcall(buildBriefing, root, myCol)
-	if not okB then warn("[MatchFlow] briefing background:", brief) brief = nil end
+	-- v5.19 (owner): back to BLACK SPACE with stars behind the squad (the v5.16 briefing / v5.17 blueprint background is gone)
+	addStars(scene.world, 160, 60, Vector3.new(0, 4, -30), 40)
 	local figs, figKey = {}, ""
 
 	local cv = makeCanvas(root, 6)
@@ -748,7 +347,7 @@ local function runPregame(token)
 	end
 
 	-- ---- loadout dock (v5.7: lower on the screen; a click opens the BIG lobby-style menu with everything you own) ----
-	local dockY = 962
+	local dockY = 936 -- v5.19: the tiles are bigger (92 -> 118 px), so the row starts higher and still ends at the same bottom edge
 	local selected, bigPicker, dock
 	local PICK_SUBS = { -- v5.9: only the reserve keeps its line (it tells you the J key); the others were filler
 		reserve = "SWAP IN WHILE YOU ARE DEAD (PRESS J)  //  ONE GUN OR GADGET PER SLOT",
@@ -823,7 +422,7 @@ local function runPregame(token)
 			onClose = function() bigPicker = nil; selected = nil; if dock then dock:Select(nil) end end,
 		})
 	end
-	dock = LoadoutPicker.Dock(cv, { y = dockY, z = 8, itemAt = itemAt, onClick = openPicker })
+	dock = LoadoutPicker.Dock(cv, { y = dockY, z = 8, itemAt = itemAt, onClick = openPicker, sq = 118 }) -- v5.19: bigger tiles
 	setModal(true)
 
 	-- fade in from black
@@ -836,7 +435,6 @@ local function runPregame(token)
 	local t0 = os.clock()
 	renderFns.pregame = function(dt)
 		local t = os.clock() - t0
-		if brief then pcall(brief.update, dt) end -- v5.16: recon map drift, scan band, tags
 		-- camera drift
 		cam.CFrame = CFrame.lookAt(baseCam + Vector3.new(math.sin(t * 0.35) * 0.9, math.sin(t * 0.5) * 0.15, 0), Vector3.new(0, PREGAME_LOOK_Y, 0)) -- v5.8: 4.2 (v5.7: 5.3, first: 3.6). Lower = squad higher on screen
 		for _, f in figs do f.fig:Update(t, dt) end
@@ -905,146 +503,215 @@ local function runPregame(token)
 end
 
 -- ======================================================================================
--- WARP (v5.9): black -> the map's watercolor painting fills the screen -> your soul lights up and flies INTO it. The painting opens up
--- into a 3D watercolor version of the real map (built live from the loaded <name>_map folder: washed translucent blocks, ink edges with
--- sketchy overshoot, soft floor shadows, a pencil grid on the floor) and the soul flies through it down onto your spawn -> slow white
--- flash -> you are standing on your spawn in first person and the card roll starts. (The v3.7 first-person run-in is gone.)
+-- WARP v6 (v5.19) - METEOR SOUL DROP. Replaces the v5.9 watercolour painting + fly-through + white flash.
+-- Owner: "remove that whole sequence ... have the soul spawn really high in the sky, like in space, directly above where the player will spawn,
+-- fly down really fast with fire on it like a rocket re-entering the atmosphere, land on the spawn with a cool animation, then the respawn
+-- animation ... when the camera wooshes into the player the card roll starts ... anime style, like an anime artist drew the stuff onto it".
+--   0.00  the loadout screen fades to black
+--   SPACE0  SPACE: the real camera sits next to your soul ~720 studs straight above your spawn (world darkened + a star field = space),
+--           the map is a small patch far below. The soul ignites.
+--   DROP0   RE-ENTRY: the soul falls, faster and faster (it ends at several hundred studs/s), the camera chases it. Cel-shaded fire
+--           (flat neon layers with a black INK OUTLINE = a Highlight with no fill), a smoke ribbon, embers, a heat glow at the screen edges.
+--           On top an ANIME LAYER drawn in 2D and animated "on twos" (12 drawings a second, like hand-drawn animation): manga speed lines
+--           that rush out from the soul, inked flame tongues trailing it, sharp ink scratches.
+--   LAND    IMPACT: two anime IMPACT FRAMES (black frame with white burst lines, then white frame with black lines), a shockwave ring + dust
+--           with ink outlines, a scorch mark, a fire pillar, embers, the camera shakes, a big brush-style DON! pops up.
+--   REVEAL  the normal RESPAWN REVEAL (RespawnReveal + RevealFX): souls build your body from the feet up while the camera hovers behind you,
+--           then the camera wooshes into your head - exactly when the phase switches to Cards, so the card roll starts the moment you land in it.
+-- Everybody's soul drops (teammates and enemies at their own spawns); only yours is followed by the camera.
+-- The reveal is started LOCALLY on each client (the character attributes Revealing / RevealStart / RevealBuild are set on this client only,
+-- the server never sees them): RespawnReveal, GunClient and ThirdPersonClient already know what to do with them.
+-- Timing: C.WARP_TIME (6.0) = DROP + the reveal (C.REVEAL_TIME). All in SD below.
 -- ======================================================================================
-local WC = {
-	paper = rgb(241, 236, 227),    -- background / paper
-	floor = rgb(233, 226, 213),    -- floors + wide flat slabs
-	wash = rgb(126, 133, 180),     -- walls / blocks (translucent)
-	washDeep = rgb(101, 107, 158), -- every third block a little deeper, like a second wash layer
-	ink = rgb(48, 52, 86),         -- edge lines
-	shadow = rgb(112, 114, 162),   -- soft floor shadows
-	grid = rgb(150, 154, 190),     -- pencil grid
+local SD = {
+	HEIGHT = 720,                                      -- studs above the spawn where the soul starts ("space")
+	SLANT = 0.3,                                       -- how much the fall comes in at an angle (0 = straight down); it comes from behind your side
+	SPACE0 = 0.55,                                     -- black -> space shot
+	DROP0 = 1.3,                                       -- the soul starts to fall
+	REVEAL_PAD = 0.12,                                 -- impact camera shake before the reveal camera takes over
+	FIRE = { Color3.fromRGB(255, 255, 240), Color3.fromRGB(255, 226, 92), Color3.fromRGB(255, 142, 38), Color3.fromRGB(226, 58, 30) },
+	SMOKE = Color3.fromRGB(70, 66, 74),
+	INK = Color3.fromRGB(24, 12, 18),                  -- the "pen" colour of every outline
+	ANIME_FPS = 12,                                    -- the 2D art layer updates at 12 drawings a second (anime "on twos")
+	IMPACT_TEXT = "ドンッ!",                            -- the big impact sound-word (Japanese "DON!"); set to "BOOM!" if your font shows boxes
 }
-local WARP_MAX_PARTS, WARP_MAX_EDGED, WARP_MAX_SHADOWS = 380, 150, 70
-local SUN = Vector3.new(0.55, -1, 0.35).Unit
+SD.LAND = C.WARP_TIME - C.REVEAL_TIME - SD.REVEAL_PAD - 0.05 -- touchdown
+SD.REVEAL_AT = SD.LAND + SD.REVEAL_PAD                       -- the respawn reveal starts (ends ~0.05 s before the card roll phase)
 
--- the map folder MatchServer cloned into Workspace (MatchState.MapFolder); nil when the match runs on a bare MapBounds part
-local function loadedMapFolder()
-	local n = State:GetAttribute("MapFolder")
-	if type(n) == "string" and n ~= "" then
-		local f = workspace:FindFirstChild(n)
-		if f then return f end
+local warpState -- everything the drop created (cleaned by warpCleanup)
+warpCleanup = function()
+	local ws = warpState
+	warpState = nil
+	pcall(function() RunService:UnbindFromRenderStep("BreaklineWarpCam") end)
+	if not ws then return end
+	if ws.cc then ws.cc:Destroy() end
+	if ws.blur then ws.blur:Destroy() end
+	for ch in ws.revealed do
+		if ch.Parent and ch:GetAttribute("Revealing") == true then ch:SetAttribute("Revealing", false) end
 	end
-	for _, ch in workspace:GetChildren() do
-		if (ch:IsA("Folder") or ch:IsA("Model")) and string.lower(ch.Name):match(string.lower(C.MAPS.Suffix) .. "$") then return ch end
-	end
-	return nil
 end
 
--- builds the watercolor copy of the map inside `world` (a Model in a ViewportFrame). Returns the bounding box (lo, hi) of what it drew.
-local function buildWatercolorMap(world, folder)
-	local lo, hi
-	if not folder then return nil, nil end
-	local list = {}
-	for _, d in folder:GetDescendants() do
-		if d:IsA("BasePart") and d.Transparency < 0.95 and d.Name ~= "MapBounds" and not d.Name:match("Spawn$") then
-			table.insert(list, d)
+-- one falling soul (3D): core + soul glow + heat cap + 4 cel flame layers + flickering tongues + smoke ribbon + embers + light
+local function newMeteor(folder)
+	local m = {}
+	local fire = new("Model", { Name = "SoulFire" }, folder)
+	local smoke = new("Model", { Name = "SoulSmoke" }, folder)
+	m.fire, m.smoke = fire, smoke
+	m.core = part(fire, Vector3.one * 1.5, CFrame.new(), SD.FIRE[1], true, 0, Enum.PartType.Ball)
+	m.glow = part(folder, Vector3.one * 2.8, CFrame.new(), K.soul, true, 0.45, Enum.PartType.Ball)
+	m.cap = part(fire, Vector3.new(3.4, 1.3, 3.4), CFrame.new(), SD.FIRE[2], true, 0.1, Enum.PartType.Ball)
+	m.layers = {}
+	local L = { { 1.2, 5 }, { 2.0, 9 }, { 2.8, 15 }, { 3.6, 23 } } -- diameter, length (at full speed)
+	for i, d in L do
+		m.layers[i] = { p = part(fire, Vector3.new(1, 1, 1), CFrame.new(), SD.FIRE[i], true, (i - 1) * 0.08, Enum.PartType.Cylinder), d = d[1], len = d[2] }
+		m.layers[i].tip = part(fire, Vector3.one, CFrame.new(), SD.FIRE[i], true, (i - 1) * 0.08, Enum.PartType.Ball)
+	end
+	m.tongues = {}
+	for i = 1, 8 do
+		m.tongues[i] = { p = part(fire, Vector3.new(0.6, 0.6, 4), CFrame.new(), SD.FIRE[(i % 3) + 2], true, 0.05), a = (i / 8) * math.pi * 2, len = 4 }
+	end
+	m.ribbon, m.hist = {}, {}
+	for i = 1, 36 do
+		m.ribbon[i] = part(smoke, Vector3.one * 0.1, CFrame.new(), SD.SMOKE, false, 1, Enum.PartType.Cylinder)
+	end
+	m.embers = {}
+	for i = 1, 28 do
+		m.embers[i] = { p = part(folder, Vector3.one * 0.35, CFrame.new(), SD.FIRE[(i % 3) + 2], true, 1), born = -9, pos = Vector3.zero, vel = Vector3.zero }
+	end
+	-- the ink outline (what makes the flat neon read as a drawing)
+	for _, mdl in { fire, smoke } do
+		new("Highlight", { FillTransparency = 1, OutlineColor = SD.INK, OutlineTransparency = 0, DepthMode = Enum.HighlightDepthMode.Occluded, Adornee = mdl }, mdl)
+	end
+	m.light = new("PointLight", { Color = SD.FIRE[3], Range = 40, Brightness = 0, Shadows = false }, m.core)
+	m.nextEmber = 0
+	return m
+end
+
+local function setMeteorVisible(m, on)
+	for _, d in m.fire:GetDescendants() do if d:IsA("BasePart") then d.LocalTransparencyModifier = on and 0 or 1 end end
+	m.glow.LocalTransparencyModifier = on and 0 or 1
+	m.light.Enabled = on
+end
+
+-- heat: 0 in space, 1 at full re-entry; spd: 0..1 of the top speed
+local function stepMeteor(m, pos, dir, heat, spd, t, dt, frame)
+	local look = CFrame.lookAt(pos, pos + dir) -- -Z = the way it falls
+	m.core.CFrame = CFrame.new(pos)
+	m.core.Size = Vector3.one * (1.3 + 0.25 * math.sin(t * 30))
+	m.glow.CFrame = CFrame.new(pos)
+	m.glow.Transparency = 0.35 + 0.4 * heat
+	m.cap.CFrame = look * CFrame.new(0, 0, -0.9) * CFrame.Angles(math.rad(90), 0, 0)
+	m.cap.Transparency = 1 - heat * 0.9
+	m.cap.Size = Vector3.new(3.4 + heat, 1.2, 3.4 + heat)
+	-- flame layers stream BEHIND the soul (+Z of `look`), longer the faster it goes; they flicker like drawn flames
+	for i, L in m.layers do
+		local flick = 0.85 + 0.3 * math.noise(t * 9, i * 3.1)
+		local len = math.max(0.2, L.len * (0.25 + 0.75 * spd) * heat * flick)
+		local w = L.d * (0.6 + 0.4 * heat)
+		L.p.Size = Vector3.new(len, w, w)
+		L.p.CFrame = look * CFrame.new(0, 0, len / 2) * CFrame.Angles(0, math.rad(90), 0)
+		L.tip.Size = Vector3.one * w * 0.98
+		L.tip.CFrame = look * CFrame.new(0, 0, len)
+		local tr = heat < 0.05 and 1 or ((i - 1) * 0.08)
+		L.p.Transparency, L.tip.Transparency = tr, tr
+	end
+	for i, g in m.tongues do
+		if m.artFrame ~= frame then g.len = rng:NextNumber(3, 9) end -- a new drawing 12x a second (held in between, like hand-drawn animation)
+		local a = g.a + t * 2.2
+		local off = Vector3.new(math.cos(a), math.sin(a), 0) * (1.1 + 0.5 * heat)
+		local len = g.len * heat * (0.4 + 0.6 * spd)
+		g.p.Size = Vector3.new(0.55, 0.55, math.max(0.1, len))
+		g.p.CFrame = look * CFrame.new(off + Vector3.new(0, 0, len / 2 + 0.6)) * CFrame.Angles(0, 0, a)
+		g.p.Transparency = heat < 0.05 and 1 or 0.05
+	end
+	m.artFrame = frame
+	m.light.Brightness = 1 + 5 * heat
+	-- smoke ribbon (history of positions, fades out behind)
+	if not m.hist[1] or (m.hist[1].pos - pos).Magnitude > 1.2 then
+		table.insert(m.hist, 1, { pos = pos, t = t })
+		if #m.hist > #m.ribbon + 1 then table.remove(m.hist) end
+	end
+	for i, seg in m.ribbon do
+		local a, b = m.hist[i], m.hist[i + 1]
+		if a and b and heat > 0.05 then
+			local pa = (i == 1) and pos or a.pos
+			local len = (b.pos - pa).Magnitude
+			local k = 1 - (i - 1) / #m.ribbon
+			if len > 0.01 then
+				local w = (0.8 + 3.2 * (1 - k)) * heat
+				seg.Size = Vector3.new(len + 0.4, w, w)
+				seg.CFrame = CFrame.lookAt((pa + b.pos) / 2, b.pos) * CFrame.Angles(0, math.rad(90), 0)
+				seg.Transparency = 1 - 0.75 * k * heat
+				seg.Color = SD.FIRE[3]:Lerp(SD.SMOKE, math.clamp((1 - k) * 2.2, 0, 1))
+			else
+				seg.Transparency = 1
+			end
+		else
+			seg.Transparency = 1
 		end
 	end
-	table.sort(list, function(a, b) return a.Size.X * a.Size.Y * a.Size.Z > b.Size.X * b.Size.Y * b.Size.Z end)
-	local texId = C.MAPS.WashTexture
-	if type(texId) == "string" and (texId == "" or texId == "rbxassetid://0") then texId = nil end
-	local edged, shadows, textured = 0, 0, 0
-	local function inkBar(a, b, th)
-		local len = (b - a).Magnitude
-		if len < 0.05 then return end
-		part(world, Vector3.new(th, th, len), CFrame.lookAt((a + b) / 2, b), WC.ink, false, 0.32)
-	end
-	for i, src in list do
-		if i > WARP_MAX_PARTS then break end
-		local sz, cf = src.Size, src.CFrame
-		local flat = sz.Y < 0.3 * math.min(sz.X, sz.Z) and math.abs(cf.UpVector.Y) > 0.9
-		local p
-		if src:IsA("Part") then
-			p = part(world, sz, cf, WC.wash, false, 0, src.Shape)
-		elseif src:IsA("WedgePart") or src:IsA("CornerWedgePart") then
-			p = new(src.ClassName, { Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false, Size = sz, CFrame = cf }, world)
-		else -- MeshPart / Union / Truss: a stripped clone, recoloured
-			local ok, c = pcall(function() return src:Clone() end)
-			if ok and c then
-				for _, ch in c:GetChildren() do ch:Destroy() end
-				c.Anchored, c.CanCollide, c.CanQuery, c.CanTouch, c.CastShadow = true, false, false, false, false
-				if c:IsA("UnionOperation") then c.UsePartColor = true end
-				if c:IsA("MeshPart") then pcall(function() c.TextureID = "" end) end
-				c.Parent = world
-				p = c
-			end
-		end
-		if p then
-			p.Material = Enum.Material.SmoothPlastic
-			p.Color = flat and WC.floor or ((i % 3 == 0) and WC.washDeep or WC.wash)
-			p.Transparency = flat and 0 or 0.5
-			local h = sz / 2
-			local corners = {}
-			for _, sx in { -1, 1 } do for _, sy in { -1, 1 } do for _, sz2 in { -1, 1 } do
-				table.insert(corners, cf:PointToWorldSpace(Vector3.new(sx * h.X, sy * h.Y, sz2 * h.Z)))
-			end end end
-			if math.max(sz.X, sz.Z) < 600 then -- a giant baseplate must not stretch the flight path
-				for _, c in corners do
-					lo = lo and lo:Min(c) or c
-					hi = hi and hi:Max(c) or c
-				end
-			end
-			-- ink edges with a small overshoot past every corner (the sketched construction-line look of the painting)
-			if edged < WARP_MAX_EDGED and src:IsA("Part") and src.Shape == Enum.PartType.Block then
-				edged += 1
-				local th = math.clamp(math.max(sz.X, sz.Y, sz.Z) * 0.006, 0.07, 0.16)
-				local over = math.clamp(math.min(sz.X, sz.Y, sz.Z) * 0.08 + 0.35, 0.35, 1.4)
-				local axes = { { cf.RightVector, h.X }, { cf.UpVector, h.Y }, { cf.LookVector, h.Z } }
-				for ai = 1, 3 do
-					local ax, ext = axes[ai][1], axes[ai][2]
-					local b1, b2 = axes[ai % 3 + 1], axes[(ai + 1) % 3 + 1]
-					for _, s1 in { -1, 1 } do
-						for _, s2 in { -1, 1 } do
-							local mid = cf.Position + b1[1] * b1[2] * s1 + b2[1] * b2[2] * s2
-							inkBar(mid - ax * (ext + over), mid + ax * (ext + over), th)
-						end
-					end
-				end
-			end
-			-- soft wash shadow on the floor next to standing blocks
-			if not flat and shadows < WARP_MAX_SHADOWS and sz.Y > 2 then
-				shadows += 1
-				local bottom = cf.Position.Y - (math.abs(cf.UpVector.Y) * h.Y + math.abs(cf.RightVector.Y) * h.X + math.abs(cf.LookVector.Y) * h.Z)
-				local reach = math.min(sz.Y, 30) * 0.45
-				local off = Vector3.new(SUN.X, 0, SUN.Z).Unit * reach
-				local yaw = select(2, cf:ToOrientation())
-				local s = part(world, Vector3.new(sz.X + reach * 0.9, 0.06, sz.Z + reach * 0.9), CFrame.new(Vector3.new(cf.Position.X, bottom + 0.06, cf.Position.Z) + off * 0.55) * CFrame.Angles(0, yaw, 0),
-					WC.shadow, false, 0.8)
-				s.Transparency = 0.8
-			end
-			-- optional uploaded watercolor wash texture (MatchConfig.MAPS.WashTexture) on the biggest pieces
-			if texId and textured < 120 then
-				textured += 1
-				for _, face in Enum.NormalId:GetEnumItems() do
-					new("Texture", { Texture = texId, Face = face, StudsPerTileU = 26, StudsPerTileV = 26, Transparency = flat and 0.25 or 0.45,
-						Color3 = flat and Color3.new(1, 1, 1) or rgb(225, 228, 255) }, p)
-				end
+	-- embers peel off
+	if heat > 0.3 and t >= m.nextEmber then
+		m.nextEmber = t + 0.03
+		for _, e in m.embers do
+			if t - e.born > 0.7 then
+				e.born, e.pos = t, pos
+				e.vel = -dir * rng:NextNumber(10, 40) + Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-1, 1), rng:NextNumber(-1, 1)) * 18
+				break
 			end
 		end
 	end
-	-- pencil grid on the floor, every 8 studs, inside the drawn area
-	if lo and hi then
-		local y = lo.Y + 0.08
-		local step = math.max(8, math.floor(math.max(hi.X - lo.X, hi.Z - lo.Z) / 28))
-		local n = 0
-		for x = math.ceil(lo.X / step) * step, hi.X, step do
-			n += 1
-			if n > 40 then break end
-			part(world, Vector3.new(0.05, 0.03, hi.Z - lo.Z), CFrame.new(x, y, (lo.Z + hi.Z) / 2), WC.grid, false, 0.7)
-		end
-		n = 0
-		for z = math.ceil(lo.Z / step) * step, hi.Z, step do
-			n += 1
-			if n > 40 then break end
-			part(world, Vector3.new(hi.X - lo.X, 0.03, 0.05), CFrame.new((lo.X + hi.X) / 2, y, z), WC.grid, false, 0.7)
+	for _, e in m.embers do
+		local a = (t - e.born) / 0.7
+		if a >= 0 and a < 1 then
+			e.pos += e.vel * dt
+			e.p.CFrame = CFrame.new(e.pos) * CFrame.Angles(t * 7, t * 5, 0)
+			e.p.Size = Vector3.one * (0.45 * (1 - a) + 0.05)
+			e.p.Transparency = 0.1 + 0.9 * a
+		else
+			e.p.Transparency = 1
 		end
 	end
-	return lo, hi
+end
+
+-- the impact in the world: shockwave ring, dust chunks with ink outlines, scorch mark, fire pillar, ember burst
+local function impactFx(folder, pos, scale)
+	scale = scale or 1
+	local up = CFrame.Angles(0, 0, math.rad(90))
+	local ring = part(folder, Vector3.new(0.3, 4, 4), CFrame.new(pos + Vector3.new(0, 0.3, 0)) * up, SD.FIRE[2], true, 0.05, Enum.PartType.Cylinder)
+	tween(ring, TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = Vector3.new(0.1, 46 * scale, 46 * scale), Transparency = 1 })
+	local ring2 = part(folder, Vector3.new(0.25, 3, 3), CFrame.new(pos + Vector3.new(0, 0.5, 0)) * up, WHITE, true, 0, Enum.PartType.Cylinder)
+	tween(ring2, TweenInfo.new(0.32, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = Vector3.new(0.1, 26 * scale, 26 * scale), Transparency = 1 })
+	local scorch = part(folder, Vector3.new(0.08, 9 * scale, 9 * scale), CFrame.new(pos + Vector3.new(0, 0.06, 0)) * up, rgb(26, 20, 22), false, 0.25, Enum.PartType.Cylinder)
+	tween(scorch, TweenInfo.new(2.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Transparency = 1 })
+	local pillar = part(folder, Vector3.new(2, 3, 3), CFrame.new(pos) * up, SD.FIRE[3], true, 0.05, Enum.PartType.Cylinder)
+	tween(pillar, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = Vector3.new(34 * scale, 7 * scale, 7 * scale), CFrame = CFrame.new(pos + Vector3.new(0, 17 * scale, 0)) * up, Transparency = 1 })
+	local core = part(folder, Vector3.one * 3, CFrame.new(pos + Vector3.new(0, 1, 0)), SD.FIRE[1], true, 0, Enum.PartType.Ball)
+	tween(core, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = Vector3.one * 14 * scale, Transparency = 1 })
+	-- dust chunks (cel grey with an ink outline, they arc out and fall)
+	local dust = new("Model", { Name = "ImpactDust" }, folder)
+	new("Highlight", { FillTransparency = 1, OutlineColor = SD.INK, OutlineTransparency = 0, DepthMode = Enum.HighlightDepthMode.Occluded, Adornee = dust }, dust)
+	for i = 1, 18 do
+		local a = (i / 18) * math.pi * 2 + rng:NextNumber(-0.15, 0.15)
+		local s = rng:NextNumber(0.8, 1.9) * scale
+		local p = part(dust, Vector3.new(s, s * 0.8, s), CFrame.new(pos + Vector3.new(0, 0.6, 0)), (i % 2 == 0) and rgb(196, 188, 176) or rgb(150, 142, 134), false, 0)
+		local dirH = Vector3.new(math.cos(a), 0, math.sin(a))
+		local dist = rng:NextNumber(9, 17) * scale
+		local peak = pos + dirH * dist * 0.5 + Vector3.new(0, rng:NextNumber(3, 7) * scale, 0)
+		local land = pos + dirH * dist + Vector3.new(0, 0.3, 0)
+		tween(p, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = CFrame.new(peak) * CFrame.Angles(a, a * 2, 0) })
+		task.delay(0.28, function()
+			if not p.Parent then return end
+			tween(p, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = CFrame.new(land) * CFrame.Angles(a * 2, a * 3, 0) })
+			task.delay(0.5, function() if p.Parent then tween(p, TweenInfo.new(0.6), { Transparency = 1, Size = Vector3.one * 0.1 }) end end)
+		end)
+	end
+	-- ember burst
+	for i = 1, 22 do
+		local e = part(folder, Vector3.one * 0.4, CFrame.new(pos + Vector3.new(0, 1, 0)), SD.FIRE[(i % 3) + 2], true, 0)
+		local v = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(0.4, 1.6), rng:NextNumber(-1, 1)).Unit * rng:NextNumber(8, 20) * scale
+		tween(e, TweenInfo.new(rng:NextNumber(0.4, 0.8), Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = CFrame.new(pos + v), Size = Vector3.one * 0.05, Transparency = 1 })
+	end
 end
 
 local function runWarp(token)
@@ -1058,225 +725,340 @@ local function runWarp(token)
 		end
 		return alive(token)
 	end
-	-- timeline (seconds after the phase started; C.WARP_TIME = 5.6)
-	local SHOW, FLY0, FLY1 = 0.6, 1.1, 4.7    -- painting appears / soul flight starts / soul reaches your spawn
-	local FLASH0, FLASH1, OUT1 = 4.25, 5.05, 5.55 -- white flash builds up slowly, holds, then clears onto the real map
 
 	-- 1) fade the pre-game screen out
 	renderFns.pregame = nil
 	setModal(false)
-	tween(fade, TweenInfo.new(0.55), { BackgroundTransparency = 0 })
-	if not waitUntil(SHOW) then return end
+	tween(fade, TweenInfo.new(0.5), { BackgroundTransparency = 0 })
+	if not waitUntil(SD.SPACE0) then return end
 	killScreens()
+	warpCleanup()
 
-	-- 2) the scene: painting (2D) behind, the 3D watercolor map, the soul on top
-	local root = track(new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = WC.paper, BorderSizePixel = 0, ZIndex = 1 }, gui))
-	local mapScene = newScene(root, 2, false)
-	local mapVP, mapCam = mapScene.vp, mapScene.cam
-	mapVP.BackgroundColor3 = WC.paper
-	mapVP.Ambient = rgb(205, 205, 214)
-	mapVP.LightColor = rgb(255, 250, 240)
-	mapVP.LightDirection = SUN
-	mapCam.FieldOfView = 70
-	local lo, hi = buildWatercolorMap(mapScene.world, loadedMapFolder())
-	local verified = player:GetAttribute("MapImageSrc") -- v5.10: the link the loading screen saw really load (direct asset or thumbnail)
-	local img = verified or State:GetAttribute("MapImage")
-	local painting, paintScale
-	if type(img) == "string" and img ~= "" then
-		painting = new("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
-			Image = img, ScaleType = Enum.ScaleType.Crop, ZIndex = 3 }, root)
-		paintScale = new("UIScale", { Scale = 1 }, painting)
-		if not verified then task.spawn(UI.LoadImage, painting, img, 3) end -- never saw it load: try the thumbnail link too
-	end
-	mapVP.ImageTransparency = painting and 1 or 0
-	-- warm paper vignette over everything (painted edges)
-	do
-		local v = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(120, 112, 140), BorderSizePixel = 0, ZIndex = 5 }, root)
-		new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(0.18, 1), NumberSequenceKeypoint.new(0.82, 1),
-			NumberSequenceKeypoint.new(1, 0.55) }) }, v)
-		local v2 = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(120, 112, 140), BorderSizePixel = 0, ZIndex = 5 }, root)
-		new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(0.2, 1), NumberSequenceKeypoint.new(0.8, 1),
-			NumberSequenceKeypoint.new(1, 0.6) }) }, v2)
-	end
-	local soulScene = newScene(root, 6, true)
-	local soulVP, soulCam = soulScene.vp, soulScene.cam
-	soulVP.Ambient, soulVP.LightColor = rgb(255, 255, 255), rgb(255, 255, 255)
-	soulCam.FieldOfView = 70
-	local sw = soulScene.world
-
-	-- 3) the flight path: from high above + behind your side of the map down onto your spawn spot
-	local endPos, fwd
-	do
-		local w0 = os.clock()
-		local r
-		repeat
-			r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-			if not r then task.wait() end
-		until r or os.clock() - w0 > 0.4 or not alive(token)
-		if not alive(token) then return end
-		if r then
-			endPos = r.Position + Vector3.new(0, 1.5, 0)
-			fwd = Vector3.new(r.CFrame.LookVector.X, 0, r.CFrame.LookVector.Z)
+	local ws = { revealed = {}, meteors = {} }
+	warpState = ws
+	warpActive = true
+	warpFolder = new("Folder", { Name = "BreaklineSoulDrop" }, workspace)
+	local folder = warpFolder
+	-- the HUD stays hidden until the card roll (restoreWorld switches it back on)
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg then
+		for _, g in pg:GetChildren() do
+			if g:IsA("ScreenGui") and g.Enabled and g ~= gui and g.Name ~= "RevealGui" and not g.Name:find("Loading") then
+				g.Enabled = false
+				hiddenGuis[g] = true
+			end
 		end
-		local center = (lo and hi) and (lo + hi) / 2 or Vector3.zero
-		if not endPos then endPos = center + Vector3.new(0, 5, 0) end
-		if not fwd or fwd.Magnitude < 0.05 then
-			fwd = Vector3.new(center.X - endPos.X, 0, center.Z - endPos.Z)
-			if fwd.Magnitude < 0.05 then fwd = Vector3.new(0, 0, -1) end
+	end
+	-- space look: a darker, cooler world (eases back to normal on the way down) + a little blur at top speed
+	ws.cc = new("ColorCorrectionEffect", { Name = "SoulDropCC", Brightness = -0.3, Contrast = 0.25, Saturation = -0.2, TintColor = rgb(200, 212, 255) }, game:GetService("Lighting"))
+	ws.blur = new("BlurEffect", { Name = "SoulDropBlur", Size = 0 }, game:GetService("Lighting"))
+
+	-- 2) who drops where: every player on a team, at their own spawn (characters are being respawned right now, so positions are re-read)
+	local function dropPlayers()
+		local list = {}
+		for _, p in Players:GetPlayers() do
+			if p.Team and p.Team.Name ~= "Lobby" then table.insert(list, p) end
 		end
-		fwd = fwd.Unit
+		if not table.find(list, player) then table.insert(list, player) end
+		return list
 	end
-	local size = (lo and hi) and (hi - lo) or Vector3.new(120, 40, 200)
-	local back = math.clamp(math.max(size.X, size.Z) * 0.45, 40, 150)
-	local up = math.clamp(size.Y + 30, 34, 110)
-	local P0 = endPos - fwd * back + Vector3.new(0, up, 0)
-	local P1 = endPos - fwd * back * 0.35 + Vector3.new(0, up * 0.95, 0)
-	local P2 = endPos - fwd * 16 + Vector3.new(0, 9, 0)
-	local P3 = endPos
-	local function bez(s)
-		local a = 1 - s
-		return P0 * (a * a * a) + P1 * (3 * a * a * s) + P2 * (3 * a * s * s) + P3 * (s * s * s)
+	local function landOf(p)
+		local ch = p.Character
+		local r = ch and ch:FindFirstChild("HumanoidRootPart")
+		if not r then return nil end
+		local cf, size = ch:GetBoundingBox()
+		local feet = cf.Position.Y - size.Y / 2
+		local look = Vector3.new(r.CFrame.LookVector.X, 0, r.CFrame.LookVector.Z)
+		look = look.Magnitude > 0.05 and look.Unit or Vector3.new(0, 0, -1)
+		return Vector3.new(r.Position.X, feet, r.Position.Z), look, ch, size.Y
 	end
-	local function ease(u) return u * u * (3 - 2 * u) end
-
-	-- 4) the soul: bright core, two soft halos, and a smooth tapered ribbon trail (pooled cylinders, no chunky blocks)
-	local core = part(sw, Vector3.one * 0.5, CFrame.new(), K.soulPale, true, 1, Enum.PartType.Ball)
-	local halo1 = part(sw, Vector3.one, CFrame.new(), K.soul, true, 1, Enum.PartType.Ball)
-	local halo2 = part(sw, Vector3.one, CFrame.new(), K.soul, true, 1, Enum.PartType.Ball)
-	local TRAIL_N, TRAIL_LIFE = 60, 0.6
-	local ribbon, glow = {}, {}
-	for i = 1, TRAIL_N do
-		ribbon[i] = part(sw, Vector3.new(0.1, 0.1, 0.1), CFrame.new(), K.soulPale, true, 1, Enum.PartType.Cylinder)
-		glow[i] = part(sw, Vector3.new(0.1, 0.1, 0.1), CFrame.new(), K.soul, true, 1, Enum.PartType.Cylinder)
-	end
-	local motes = {}
-	for i = 1, 24 do motes[i] = { p = part(sw, Vector3.one * 0.08, CFrame.new(), K.soulPale, true, 1, Enum.PartType.Ball), born = -10, pos = Vector3.zero, vel = Vector3.zero } end
-	local hist = {} -- { pos, t }, newest first
-	local nextMote = 0
-
-	local function soulPos(u, t)
-		local s = ease(u)
-		local pos = bez(math.min(1, s + 0.07 * (1 - s)))
-		local side = fwd:Cross(Vector3.yAxis)
-		local amp = (1 - u) ^ 1.4
-		return pos + side * math.sin(t * 2.6) * 2.2 * amp + Vector3.new(0, math.sin(t * 3.4 + 1) * 1.2 * amp, 0)
+	local function meteorFor(p)
+		local m = ws.meteors[p]
+		if not m then
+			m = newMeteor(folder)
+			ws.meteors[p] = m
+		end
+		return m
 	end
 
-	-- painting first (or the 3D map straight away when this map has no painting yet)
+	-- 3) the 2D anime layer (drawn over the real world, redrawn 12x a second)
+	local root = track(new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 1 }, gui))
+	local stars = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 2 }, root)
+	for _ = 1, 90 do
+		local s = rng:NextInteger(1, 3)
+		new("Frame", { Position = UDim2.fromScale(rng:NextNumber(), rng:NextNumber()), Size = UDim2.fromOffset(s, s), BorderSizePixel = 0,
+			BackgroundColor3 = rng:NextNumber() < 0.3 and rgb(170, 205, 255) or WHITE, BackgroundTransparency = rng:NextNumber(0, 0.5), ZIndex = 2 }, stars)
+	end
+	local spaceTop = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BorderSizePixel = 0, ZIndex = 1 }, root)
+	new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.05), NumberSequenceKeypoint.new(0.55, 0.55), NumberSequenceKeypoint.new(1, 0.9) }) }, spaceTop)
+	local heatEdges = {}
+	for i, rot in { 0, 90, 180, 270 } do
+		local e = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = SD.FIRE[3], BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 3 }, root)
+		new("UIGradient", { Rotation = rot, Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(0.22, 1), NumberSequenceKeypoint.new(1, 1) }) }, e)
+		heatEdges[i] = e
+	end
+	local art = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 5 }, root)
+	local lines = {}
+	for i = 1, 44 do
+		local f = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), BorderSizePixel = 0, BackgroundColor3 = (i % 4 == 0) and SD.INK or WHITE, BackgroundTransparency = 1, ZIndex = 6 }, art)
+		new("UIStroke", { Color = SD.INK, Thickness = 1, Transparency = 1 }, f)
+		new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.25, 0), NumberSequenceKeypoint.new(1, 0.35) }) }, f)
+		lines[i] = f
+	end
+	local tongues = {}
+	for i = 1, 9 do
+		local f = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), BorderSizePixel = 0, BackgroundColor3 = SD.FIRE[(i % 3) + 2], BackgroundTransparency = 1, ZIndex = 7 }, art)
+		new("UICorner", { CornerRadius = UDim.new(0.5, 0) }, f)
+		new("UIStroke", { Color = SD.INK, Thickness = 3, Transparency = 1 }, f)
+		new("UIGradient", { Color = ColorSequence.new(SD.FIRE[1], SD.FIRE[(i % 3) + 2]) }, f)
+		tongues[i] = f
+	end
+	local scratches = {}
+	for i = 1, 5 do
+		local f = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), BorderSizePixel = 0, BackgroundColor3 = SD.INK, BackgroundTransparency = 1, ZIndex = 8 }, art)
+		new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }) }, f)
+		scratches[i] = f
+	end
+	local function hideArt()
+		for _, f in lines do f.BackgroundTransparency = 1; f.UIStroke.Transparency = 1 end
+		for _, f in tongues do f.BackgroundTransparency = 1; f.UIStroke.Transparency = 1 end
+		for _, f in scratches do f.BackgroundTransparency = 1 end
+	end
+	-- redraw the art around screen point `sp`, trailing toward screen direction `d2`, intensity `k` (0..1)
+	local function drawArt(sp, d2, k)
+		local vp = camera.ViewportSize
+		local reach = math.sqrt(vp.X * vp.X + vp.Y * vp.Y) * 0.6
+		local trailAng = math.atan2(d2.Y, d2.X)
+		for i, f in lines do
+			local a = rng:NextNumber(0, math.pi * 2)
+			local r0 = rng:NextNumber(0.18, 0.75) * reach
+			local len = rng:NextNumber(0.25, 0.6) * reach * (0.5 + 0.5 * k)
+			f.Position = UDim2.fromOffset(sp.X + math.cos(a) * r0, sp.Y + math.sin(a) * r0)
+			f.Size = UDim2.fromOffset(len, (i % 5 == 0) and 4 or 2)
+			f.Rotation = math.deg(a)
+			local on = rng:NextNumber() < (0.35 + 0.65 * k)
+			f.BackgroundTransparency = on and (0.15 + 0.5 * (1 - k)) or 1
+			f.UIStroke.Transparency = on and 0.5 or 1
+		end
+		for i, f in tongues do
+			local spread = (i - 5) / 4 * math.rad(32)
+			local a = trailAng + spread + rng:NextNumber(-0.1, 0.1)
+			local len = (70 + 150 * k) * rng:NextNumber(0.6, 1.15) * (1 - math.abs(i - 5) / 7)
+			local off = rng:NextNumber(10, 30)
+			f.Position = UDim2.fromOffset(sp.X + math.cos(a) * off, sp.Y + math.sin(a) * off)
+			f.Size = UDim2.fromOffset(len, (16 + 18 * k) * rng:NextNumber(0.7, 1.1))
+			f.Rotation = math.deg(a)
+			f.BackgroundTransparency = k > 0.05 and 0.05 or 1
+			f.UIStroke.Transparency = k > 0.05 and 0 or 1
+		end
+		for _, f in scratches do
+			local a = trailAng + rng:NextNumber(-0.5, 0.5)
+			local off = rng:NextNumber(40, 140)
+			f.Position = UDim2.fromOffset(sp.X + math.cos(a) * off, sp.Y + math.sin(a) * off)
+			f.Size = UDim2.fromOffset(rng:NextNumber(60, 180) * k, rng:NextInteger(2, 4))
+			f.Rotation = math.deg(a)
+			f.BackgroundTransparency = (k > 0.2 and rng:NextNumber() < 0.7) and 0.1 or 1
+		end
+	end
+
+	-- 4) the drop path (re-computed every frame from the live spawn position)
+	local function path(land, look, u)
+		local slant = -look * SD.SLANT -- it comes in from behind the spawn's facing
+		local dir = (Vector3.new(0, -1, 0) + Vector3.new(slant.X, 0, slant.Z)).Unit -- the fall direction
+		local s = u ^ 2.6 -- accelerating
+		local endP = land + Vector3.new(0, 1.2, 0)
+		return endP - dir * SD.HEIGHT * (1 - s), dir, s
+	end
+	local function speedAt(u) return math.clamp(2.6 * u ^ 1.6, 0, 2.6) / 2.6 end
+
+	camera.CameraType = Enum.CameraType.Scriptable
 	fade.BackgroundTransparency = 0
 	tween(fade, TweenInfo.new(0.45), { BackgroundTransparency = 1 })
-	if painting then
-		tween(paintScale, TweenInfo.new(FLY0 + 1.0 - SHOW, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 1.35 })
-		task.delay(1.4 - SHOW, function()
-			if not root.Parent then return end
-			tween(mapVP, TweenInfo.new(0.8, Enum.EasingStyle.Sine), { ImageTransparency = 0 })
-			tween(painting, TweenInfo.new(0.85, Enum.EasingStyle.Sine), { ImageTransparency = 1 })
-		end)
-	end
+	sfx("SoulIgnite")
+	local reentrySound, impactDone, revealStarted, lastArt, shakeUntil = false, false, false, -1, 0
+	local myLand, myLook = nil, Vector3.new(0, 0, -1)
 
-	renderFns.warp = function(dt)
+	local function camStep(dt)
+		if not alive(token) or warpState ~= ws then return end
 		local t = T()
-		local u = math.clamp((t - FLY0) / (FLY1 - FLY0), 0, 1)
-		local s = ease(u)
-		-- v5.10: the camera TRAILS the soul. It rides the same path but a good way behind (up to ~16% of the flight + a few studs back along the path and up),
-		-- looks at the soul, and only turns toward the spawn at the very end. Before, it sat right on top of the soul and the soul filled the screen.
-		local pos = soulPos(u, t)
-		local lagS = math.max(0, s - 0.16 * math.min(1, s * 5))
-		local here = bez(lagS)
-		local tan = bez(math.min(1, lagS + 0.03)) - bez(math.max(0, lagS - 0.03))
-		tan = tan.Magnitude > 0.01 and tan.Unit or fwd
-		local camPos = here - tan * 6 + Vector3.new(0, 3.4, 0)
-		local look = (pos + Vector3.new(0, 0.9, 0)):Lerp(endPos + fwd * 30, (s ^ 3) * 0.85)
-		if (look - camPos).Magnitude < 0.5 then look = camPos + fwd end
-		local camCF = CFrame.lookAt(camPos, look)
-		mapCam.CFrame, soulCam.CFrame = camCF, camCF
-		mapCam.FieldOfView = 60 + 8 * math.sin(math.pi * s)
-		soulCam.FieldOfView = mapCam.FieldOfView
-		-- soul
-		local light = math.clamp((t - 0.75) / 0.7, 0, 1)
-		local pulse = 1 + 0.1 * math.sin(t * 13)
-		local sz = (0.18 + 0.32 * light) * pulse
-		core.Size, halo1.Size, halo2.Size = Vector3.one * sz, Vector3.one * sz * 2.1, Vector3.one * sz * 3.6
-		core.CFrame, halo1.CFrame, halo2.CFrame = CFrame.new(pos), CFrame.new(pos), CFrame.new(pos)
-		core.Transparency = 1 - light
-		halo1.Transparency = 1 - 0.32 * light
-		halo2.Transparency = 1 - 0.12 * light
-		-- trail history: a new point every 0.12 studs of movement
-		if light > 0 and (not hist[1] or (hist[1].pos - pos).Magnitude > 0.12) then
-			table.insert(hist, 1, { pos = pos, t = t })
-			if #hist > TRAIL_N + 1 then table.remove(hist) end
-		end
-		for i = 1, TRAIL_N do
-			local a, b = hist[i], hist[i + 1]
-			local seg, gl = ribbon[i], glow[i]
-			if a and b and i > 0 then
-				local age = (t - b.t) / TRAIL_LIFE
-				local k = 1 - math.max(age, (i - 1) / TRAIL_N)
-				if k > 0 then
-					local pa = (i == 1) and pos or a.pos
-					local len = (b.pos - pa).Magnitude
-					if len > 0.001 then
-						local w = sz * 0.55 * k ^ 0.8
-						local cf = CFrame.lookAt((pa + b.pos) / 2, b.pos) * CFrame.Angles(0, math.rad(90), 0)
-						seg.Size = Vector3.new(len + w * 0.6, w, w)
-						seg.CFrame = cf
-						seg.Transparency = 1 - 0.85 * k * light
-						gl.Size = Vector3.new(len + w * 1.6, w * 2.8, w * 2.8)
-						gl.CFrame = cf
-						gl.Transparency = 1 - 0.22 * k * light
-					else
-						seg.Transparency, gl.Transparency = 1, 1
+		local frame = math.floor(t * SD.ANIME_FPS) -- (GunClient puts the first-person gun away by itself while the camera is Scriptable)
+		local u = math.clamp((t - SD.DROP0) / (SD.LAND - SD.DROP0), 0, 1)
+		local spd = speedAt(u)
+		local alt = SD.HEIGHT * (1 - u ^ 2.6)
+		local heat = math.clamp((1 - alt / SD.HEIGHT) * 2.4, 0, 1) * math.clamp(alt / 25, 0, 1) -- burns up high, cools right before the ground
+		if alt > 60 then heat = math.max(heat, 0.12 * math.clamp((t - SD.SPACE0) / 0.5, 0, 1)) end -- it ignites in space
+		-- every soul (bodies stay hidden until the reveal)
+		for _, p in dropPlayers() do
+			local land, look, ch = landOf(p)
+			if land then
+				if p == player then myLand, myLook = land, look end
+				if ch and not ws.revealed[ch] then
+					for _, d in ch:GetDescendants() do
+						if d:IsA("BasePart") or d:IsA("Decal") then d.LocalTransparencyModifier = 1 end
 					end
-				else
-					seg.Transparency, gl.Transparency = 1, 1
 				end
-			else
-				seg.Transparency, gl.Transparency = 1, 1
-			end
-		end
-		-- a few soft motes peel off the trail and drift away
-		if light > 0.5 and u > 0 and t >= nextMote then
-			nextMote = t + 0.05
-			for _, m in motes do
-				if t - m.born > 0.9 then
-					m.born, m.pos = t, pos
-					m.vel = Vector3.new(rng:NextNumber(-1, 1), rng:NextNumber(-0.4, 1), rng:NextNumber(-1, 1)) * 1.6
-					break
+				local m = meteorFor(p)
+				if t < SD.LAND then
+					local pos, dir = path(land, look, u)
+					setMeteorVisible(m, true)
+					stepMeteor(m, pos, dir, heat, spd, t, dt, frame)
+				elseif m.fire.Parent then
+					setMeteorVisible(m, false)
+					for _, seg in m.ribbon do seg.Transparency = 1 end
+					if not m.impacted then
+						m.impacted = true
+						impactFx(folder, land, p == player and 1 or 0.8)
+					end
 				end
 			end
 		end
-		for _, m in motes do
-			local a = (t - m.born) / 0.9
-			if a >= 0 and a < 1 then
-				m.pos += m.vel * dt
-				m.p.CFrame = CFrame.new(m.pos)
-				m.p.Size = Vector3.one * (0.09 * (1 - a) + 0.02)
-				m.p.Transparency = 0.25 + 0.75 * a
-			else
-				m.p.Transparency = 1
-			end
-		end
-	end
+		if not reentrySound and t >= SD.DROP0 then reentrySound = true sfx("SoulReentry") end
 
-	-- 5) gradual white flash, then you are on your spawn (first person) and the card roll starts
-	if not waitUntil(FLASH0) then return end
-	tween(flash, TweenInfo.new(FLASH1 - FLASH0, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), { BackgroundTransparency = 0 })
-	if not waitUntil(FLASH1 + 0.05) then return end
-	renderFns.warp = nil
-	killScreens()
-	fade.BackgroundTransparency = 1
-	restoreWorld()
-	do -- hand the camera over looking the way your spawn faces
-		local ch = player.Character
-		local head = ch and ch:FindFirstChild("Head")
-		local r = ch and ch:FindFirstChild("HumanoidRootPart")
-		if head and r then
-			local lv = Vector3.new(r.CFrame.LookVector.X, 0, r.CFrame.LookVector.Z)
-			if lv.Magnitude > 0.05 then camera.CFrame = CFrame.lookAt(head.Position, head.Position + lv.Unit) end
+		-- space look eases off as the soul enters the atmosphere
+		local spaceK = math.clamp(alt / SD.HEIGHT - 0.45, 0, 0.55) / 0.55
+		ws.cc.Brightness = -0.3 * spaceK
+		ws.cc.Contrast = 0.25 * spaceK + 0.12 * heat
+		ws.cc.Saturation = -0.2 * spaceK + 0.25 * heat
+		ws.cc.TintColor = rgb(200, 212, 255):Lerp(WHITE, 1 - spaceK):Lerp(rgb(255, 232, 210), heat * 0.6)
+		stars.Visible = spaceK > 0.02
+		for _, s in stars:GetChildren() do s.BackgroundTransparency = 1 - spaceK * 0.9 end
+		spaceTop.BackgroundTransparency = 1 - spaceK
+		for _, e in heatEdges do e.BackgroundTransparency = 1 - 0.55 * heat * (0.8 + 0.2 * math.sin(t * 25)) end
+		ws.blur.Size = 5 * heat * spd
+
+		-- camera (until the respawn reveal takes over)
+		if not revealStarted and myLand then
+			local pos, dir = path(myLand, myLook, u)
+			local side = dir:Cross(Vector3.yAxis)
+			side = side.Magnitude > 0.05 and side.Unit or Vector3.xAxis
+			local camCF, fov
+			if t < SD.DROP0 then
+				-- space: beside the soul, looking down past it at the map far below; a slow drift in
+				local k = math.clamp((t - SD.SPACE0) / (SD.DROP0 - SD.SPACE0), 0, 1)
+				local cp = pos + side * (16 - 4 * k) - dir * (9 - 3 * k) + Vector3.new(0, 4, 0)
+				camCF = CFrame.lookAt(cp, pos + dir * 6) -- the soul in view, the map far below behind it
+				fov = 58
+			else
+				-- chase: behind + beside the soul, pulled further back at speed; looks ahead down the fall
+				local back = 9 + 10 * spd
+				local cp = pos - dir * back + side * (6 + 3 * spd) + Vector3.new(0, 2, 0)
+				local chase = CFrame.lookAt(cp, pos + dir * (18 + 30 * spd))
+				-- the last moment: the camera stops in the air where the respawn reveal will start (behind + above the spawn), the soul slams past it
+				local ch = player.Character
+				local cf, size
+				if ch then cf, size = ch:GetBoundingBox() end
+				local height = size and math.max(size.Y, 4) or 5
+				local orbit = math.rad(-14)
+				local bk = (CFrame.Angles(0, orbit, 0) * CFrame.lookAt(Vector3.zero, myLook)).LookVector
+				local hover = myLand - bk * 8.4 + Vector3.new(0, 5.2, 0)
+				local landCam = CFrame.lookAt(hover, myLand + Vector3.new(0, height * 0.35, 0))
+				local lastK = math.clamp((t - (SD.LAND - 0.42)) / 0.34, 0, 1)
+				lastK = lastK * lastK * (3 - 2 * lastK)
+				camCF = chase:Lerp(landCam, lastK)
+				fov = (60 + 22 * spd) * (1 - lastK) + 62 * lastK
+			end
+			if t < shakeUntil then
+				local a = (shakeUntil - t) / 0.35
+				camCF = camCF * CFrame.new(rng:NextNumber(-1, 1) * 0.6 * a, rng:NextNumber(-1, 1) * 0.6 * a, 0) * CFrame.Angles(0, 0, rng:NextNumber(-1, 1) * 0.03 * a)
+			end
+			camera.CFrame = camCF
+			camera.FieldOfView = fov
+		end
+
+		-- the anime layer: a new drawing 12x a second (it holds between drawings, like hand-drawn animation)
+		if frame ~= lastArt then
+			lastArt = frame
+			local m = ws.meteors[player]
+			if t >= SD.DROP0 and t < SD.LAND - 0.05 and m and myLand then
+				local pos, dir = path(myLand, myLook, u)
+				local a = camera:WorldToViewportPoint(pos)
+				local b = camera:WorldToViewportPoint(pos - dir * 6)
+				if a.Z > 0 then
+					local d2 = Vector2.new(b.X - a.X, b.Y - a.Y)
+					if d2.Magnitude < 1 then d2 = Vector2.new(0, -1) end
+					drawArt(Vector2.new(a.X, a.Y), d2.Unit, math.clamp(spd * 1.3 * heat + 0.15, 0, 1))
+				else
+					hideArt()
+				end
+			else
+				hideArt()
+			end
+		end
+
+		-- IMPACT
+		if not impactDone and t >= SD.LAND then
+			impactDone = true
+			shakeUntil = t + 0.35
+			sfx("SoulImpact")
+			hideArt()
+			local sp = myLand and camera:WorldToViewportPoint(myLand) or Vector3.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2, 1)
+			-- two IMPACT FRAMES: black + white burst lines, then white + black lines (each ~2 frames of a 30 fps anime)
+			local imp = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BorderSizePixel = 0, ZIndex = 30 }, root)
+			local burst = {}
+			for i = 1, 26 do
+				local a = (i / 26) * math.pi * 2 + rng:NextNumber(-0.1, 0.1)
+				local f = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromOffset(sp.X + math.cos(a) * 30, sp.Y + math.sin(a) * 30),
+					Size = UDim2.fromOffset(rng:NextNumber(500, 1400), rng:NextInteger(3, 10)), Rotation = math.deg(a), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 31 }, imp)
+				new("UIGradient", { Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }) }, f)
+				burst[i] = f
+			end
+			task.delay(0.07, function()
+				if not imp.Parent then return end
+				imp.BackgroundColor3 = WHITE
+				for _, f in burst do f.BackgroundColor3 = BLACK end
+				task.delay(0.07, function() if imp.Parent then imp:Destroy() end end)
+			end)
+			-- the big sound-word
+			local word = label(root, SD.IMPACT_TEXT, 150, F.H, SD.FIRE[2], { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(sp.X + 150, math.max(140, sp.Y - 170)),
+				Size = UDim2.fromOffset(700, 190), Rotation = -9, ZIndex = 32 })
+			new("UIStroke", { Color = SD.INK, Thickness = 9 }, word)
+			local wsScale = new("UIScale", { Scale = 2.2 }, word)
+			task.delay(0.14, function()
+				if not word.Parent then return end
+				tween(wsScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
+				task.delay(0.75, function()
+					if not word.Parent then return end
+					tween(word, TweenInfo.new(0.35), { TextTransparency = 1 })
+					tween(word.UIStroke, TweenInfo.new(0.35), { Transparency = 1 })
+					tween(wsScale, TweenInfo.new(0.35), { Scale = 1.15 })
+				end)
+			end)
+			word.Visible = false
+			task.delay(0.14, function() if word.Parent then word.Visible = true end end)
+		end
+
+		-- RESPAWN REVEAL: hand every body to RespawnReveal (locally); its camera hovers behind you, then wooshes into your head
+		if not revealStarted and t >= SD.REVEAL_AT then
+			revealStarted = true
+			pcall(function() RunService:UnbindFromRenderStep("BreaklineWarpCam") end) -- the camera now belongs to RespawnReveal
+			-- the world goes back to normal colours for the reveal
+			ws.cc.Brightness, ws.cc.Contrast, ws.cc.Saturation, ws.cc.TintColor = 0, 0, 0, WHITE
+			ws.blur.Size = 0
+			for _, e in heatEdges do e.BackgroundTransparency = 1 end
+			stars.Visible = false
+			spaceTop.BackgroundTransparency = 1
+			local now = serverNow()
+			for _, p in dropPlayers() do
+				local ch = p.Character
+				if ch and not ws.revealed[ch] then
+					ws.revealed[ch] = true
+					ch:SetAttribute("RevealStart", now)
+					ch:SetAttribute("RevealBuild", C.REVEAL_BUILD)
+					ch:SetAttribute("RevealFrom", 0)
+					ch:SetAttribute("Revealing", true)
+				end
+			end
+			local revealEnd = now + C.REVEAL_TIME
+			task.delay(C.REVEAL_TIME + 0.02, function()
+				if warpState ~= ws then return end
+				for ch in ws.revealed do
+					if ch.Parent and ch:GetAttribute("Revealing") == true and serverNow() >= revealEnd - 0.05 then ch:SetAttribute("Revealing", false) end
+				end
+				game:GetService("UserInputService").MouseDeltaSensitivity = C.MOUSE_SENS or 1 -- v5.16: the match sensitivity (GunClient keeps it there)
+			end)
 		end
 	end
-	game:GetService("UserInputService").MouseDeltaSensitivity = C.MOUSE_SENS or 1 -- v5.16: the match sensitivity (GunClient keeps it there)
-	tween(flash, TweenInfo.new(OUT1 - FLASH1 - 0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 })
+	RunService:BindToRenderStep("BreaklineWarpCam", Enum.RenderPriority.Camera.Value + 1, camStep)
 end
 
 -- ======================================================================================
