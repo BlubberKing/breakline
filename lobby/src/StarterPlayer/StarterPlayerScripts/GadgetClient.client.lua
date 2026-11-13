@@ -1,6 +1,7 @@
+-- GadgetClient (v5.19 FIX: sentry / bubble shield / prox mine can be PLACED again (a click with a placeable did nothing since v5.18); reach 20 studs)
 -- GadgetClient (v5.18: FRAG COOKING - pressing the click pulls the pin (FUSE readout under the crosshair), release throws with the fuse that is left, right click
 --   while cooking = underhand toss; the held-gadget arm is a square block in your costume colours that starts at the back of the hand; placeables can go
---   on any surface up to GM.REACH (60) studs away)
+--   on any surface up to GM.REACH studs away (v5.19: 20))
 -- GadgetClient (LOBBY copy, NEW in v5.17: the TRAINING ZONE) - Breakline's GadgetClient; blockedNow() is also true everywhere outside the training zone.
 -- GadgetClient (v5.16: a POSE puts the held gadget away and blocks gadgets until it ends)
 -- GadgetClient v2.1 (v4.9: STRONGER THROWS - fast flat throw with light in-flight gravity, released from the throwing hand, RIGHT CLICK = underhand toss;
@@ -525,6 +526,9 @@ onPrimaryDown = function()
 	if held.cfg.kind == "throw" then
 		aimingThrow, aimStart = true, os.clock()
 		startCook() -- v5.18: pressing pulls the pin (frag), the fuse runs from now
+	else
+		-- v5.19 FIX: sentry / bubble shield / prox mine could not be placed at all - the v5.18 frag-cook change had moved doPlace() INSIDE the
+		-- throw branch above, so a click with a placeable did nothing. Placeables place on the press again.
 		doPlace()
 	end
 end
