@@ -1,4 +1,4 @@
--- ShopServer v1 (Script in ServerScriptService) - LOBBY place only. NEW in v4.7.
+-- ShopServer v1.1 (Script in ServerScriptService) - LOBBY place only. NEW in v4.7. v5.19: +3,000 souls with the starter pick (STARTER_SOULS).
 -- 1) BUYING. The shop (ShopClient) sells every gun / gadget / movement ability in LobbyCatalog.Price for SOULS. The client only asks
 --    ("Buy", id); everything is checked here: real item, has a price, not owned yet, enough souls, starter pick done. Souls are taken and the
 --    item is added to the saved collection (profile key "Owned", mirrored as the attribute OwnedJson). Saved right away.
@@ -17,6 +17,8 @@ local CS = game:GetService("CollectionService")
 local Catalog = require(RS:WaitForChild("LobbyCatalog"))
 local Profiles = require(script.Parent:WaitForChild("ProfileStore"))
 local Rules = require(script.Parent:WaitForChild("LoadoutRules"))
+-- v5.19 (owner): a NEW player gets 3,000 souls to start with, the moment they make the starter pick (weapon + movement)
+local STARTER_SOULS = 3000
 
 local folder = RS:FindFirstChild("ShopRemotes") or Instance.new("Folder")
 folder.Name = "ShopRemotes"
@@ -65,8 +67,9 @@ StarterR.OnServerInvoke = function(player, weapon, move)
 	Profiles.Set(player, "Loadout", l)
 	Profiles.Set(player, "Weapon", weapon)
 	Rules.Publish(player, l)
+	Profiles.Increment(player, "Souls", STARTER_SOULS) -- v5.19: starting souls (only here, so it can never be given twice: StarterDone is set above)
 	task.spawn(Profiles.Save, player)
-	return true, "Welcome to Breakline."
+	return true, "Welcome to Breakline. +3,000 souls to start."
 end
 
 Players.PlayerRemoving:Connect(function(p) lastBuy[p] = nil end)
