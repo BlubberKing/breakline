@@ -41,8 +41,8 @@ local CFG = {
 	CARRY_TORSO_SHARE = 0.25,              -- how much of the aim pitch the torso takes while carrying
 	POUCH      = V3(-0.6, -0.05, -0.55), -- LowerTorso space
 	KICK_BACK = 0.14, KICK_UP_DEG = 4, KICK_TORSO_DEG = 1.2,
-	BOB = 0.03,
-	STRIDE_TWIST_DEG = 3.2, -- slim body: a little hip/shoulder counter-twist while running (reads as a longer stride)
+	BOB = 0,              -- v5.19: 0.03 -> 0 (owner: the body must stay stable while walking / running - no bob / tilt)
+	STRIDE_TWIST_DEG = 0, -- v5.19: 3.2 -> 0 (no hip / shoulder counter-twist every step)
 	TURN_LAG_DEG = 1.2, TURN_LAG_MAX = 7,
 	SLIDE_LEAN = 0,     -- v4.1: body leans BACK while sliding (positive = back); MoveAnim now poses the legs + arms, so this is a bit less than before (25)
 	CROUCH_LEAN = 0,
@@ -252,7 +252,7 @@ local function update(st, dt, t, isLocal)
 	st.bobT += dt * hs * 0.55
 	local amp = clamp(hs / 16, 0, 1.5) * (1 - 0.75 * st.ads) * (1 - st.slide) * (onGround and 1 or 0.25)
 	local bob = CFrame.new(sin(st.bobT) * CFG.BOB * amp, -abs(cos(st.bobT)) * CFG.BOB * amp, 0)
-		* CFrame.Angles(0, 0, sin(st.bobT) * rad(2.5) * amp)
+		* CFrame.Angles(0, 0, sin(st.bobT) * rad(2.5) * amp * (CFG.BOB > 0 and 1 or 0)) -- v5.19: no side tilt either when BOB = 0
 
 	-- blended pose
 	local P = st.poses
