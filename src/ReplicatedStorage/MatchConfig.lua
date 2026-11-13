@@ -8,7 +8,7 @@ C.MIN_PLAYERS  = 1   -- players needed to start a round (raise to 2-6 for live g
 C.READY_TIMEOUT  = 40  -- seconds to wait for slow clients to finish loading before starting without them
 C.LOAD_HOLD      = 10  -- v5.16: 10 s (was 15). The map loading screen stays up this many seconds AFTER everybody has loaded, then the match starts. Clients also keep it at least this long since they joined.
 C.PREGAME_TIME   = 20  -- pre-game screen (loadout + clock)
-C.WARP_TIME      = 5.6 -- v5.9: soul flies through the map's watercolor painting + white flash (MatchFlow is timed to this: keep it at 5.6)
+C.WARP_TIME      = 6.0 -- v5.19: METEOR SOUL DROP (space -> re-entry -> impact) + the respawn reveal (REVEAL_TIME); MatchFlow times everything from this. Keep >= 5.5
 C.COUNTDOWN_TIME = 3   -- 3-2-1 on the map, everybody frozen
 -- v4.3 card pick (phase "Cards", right after the run-in): the 3 reels pop in 0.5 s apart and roll, then you have CARD_PICK seconds.
 C.CARD_REVEAL    = 2.8 -- roll time: CardRoll lands the reels at about 1.65 / 2.15 / 2.65 s (do not go below 2.7)
