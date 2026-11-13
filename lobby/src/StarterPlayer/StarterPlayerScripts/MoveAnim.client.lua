@@ -1,5 +1,6 @@
 -- MoveAnim v3.4 (v5.18: calmer run arms - the arms follow a slower, smoothed swing with a smaller arc while the legs keep the pace, longer strides at a sprint;
 --   new athletic JUMP pose - both knees gently tucked, slight lean, arms low and out for balance, no more fist thrown over the head) (both games, identical)
+-- MoveAnim v3.5 (v5.19: STABLE body while walking / running - no bounce, no side roll, no shoulder twist; legs + arms unchanged)
 -- MoveAnim v3.3 (v5.16: stands down while a character holds a POSE - PoseClient animates it) (v3.2 v4.9: new grenade-ready hold pose + a real 3-beat throw - cock, whip, follow-through - and an underhand toss, timed to the release) (was v3.1 v4.7: crouch + slide GROUND CLEARANCE - the lowest part of the body is measured every frame and the body is lifted until nothing sinks into the floor; slide wobble removed (no more shaking right hand / swaying body)) (v3: v4.6: sprint-leap AIR POSE so jumps keep their momentum look, tactical half-kneel CROUCH fitted to the real leg lengths + hip height so the feet never sink into the floor)
 -- (v2 header:) MoveAnim v2 (v4.5: smooth distance-driven stride, big arm swing, new slide + dust) - was v1 (LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games. NEW in v4.1. Keep the two copies identical.
 -- Real animations for WALKING, RUNNING (sprint), CROUCHING (idle + crouch-walk) and SLIDING, for EVERY player (what you see on other people; in the
@@ -221,11 +222,14 @@ local function frame(st, dt)
 		blend(st.lKnee, CF(-(kneeBase + kneeSwing * pos2(c2) + 0.25 * run * pos2(-s2)), 0, 0), w)
 		blend(st.rAnk, CF(-0.3 * pos2(c1) * (0.5 + run) + 0.12 * pos2(-c1) * run, 0, 0), w)
 		blend(st.lAnk, CF(-0.3 * pos2(c2) * (0.5 + run) + 0.12 * pos2(-c2) * run, 0, 0), w)
-		-- body: forward lean, bounce on every foot strike, shoulders twist against the hips, little side sway
+		-- body: forward lean only. v5.19 (owner: "the walk and run makes your character bob / bounce / tilt left and right every step, have the
+		-- player stable"): the bounce on every foot strike, the side roll and the shoulder / hip twist are gone (BODY_BOB / BODY_ROLL / BODY_TWIST = 0;
+		-- raise them back toward 1 for the old look). Legs + arms still animate.
+		local BODY_BOB, BODY_ROLL, BODY_TWIST = 0, 0, 0
 		local lean = rad(2 + 12 * run) * st.moveAmt
-		local bob = -(0.5 + 0.5 * cos(2 * p)) * (0.05 + 0.13 * run) * k * st.moveAmt
-		local twist = s1 * rad(7 + 15 * run) * st.moveAmt
-		local roll = s1 * rad(1.5 + 3 * run) * st.moveAmt
+		local bob = -(0.5 + 0.5 * cos(2 * p)) * (0.05 + 0.13 * run) * k * st.moveAmt * BODY_BOB
+		local twist = s1 * rad(7 + 15 * run) * st.moveAmt * BODY_TWIST
+		local roll = s1 * rad(1.5 + 3 * run) * st.moveAmt * BODY_ROLL
 		if st.rootJ then
 			blend(st.rootJ, CFrame.new(0, bob, 0) * CF(-lean, -twist * 0.35, roll), w)
 		end
