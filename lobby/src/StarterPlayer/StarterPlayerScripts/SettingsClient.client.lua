@@ -1,4 +1,4 @@
--- SettingsClient v1.1 (v5.18: the gear sits a little lower + further right (it sat right on top of the Roblox buttons) - ICON_X / ICON_DOWN; the panel is now a TALL
+-- SettingsClient v1.2 (v5.18: the gear sits a little lower + further right (it sat right on top of the Roblox buttons) - ICON_X / ICON_DOWN; the panel is now a TALL
 --   single column (CONTROLS, then AUDIO + VISUALS, then INTERFACE stacked) instead of a wide three-column strip) (v1 LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.17 (GDD 5.12).
 -- SETTINGS: a round gear button in the top left, right next to the Roblox chat / microphone buttons (ICON_X below: move it left / right if it overlaps
 -- yours). Click it (or press ESC to close) = a long horizontal panel in the middle of the screen with three columns:
@@ -57,7 +57,9 @@ local gui = new("ScreenGui", { Name = "SettingsGui", ResetOnSpawn = false, Ignor
 -- ======================================================================================
 -- the gear button (top left, next to the Roblox chat + mic buttons)
 -- ======================================================================================
-local inset = GuiService:GetGuiInset().Y
+-- v1.2: the gear no longer depends on the place's GuiInset (it read a different value in the match place, so the gear landed somewhere else than in the lobby).
+-- Both places now use the same fixed top-bar height, so the gear is in exactly the same spot everywhere.
+local inset = 58
 local BTN = math.clamp(inset - 10, 30, 44)
 local btn = new("TextButton", { Name = "GearButton", Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(ICON_X, math.floor((inset - BTN) / 2) + ICON_DOWN), Size = UDim2.fromOffset(BTN, BTN),
 	BackgroundColor3 = rgb(18, 19, 24), BackgroundTransparency = 0.12, BorderSizePixel = 0, ZIndex = 5 }, gui)
