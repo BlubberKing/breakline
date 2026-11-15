@@ -8,7 +8,8 @@ C.MIN_PLAYERS  = 1   -- players needed to start a round (raise to 2-6 for live g
 C.READY_TIMEOUT  = 40  -- seconds to wait for slow clients to finish loading before starting without them
 C.LOAD_HOLD      = 10  -- v5.16: 10 s (was 15). The map loading screen stays up this many seconds AFTER everybody has loaded, then the match starts. Clients also keep it at least this long since they joined.
 C.PREGAME_TIME   = 20  -- pre-game screen (loadout + clock)
-C.WARP_TIME      = 5.6 -- v5.9: soul flies through the map's watercolor painting + white flash (MatchFlow is timed to this: keep it at 5.6)
+C.WARP_STYLE     = "Arrival" -- v5.20: "Arrival" = short title card + soul reveal (WARP_TIME 3.0); "Meteor" = the old meteor soul drop (needs WARP_TIME 6.0)
+C.WARP_TIME      = 3.0 -- seconds the warp phase lasts; MatchFlow times everything from this. Arrival: keep >= 2.5. Meteor style: set 6.0
 C.COUNTDOWN_TIME = 3   -- 3-2-1 on the map, everybody frozen
 -- v4.3 card pick (phase "Cards", right after the run-in): the 3 reels pop in 0.5 s apart and roll, then you have CARD_PICK seconds.
 C.CARD_REVEAL    = 2.8 -- roll time: CardRoll lands the reels at about 1.65 / 2.15 / 2.65 s (do not go below 2.7)
@@ -84,6 +85,8 @@ C.MAPS = {
 		-- folder "testing grounds_map" uses this entry. A new map: add a line like  ["my map"] = { Name = "MY MAP", Image = "rbxassetid://..." },
 		["testing grounds"] = { Name = "TESTING GROUNDS", Image = "rbxassetid://102949066481332" }, -- the uploaded LoadingArt_TestingGrounds image
 		test = { Name = "TESTING GROUNDS", Image = "rbxassetid://102949066481332" },
+		-- v5.20: Kyoto District. PUT YOUR UPLOADED LOADING IMAGE ID HERE (replace the 0). rbxassetid://0 = no picture yet (dark screen with the name).
+		["kyoto district"] = { Name = "KYOTO DISTRICT", Image = "rbxassetid://85111106677435" },
 	},
 	-- v5.9: the watercolor wash texture laid over the 3D fly-through of the map during the Warp (tileable, upload WarpWash.png).
 	-- "" = no texture (the fly-through still works: plain translucent washes + ink edges).
