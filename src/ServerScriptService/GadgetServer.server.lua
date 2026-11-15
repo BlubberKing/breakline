@@ -1,7 +1,7 @@
+-- GadgetServer v5.20 (owner Nov 14: SMART PLACEMENT - the Place handler finds the real surface next to the sent spot, needs a free line of sight from your head and runs GadgetModels.Check)
+-- (BREAKLINE copy: NO training-zone checks - those only belong in the Lobby copy. Restored in v5.20: the lobby copy had overwritten it, so no gadget could be equipped in a match.)
 -- GadgetServer (v5.18: FRAG COOKING - remote GadgetRemotes.Cook pulls the pin, the fuse counts from the press, held too long = it goes off in your hand, putting it away
 --   drops it; SENTRY + BUBBLE SHIELD can be placed on floors / walls / ceilings / ramps (they orient to the surface); the PROX MINE trigger works on walls + ceilings)
--- GadgetServer v-lobby (LOBBY place, NEW in v5.17: the TRAINING ZONE - Breakline's GadgetServer with: only usable while the Player attribute InTraining is true, only players inside the zone are hit,
---   nobody is ever really hurt (lobby Vitals), placed shields only flash. Everything else is the same code as a match.)
 -- GadgetServer (v5.14: GLASS CANNON +15% gadget damage dealt, gadget kills start HOT BARREL - ReplicatedStorage.CardEffects)
 -- GadgetServer v2.1 (v4.9: throws are much stronger - ~115 studs/s, light gravity in flight via a VectorForce until the first bounce, 60% run-speed
 --   carry-over, released from the throwing hand AFTER the windup so it leaves the hand when the arm whips; Use(slot, dir, underhand) for the right-click toss) (was v2: Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0, reworked in v4.1:
@@ -29,8 +29,8 @@ local HttpService = game:GetService("HttpService")
 local Cfg = require(RS:WaitForChild("GadgetConfig"))
 local GM = require(RS:WaitForChild("GadgetModels"))
 local Vitals = require(game:GetService("ServerScriptService"):WaitForChild("Vitals")) -- v4.4: shield + 200 health
-local MatchState = RS:FindFirstChild("MatchState") -- LOBBY: none (gadgets only work inside the TRAINING ZONE)
-local BoxDamage = SS:FindFirstChild("BoxDamage") -- (GunServer makes it in the lobby)
+local MatchState = RS:WaitForChild("MatchState", 30)
+local BoxDamage = SS:WaitForChild("BoxDamage", 30)
 
 local remotes = Instance.new("Folder")
 remotes.Name = "GadgetRemotes"
@@ -40,7 +40,7 @@ local EquipR = Instance.new("RemoteEvent"); EquipR.Name = "Equip"; EquipR.Parent
 local PlaceR = Instance.new("RemoteEvent"); PlaceR.Name = "Place"; PlaceR.Parent = remotes
 local CookR = Instance.new("RemoteEvent"); CookR.Name = "Cook"; CookR.Parent = remotes -- v5.18: frag cooking (the press pulls the pin)
 remotes.Parent = RS
-local DamageEvent = SS:FindFirstChild("GadgetDamage") or Instance.new("BindableEvent") -- LOBBY: GunServer may have made it already
+local DamageEvent = Instance.new("BindableEvent")
 DamageEvent.Name = "GadgetDamage"
 DamageEvent.Parent = SS
 local fxFolder = Instance.new("Folder")
@@ -55,7 +55,6 @@ local function nowT() return workspace:GetServerTimeNow() end
 local function teamName(p) return p and p.Team and not p.Neutral and p.Team.Name or nil end
 local function isEnemy(owner, p) -- is player p an enemy of the owner (or the owner themself = false)
 	if owner == p then return false end
-	if p:GetAttribute("InTraining") ~= true then return false end -- LOBBY: only players inside the training zone can be hit
 	local a, b = teamName(owner), teamName(p)
 	if not a or not b then return true end
 	return a ~= b
@@ -131,7 +130,7 @@ local function hurt(owner, targetPlayer, hum, dmg, hitPos)
 	if hum.Health <= 0 or dmg <= 0 then return end
 	if owner and targetPlayer ~= owner and CardFx.Has(owner, "glass_cannon") then dmg *= CardFx.GLASS_CANNON_DEAL end -- v5.14: GLASS CANNON
 	local dealt = Vitals.Damage(hum, dmg) -- shield first, then health (sentries have no shield and just take it)
-	local killed = Vitals.Killed(hum) -- LOBBY: a VIRTUAL kill (nobody is really hurt)
+	local killed = hum.Health <= 0
 	if killed and owner and targetPlayer ~= owner and (targetPlayer or hum.Parent:GetAttribute("IsBot")) and CardFx.Has(owner, "hot_barrel") then -- v5.14: HOT BARREL
 		owner:SetAttribute("HotBarrelUntil", workspace:GetServerTimeNow() + CardFx.HOT_BARREL_TIME)
 	end
@@ -169,10 +168,6 @@ end
 local function damageShield(part, dmg)
 	local rec = shields[part]
 	if not rec then return end
-	-- LOBBY (training zone): a placed shield takes no real damage, it only flashes
-	part.Transparency = 0.12
-	task.delay(0.07, function() if part.Parent then part.Transparency = 0.35 end end)
-	if true then return end
 	rec.hp -= dmg
 	part:SetAttribute("HP", math.max(rec.hp, 0))
 	if rec.hp <= 0 then breakShield(part, false) return end
@@ -765,7 +760,8 @@ local function prep(player, slot, kind)
 	local id = s.ids[slot]
 	local cfg = Cfg.Items[id]
 	if not cfg or cfg.kind ~= kind then return end
-	if player:GetAttribute("InTraining") ~= true then return end -- LOBBY: only inside the training zone
+	local ph = MatchState and MatchState:GetAttribute("Phase")
+	if MatchState and ph ~= "Playing" then return end
 	local char, _, root = aliveChar(player)
 	if not char then return end
 	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("Reviving") == true
@@ -881,15 +877,33 @@ EquipR.OnServerEvent:Connect(function(player, slot)
 	local s = state[player]
 	local id = s and s.ids[slot]
 	if not id or not Cfg.Items[id] or s.count[slot] <= 0 then return end
-	if player:GetAttribute("InTraining") ~= true then return end -- LOBBY: only inside the training zone
+	local ph = MatchState and MatchState:GetAttribute("Phase")
+	if MatchState and ph ~= "Playing" then return end
 	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("Reviving") == true
 		or char:GetAttribute("AbilityMode") == "climb" then return end
 	char:SetAttribute("HeldGadget", id)
 	char:SetAttribute("HeldSlot", slot)
 end)
 
------------------------------------------------------------------- placing (sentry / shield / mine) exactly where the preview was
-PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing)
+------------------------------------------------------------------ placing (sentry / shield / mine) where the preview was
+-- v5.20 SMART PLACEMENT: the client sends the spot it resolved (possibly snapped to a nearby surface) + the surface normal it means. The server never trusts
+-- the spot itself: it finds the real surface next to it, makes sure you can SEE it from your head and that it is in reach, then runs the same GM.Check.
+local function findSurface(spot, hint, rp)
+	local dirs = {}
+	if hint then dirs[1] = hint end
+	for _, v in { Vector3.yAxis, -Vector3.yAxis, Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis } do dirs[#dirs + 1] = v end
+	local best, bestD
+	for _, n in dirs do
+		local h = workspace:Raycast(spot + n * 0.8, -n * 1.8, rp) -- from the air side straight onto the surface
+		if h then
+			local d = (h.Position - spot).Magnitude
+			if d <= 1.0 and (not bestD or d < bestD - 0.05) then best, bestD = h, d end
+		end
+		if best and n == hint then break end -- the surface the client named is there: use it
+	end
+	return best
+end
+PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing, hintNormal)
 	if typeof(spot) ~= "Vector3" then return end
 	local now = os.clock()
 	if now - (lastUse[player] or 0) < 0.25 then return end
@@ -899,20 +913,22 @@ PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing)
 	if not pl then return end
 	local head = char:FindFirstChild("Head")
 	local from = head and head.Position or root.Position + Vector3.new(0, 1.5, 0)
-	local to = spot - from
-	local dist = to.Magnitude
+	local dist = (spot - from).Magnitude
 	if dist < 0.5 or dist > pl.range * 1.2 + 2 then return end
-	-- the server finds the surface itself (what the client says is only where to look)
 	local ignore = charList()
 	table.insert(ignore, fxFolder)
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	rp.FilterDescendantsInstances = ignore
 	rp.RespectCanCollide = true
-	local hit = workspace:Raycast(from, to.Unit * (dist + 1.5), rp)
-	if not hit or (hit.Position - spot).Magnitude > 2.5 then return end
+	local hint = (typeof(hintNormal) == "Vector3" and hintNormal.Magnitude > 0.5) and hintNormal.Unit or nil
+	local hit = findSurface(spot, hint, rp)
+	if not hit then return end
 	local pos, normal = hit.Position, hit.Normal
 	if (pos - from).Magnitude > pl.range * 1.2 + 2 then return end
+	-- you have to be able to see the spot (nobody places a mine through a wall)
+	local see = workspace:Raycast(from, (pos + normal * 0.3) - from, rp)
+	if see then return end
 	local ok = GM.Check(id, pos, normal, ignore)
 	if not ok then return end
 	local face = Vector3.zero
