@@ -2,6 +2,7 @@
 -- GadgetClient (v5.18: FRAG COOKING - pressing the click pulls the pin (FUSE readout under the crosshair), release throws with the fuse that is left, right click
 --   while cooking = underhand toss; the held-gadget arm is a square block in your costume colours that starts at the back of the hand; placeables can go
 --   on any surface up to GM.REACH studs away (v5.19: 20))
+-- GadgetClient (LOBBY copy, NEW in v5.17: the TRAINING ZONE) - Breakline's GadgetClient; blockedNow() is also true everywhere outside the training zone.
 -- GadgetClient (v5.16: a POSE puts the held gadget away and blocks gadgets until it ends)
 -- GadgetClient v2.1 (v4.9: STRONGER THROWS - fast flat throw with light in-flight gravity, released from the throwing hand, RIGHT CLICK = underhand toss;
 --   new first-person hold pose + keyframed throw: cock back, whip forward (item leaves the hand at the whip), follow-through, next one rises) (was v2: LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v4.0, reworked in v4.1.
@@ -77,6 +78,7 @@ end
 local function blockedNow()
 	local hum, c = aliveHum()
 	if not hum then return true end
+	if not MatchState and player:GetAttribute("InTraining") ~= true then return true end -- LOBBY: gadgets only work inside the training zone
 	if menuOpen() then return true end
 	if player:GetAttribute("Carrying") == true or player:GetAttribute("CarryingSoul") == true then return true end
 	if c:GetAttribute("AbilityMode") == "climb" or c:GetAttribute("Revealing") == true or c:GetAttribute("Reviving") == true then return true end
