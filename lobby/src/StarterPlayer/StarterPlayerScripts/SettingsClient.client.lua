@@ -1,4 +1,7 @@
--- SettingsClient v1.2 (v5.18: the gear sits a little lower + further right (it sat right on top of the Roblox buttons) - ICON_X / ICON_DOWN; the panel is now a TALL
+-- SettingsClient v1.3 (v5.21: the gear is smaller (36 px) and a bit further right + down (ICON_X 212, ICON_DOWN 18); NEW setting PICTURE MODE (NO HUD): hides every other
+--   ScreenGui, the Roblox core GUIs (chat / list / backpack / health ...), proximity prompts, the 3D name tags + damage numbers over players, and - in first person - your
+--   hands, the gun / gadget in them and your own body, so the screen is just the world; this gear (and its panel) stays so you can switch back. It is NOT saved.)
+-- (v1.2 = v5.18: the gear sits a little lower + further right (it sat right on top of the Roblox buttons) - ICON_X / ICON_DOWN; the panel is now a TALL
 --   single column (CONTROLS, then AUDIO + VISUALS, then INTERFACE stacked) instead of a wide three-column strip) (v1 LocalScript in StarterPlayer > StarterPlayerScripts) - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.17 (GDD 5.12).
 -- SETTINGS: a round gear button in the top left, right next to the Roblox chat / microphone buttons (ICON_X below: move it left / right if it overlaps
 -- yours). Click it (or press ESC to close) = a long horizontal panel in the middle of the screen with three columns:
@@ -16,9 +19,12 @@ local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local GuiService = game:GetService("GuiService")
 local Stats = game:GetService("Stats")
+local StarterGui = game:GetService("StarterGui")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 
-local ICON_X = 200    -- left edge of the gear button in pixels (Roblox menu + chat + mic sit to its left). Bigger = further right. (v5.18: 176 -> 200)
-local ICON_DOWN = 14  -- v5.18: pixels the gear sits BELOW the middle of the Roblox top bar. Bigger = lower. (0 = level with the Roblox buttons)
+local ICON_X = 212    -- left edge of the gear button in pixels (Roblox menu + chat + mic sit to its left). Bigger = further right. (v5.18: 176 -> 200, v5.21: -> 212)
+local ICON_DOWN = 18  -- v5.18: pixels the gear sits BELOW the middle of the Roblox top bar. Bigger = lower. (0 = level with the Roblox buttons) (v5.21: 14 -> 18)
+local BTN_SIZE = 36   -- v5.21: gear diameter in pixels (was 44)
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -60,7 +66,7 @@ local gui = new("ScreenGui", { Name = "SettingsGui", ResetOnSpawn = false, Ignor
 -- v1.2: the gear no longer depends on the place's GuiInset (it read a different value in the match place, so the gear landed somewhere else than in the lobby).
 -- Both places now use the same fixed top-bar height, so the gear is in exactly the same spot everywhere.
 local inset = 58
-local BTN = math.clamp(inset - 10, 30, 44)
+local BTN = BTN_SIZE
 local btn = new("TextButton", { Name = "GearButton", Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(ICON_X, math.floor((inset - BTN) / 2) + ICON_DOWN), Size = UDim2.fromOffset(BTN, BTN),
 	BackgroundColor3 = rgb(18, 19, 24), BackgroundTransparency = 0.12, BorderSizePixel = 0, ZIndex = 5 }, gui)
 new("UICorner", { CornerRadius = UDim.new(1, 0) }, btn)
@@ -162,7 +168,14 @@ local widgets = {} -- key -> { refresh = fn }
 local dragging -- the slider being dragged
 local pending = false
 
+local session = {} -- v5.21: the settings that are NOT saved (PICTURE MODE): off every time you join
 local function effective(key)
+	local d0 = Settings.ByKey[key]
+	if d0 and d0.session then
+		local sv = session[key]
+		if sv ~= nil then return sv end
+		return d0.default
+	end
 	local v = saved[key]
 	if v ~= nil then return v end
 	local d = Settings.ByKey[key]
@@ -181,10 +194,10 @@ local function pushSave()
 	end)
 end
 local applyAll
-local function changed()
+local function changed(skipSave)
 	pcall(function() player:SetAttribute("SettingsJson", HttpService:JSONEncode(saved)) end) -- local copy at once; the server sets the same text a moment later
 	applyAll()
-	pushSave()
+	if not skipSave then pushSave() end
 end
 
 local rowY = {}
@@ -247,9 +260,10 @@ for _, d in Settings.LIST do
 			onT.Position = on and UDim2.fromOffset(8, 0) or UDim2.fromOffset(40, 0)
 		end
 		sw.MouseButton1Click:Connect(function()
-			saved[d.key] = not (effective(d.key) == true)
+			local nv = not (effective(d.key) == true)
+			if d.session then session[d.key] = nv else saved[d.key] = nv end
 			show()
-			changed()
+			changed(d.session == true)
 		end)
 		widgets[d.key] = { refresh = show }
 		rowY[col] += TOGGLE_H
@@ -271,6 +285,7 @@ reset.MouseLeave:Connect(function()
 end)
 reset.MouseButton1Click:Connect(function()
 	saved = {}
+	session = {}
 	for _, w in widgets do w.refresh() end
 	changed()
 end)
@@ -324,12 +339,128 @@ end)
 -- ======================================================================================
 -- applying the settings
 -- ======================================================================================
+local setPicture -- defined below
 function applyAll()
 	local S = Settings.Get(player)
 	local g = Settings.Master()
 	if g then g.Volume = S.Volume end
-	statsLbl.Visible = S.ShowStats == true
+	local pictureOn = session.PictureMode == true
+	statsLbl.Visible = S.ShowStats == true and not pictureOn
+	if setPicture then setPicture(pictureOn) end
 end
+
+-- ======================================================================================
+-- PICTURE MODE (v5.21): nothing on the screen but the world (and this gear). Nothing is destroyed - every thing we switch off is remembered and put back.
+--   * every other ScreenGui in PlayerGui (and the 3D prompt guis there), re-checked every frame so a script that turns its gui back on is overruled,
+--   * the Roblox core GUIs (chat window, player list, backpack, health, emotes, self view) + proximity prompts,
+--   * the 3D name tags / damage numbers over characters and in ClientFX (BillboardGuis),
+--   * first person: the viewmodel in the camera (hands, gun, gadget, sleeves) and your own body parts (LocalTransparencyModifier).
+-- ======================================================================================
+local playerGui = player:WaitForChild("PlayerGui")
+local pic = { on = false, guis = {}, bills = {}, vm = {}, core = nil, prompts = nil, conn = nil, bind = false }
+local CORE_TYPES = { Enum.CoreGuiType.Backpack, Enum.CoreGuiType.Chat, Enum.CoreGuiType.EmotesMenu, Enum.CoreGuiType.Health, Enum.CoreGuiType.PlayerList, Enum.CoreGuiType.SelfView }
+local ENABLED_CLASSES = { "ParticleEmitter", "Beam", "Trail", "PointLight", "SpotLight", "SurfaceLight", "Highlight", "Fire", "Smoke", "Sparkles" }
+
+local function hideGuis()
+	for _, g in playerGui:GetChildren() do
+		if g ~= gui then
+			if g:IsA("ScreenGui") or g:IsA("BillboardGui") then
+				if pic.guis[g] == nil then pic.guis[g] = g.Enabled end
+				if g.Enabled then g.Enabled = false end
+			end
+		end
+	end
+end
+
+local function hideBill(b)
+	if not b:IsA("BillboardGui") then return end
+	local m = b:FindFirstAncestorOfClass("Model")
+	local overChar = m ~= nil and m:FindFirstChildOfClass("Humanoid") ~= nil
+	if overChar or b:FindFirstAncestor("ClientFX") ~= nil then
+		if pic.bills[b] == nil then pic.bills[b] = b.Enabled end
+		b.Enabled = false
+	end
+end
+
+local function hideVm(inst)
+	if inst:IsA("BasePart") then
+		if pic.vm[inst] == nil then pic.vm[inst] = { k = "ltm" } end
+		if inst.LocalTransparencyModifier < 1 then inst.LocalTransparencyModifier = 1 end
+	elseif inst:IsA("Decal") or inst:IsA("Texture") then
+		if pic.vm[inst] == nil then pic.vm[inst] = { k = "tr", v = inst.Transparency } end
+		if inst.Transparency < 1 then inst.Transparency = 1 end
+	else
+		for _, cn in ENABLED_CLASSES do
+			if inst:IsA(cn) then
+				if pic.vm[inst] == nil then pic.vm[inst] = { k = "en", v = inst.Enabled } end
+				if inst.Enabled then inst.Enabled = false end
+				return
+			end
+		end
+	end
+end
+
+local function firstPerson()
+	local ch = player.Character
+	local head = ch and ch:FindFirstChild("Head")
+	return head ~= nil and (camera.CFrame.Position - head.Position).Magnitude < 2.2
+end
+
+local function pictureStep()
+	hideGuis()
+	for _, d in camera:GetDescendants() do hideVm(d) end -- the first-person hands + gun + gadget live in the camera
+	if firstPerson() then
+		local ch = player.Character
+		if ch then for _, d in ch:GetDescendants() do if d:IsA("BasePart") then hideVm(d) end end end
+	end
+end
+
+local function restoreVm()
+	for inst, m in pic.vm do
+		if inst.Parent then
+			if m.k == "ltm" then inst.LocalTransparencyModifier = 0
+			elseif m.k == "tr" then inst.Transparency = m.v
+			elseif m.k == "en" then inst.Enabled = m.v end
+		end
+	end
+	pic.vm = {}
+end
+
+function setPicture(on)
+	if on == pic.on then return end
+	pic.on = on
+	if on then
+		-- core GUIs + prompts
+		pic.core = {}
+		for _, t in CORE_TYPES do
+			local ok, v = pcall(StarterGui.GetCoreGuiEnabled, StarterGui, t)
+			pic.core[t] = ok and v or false
+			pcall(StarterGui.SetCoreGuiEnabled, StarterGui, t, false)
+		end
+		pic.prompts = ProximityPromptService.Enabled
+		pcall(function() ProximityPromptService.Enabled = false end)
+		-- 3D name tags / damage numbers
+		for _, d in workspace:GetDescendants() do hideBill(d) end
+		pic.conn = workspace.DescendantAdded:Connect(hideBill)
+		RunService:BindToRenderStep("BreaklinePictureMode", Enum.RenderPriority.Last.Value + 5, pictureStep)
+		pic.bind = true
+		pictureStep()
+	else
+		if pic.bind then pcall(function() RunService:UnbindFromRenderStep("BreaklinePictureMode") end) pic.bind = false end
+		if pic.conn then pic.conn:Disconnect() pic.conn = nil end
+		for g, was in pic.guis do if g.Parent then g.Enabled = was end end
+		pic.guis = {}
+		for b, was in pic.bills do if b.Parent then b.Enabled = was end end
+		pic.bills = {}
+		restoreVm()
+		if pic.core then
+			for t, was in pic.core do pcall(StarterGui.SetCoreGuiEnabled, StarterGui, t, was) end
+			pic.core = nil
+		end
+		if pic.prompts ~= nil then pcall(function() ProximityPromptService.Enabled = pic.prompts end) pic.prompts = nil end
+	end
+end
+
 applyAll()
 player:GetAttributeChangedSignal("SettingsJson"):Connect(applyAll)
 
