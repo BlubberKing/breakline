@@ -1,7 +1,8 @@
--- Settings v1 (ModuleScript in ReplicatedStorage, named "Settings") - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.17 (GDD 5.12).
+-- Settings v1.1 (v5.21: + PICTURE MODE, a setting that is NOT saved: `session = true` in LIST) (ModuleScript in ReplicatedStorage, named "Settings") - BOTH games (Lobby + Breakline), keep the two copies identical. NEW in v5.17 (GDD 5.12).
 -- The player's own SETTINGS (the round gear button next to the Roblox chat / mic buttons, SettingsClient). Saved in the shared profile key "Settings"
 -- (a table of only the values the player changed) and mirrored as the Player attribute SettingsJson, so both places read the same numbers.
---   Settings.LIST                          the settings in menu order: { key, name, col, kind = "slider" | "toggle", min, max, step, default, fmt, note }
+--   Settings.LIST                          the settings in menu order: { key, name, col, kind = "slider" | "toggle", min, max, step, default, fmt, note, session }
+--                                          (session = true: never saved, starts at its default every time you join - PICTURE MODE; Clean drops it)
 --   Settings.Clean(t) -> t                 a checked copy (unknown keys dropped, numbers clamped + snapped, Sens only kept when it is a real number)
 --   Settings.Get(player) -> t              every setting with defaults filled in (Sens = nil while the player never touched it)
 --   Settings.Sens(player, fallback)        mouse sensitivity multiplier (the player's own, or `fallback` while untouched)
@@ -27,6 +28,8 @@ M.LIST = {
 		note = "Camera rumble while sliding at speed" },
 	{ key = "DamageNumbers", name = "DAMAGE NUMBERS", col = 3, kind = "toggle", default = true, note = "The numbers that pop up when you hit something" },
 	{ key = "ShowStats", name = "SHOW FPS + PING", col = 3, kind = "toggle", default = false, note = "A small readout next to the settings button" },
+	{ key = "PictureMode", name = "PICTURE MODE (NO HUD)", col = 3, kind = "toggle", default = false, session = true,
+		note = "Hides every menu + the HUD, your hands and what you hold. Only this gear stays - click it to come back." },
 }
 M.ByKey = {}
 for _, d in M.LIST do M.ByKey[d.key] = d end
@@ -40,6 +43,7 @@ function M.Clean(t)
 	local out = {}
 	if type(t) ~= "table" then return out end
 	for _, d in M.LIST do
+		if d.session then continue end -- v5.21: never saved
 		local v = t[d.key]
 		if d.kind == "toggle" then
 			if type(v) == "boolean" then out[d.key] = v end
