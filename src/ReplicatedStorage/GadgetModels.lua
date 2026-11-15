@@ -1,4 +1,4 @@
--- GadgetModels v2.2 (v5.18: one-block first-person hand in your costume colours; placeables go on floors / walls / ceilings / ramps, place range 60 = as far as the preview)
+-- GadgetModels v2.3 (v5.20: SMART PLACEMENT - GM.Resolve snaps to the nearest valid surface, GM.Check is more forgiving) (v2.2 / v5.18: one-block first-person hand in your costume colours; placeables go on floors / walls / ceilings / ramps, place range 60 = as far as the preview)
 -- GadgetModels v2 (ModuleScript in ReplicatedStorage) - BOTH games (Breakline + Lobby), keep the two copies IDENTICAL. NEW in v4.1, v4.8: full remodel.
 -- One place that knows what every gadget LOOKS like, so the same model is used for:
 --   * the thing you hold in first person / others see in your hand        GM.Build(id, accent, opts)
@@ -448,14 +448,24 @@ end
 
 -- ============================================================ placement rules (client preview AND server)
 -- range: how far from your head the spot may be | ground: needs a floor-ish surface (not a wall) | box: clearance box | foot: half-size of the
--- footprint that must all rest on the surface (no hanging over an edge)
--- v5.18 (owner): every placeable goes on floors, walls, ceilings AND ramps (ground = false for all), and you can place it as far out as the preview
--- reaches; v5.19 (owner): that reach is 20 studs (was 60) - the blue / red copy follows your view up to 20 studs, then hangs red at the end of it.
+-- footprint that must rest on the surface (v5.20: 3 of the 4 corners are enough, so a little overhang is fine)
+-- v5.18 (owner): every placeable goes on floors, walls, ceilings AND ramps (ground = false for all).
+-- v5.19 (owner): reach is 20 studs - the blue / red copy follows your view up to 20 studs. v5.20: UNCHANGED (owner: "keep the distance the same").
 GM.REACH = 20
 GM.Place = {
-	SENTRY = { range = GM.REACH, ground = false, box = Vector3.new(3.4, 3.2, 3.4), foot = 1.2 },
-	SHIELD = { range = GM.REACH, ground = false, box = Vector3.new(2.6, 2.2, 2.6), foot = 1.0 },
+	SENTRY = { range = GM.REACH, ground = false, box = Vector3.new(3.4, 3.2, 3.4), foot = 1.0 },
+	SHIELD = { range = GM.REACH, ground = false, box = Vector3.new(2.6, 2.2, 2.6), foot = 0.8 },
 	MINE   = { range = GM.REACH, ground = false, box = Vector3.new(1.5, 0.9, 1.5), foot = 0 },
+}
+
+-- v5.20 SMART PLACEMENT tuning (one place, easy to tweak)
+GM.SNAP = {
+	radius   = 6,    -- studs: how far from where you aim the gadget may jump to reach a valid surface
+	clutter  = 1.2,  -- studs: a loose collidable part smaller than this (all sides) does not block a gadget
+	lift     = 0.35, -- studs: the clearance box starts this far above the surface (stones, grass tufts, door sills do not block)
+	shrink   = 0.5,  -- studs: the clearance box is this much smaller than the gadget (a wall 1 stud away no longer blocks)
+	minDot   = 0.5,  -- how flat the ground under a foot corner must be (1 = same angle as the surface you aim at)
+	interval = 0.05, -- seconds: the snap search re-runs at most this often while you hold your aim still
 }
 
 -- a CFrame sitting ON a surface (up = normal) turned to face `facing`
@@ -471,31 +481,162 @@ function GM.CFOnSurface(pos, normal, facing)
 	return CFrame.fromMatrix(pos, up:Cross(back), up, back)
 end
 
--- ignore = list of instances to skip (characters etc). Returns ok, reason.
-function GM.Check(id, pos, normal, ignore)
-	local pl = GM.Place[id]
-	if not pl then return false, "bad item" end
-	normal = normal.Unit
-	if pl.ground and normal.Y < 0.72 then return false, "too steep" end
+local function newParams(ignore)
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	rp.FilterDescendantsInstances = ignore or {}
 	rp.RespectCanCollide = true
+	return rp
+end
+
+-- ignore = list of instances to skip (characters etc). Returns ok, reason.
+function GM.Check(id, pos, normal, ignore)
+	local pl = GM.Place[id]
+	if not pl then return false, "bad item" end
+	local T = GM.SNAP
+	normal = normal.Unit
+	if pl.ground and normal.Y < 0.72 then return false, "too steep" end
+	local rp = newParams(ignore)
 	if pl.foot > 0 then
+		-- the base needs to rest on the surface: 3 of the 4 corners must touch something that points the same way (one corner may overhang)
 		local base = GM.CFOnSurface(pos, normal, Vector3.zAxis)
+		local good = 0
 		for _, o in { Vector2.new(1, 1), Vector2.new(-1, 1), Vector2.new(1, -1), Vector2.new(-1, -1) } do
 			local from = (base * CFrame.new(o.X * pl.foot, 0.7, o.Y * pl.foot)).Position
-			local hit = workspace:Raycast(from, -normal * 1.5, rp)
-			if not hit or hit.Normal:Dot(normal) < 0.6 then return false, "uneven ground" end
+			local hit = workspace:Raycast(from, -normal * 1.7, rp)
+			if hit and hit.Normal:Dot(normal) >= T.minDot then good += 1 end
 		end
+		if good < 3 then return false, "uneven ground" end
 	end
 	local op = OverlapParams.new()
 	op.FilterType = Enum.RaycastFilterType.Exclude
 	op.FilterDescendantsInstances = ignore or {}
 	op.RespectCanCollide = true
-	local c = GM.CFOnSurface(pos + normal * (pl.box.Y / 2 + 0.18), normal, Vector3.zAxis)
-	if #workspace:GetPartBoundsInBox(c, pl.box, op) > 0 then return false, "something is in the way" end
+	local size = Vector3.new(math.max(0.6, pl.box.X - T.shrink), math.max(0.5, pl.box.Y - T.shrink), math.max(0.6, pl.box.Z - T.shrink))
+	local c = GM.CFOnSurface(pos + normal * (T.lift + size.Y / 2), normal, Vector3.zAxis)
+	for _, part in workspace:GetPartBoundsInBox(c, size, op) do
+		if part:IsA("Terrain") then return false, "something is in the way" end
+		local s = part.Size
+		if math.max(s.X, s.Y, s.Z) >= T.clutter then return false, "something is in the way" end
+	end
 	return true
+end
+
+-- v5.20 SMART PLACEMENT. Where you aim is the first choice. If a gadget cannot go there (too steep a corner, a prop in the way, an edge, nothing hit at
+-- all) it SNAPS to the closest valid spot within GM.SNAP.radius studs of your aim point - on a floor, wall, ceiling or ramp - that you can see and reach.
+--   origin / look : camera position + direction      head : your head (the reach is measured from it)      ignore : instances to skip
+--   hint          : the position it snapped to last frame (keeps the preview from flickering between two equal spots)
+--   cache         : an empty table you keep between frames (the search is re-used while your aim barely moves)
+-- Returns pos, normal, valid, snapped.  When nothing valid is near, returns where you aim (valid = false) so the red preview hangs there.
+local TAU = math.pi * 2
+local DIRS = {} -- 14 directions for the "what is next to the aim point" search: 6 axes + 8 cube corners
+for _, v in { Vector3.xAxis, -Vector3.xAxis, Vector3.yAxis, -Vector3.yAxis, Vector3.zAxis, -Vector3.zAxis } do DIRS[#DIRS + 1] = v end
+for _, x in { -1, 1 } do for _, y in { -1, 1 } do for _, z in { -1, 1 } do DIRS[#DIRS + 1] = Vector3.new(x, y, z).Unit end end end
+
+function GM.Resolve(id, origin, look, head, ignore, hint, cache)
+	local pl = GM.Place[id]
+	local T = GM.SNAP
+	look = look.Unit
+	local rp = newParams(ignore)
+	local reach = pl.range
+	local function inReach(p) return (p - head).Magnitude <= reach + 0.25 end
+
+	-- 1) exactly where you aim
+	local hit = workspace:Raycast(origin, look * reach, rp)
+	local aim, n0
+	if hit then
+		aim, n0 = hit.Position, hit.Normal
+		if inReach(aim) and GM.Check(id, aim, n0, ignore) then return aim, n0, true, false end
+	else
+		aim = origin + look * reach
+	end
+
+	-- the same aim as a moment ago: re-use the last snap instead of searching again
+	local now = os.clock()
+	if cache and cache.aim and cache.pos and now - cache.t < T.interval and (cache.aim - aim).Magnitude < 0.3 then
+		return cache.pos, cache.normal, cache.valid, cache.snapped
+	end
+
+	-- 2) look for the nearest valid surface around the aim point
+	local cands = {}
+	local function add(p, n)
+		if not p or not inReach(p) then return end
+		local d = (p - aim).Magnitude
+		if d > T.radius then return end
+		local score = d
+		if n0 then score += (1 - n:Dot(n0)) * 1.0 end -- a little preference for the same kind of surface you were aiming at
+		if hint and (p - hint).Magnitude < 1.5 then score -= 0.6 end -- stickiness
+		cands[#cands + 1] = { p = p, n = n, s = score }
+	end
+	local up = n0 or Vector3.yAxis
+	local base = GM.CFOnSurface(aim, up, Vector3.zAxis)
+	local centre = aim + up * 0.9
+	-- (a) rings of rays pressed onto the surface you aimed at (slid-over spots on the same wall / floor / ramp)
+	if n0 then
+		for _, r in { 1.4, 2.8, 4.4 } do
+			for k = 0, 7 do
+				local a = k / 8 * TAU
+				local o = (base * CFrame.new(math.cos(a) * r, 1.2, math.sin(a) * r)).Position
+				local h = workspace:Raycast(o, -n0 * 3, rp)
+				if h then add(h.Position, h.Normal) end
+			end
+		end
+	end
+	-- (b) rays out of the aim point in every direction (finds the floor under a wall hit, the wall next to a floor hit, the ceiling above ...)
+	for _, d in DIRS do
+		local h = workspace:Raycast(centre, d * T.radius, rp)
+		if h then add(h.Position, h.Normal) end
+	end
+	-- (c) a cone around your view (spots just beside / past the thing you look at, seen from your eyes)
+	for _, deg in { 4, 9, 15 } do
+		for k = 0, 5 do
+			local a = k / 6 * TAU + deg
+			local dir = (CFrame.lookAt(Vector3.zero, look) * CFrame.Angles(0, 0, a) * CFrame.Angles(math.rad(deg), 0, 0)).LookVector
+			local h = workspace:Raycast(origin, dir * reach, rp)
+			if h then add(h.Position, h.Normal) end
+		end
+	end
+	-- (d) nothing hit in reach (aiming at the sky / a far gap): the ground below the end of your ray
+	if not hit then
+		local h = workspace:Raycast(aim, Vector3.new(0, -T.radius, 0), rp)
+		if h then add(h.Position, h.Normal) end
+	end
+	table.sort(cands, function(a, b) return a.s < b.s end)
+
+	-- first candidate (closest first) that you can see and that passes every check wins. A spot right next to one that already failed is skipped
+	-- (it would fail the same way), so the checks go to NEW ground instead of 14 look-alikes inside the same blocker.
+	local checked, failed = 0, {}
+	for _, c in cands do
+		if checked >= 18 then break end
+		local dup = false
+		for _, f in failed do
+			if (f.p - c.p).Magnitude < 0.9 and f.n:Dot(c.n) > 0.8 then dup = true break end
+		end
+		if not dup then
+			local to = (c.p + c.n * 0.3) - origin
+			if workspace:Raycast(origin, to, rp) then
+				-- no free line from your eyes (behind a wall / the back of something): never snaps there
+				failed[#failed + 1] = c
+			else
+				checked += 1
+				if GM.Check(id, c.p, c.n, ignore) then
+					if cache then cache.t, cache.aim, cache.pos, cache.normal, cache.valid, cache.snapped = now, aim, c.p, c.n, true, true end
+					return c.p, c.n, true, true
+				end
+				failed[#failed + 1] = c
+			end
+		end
+	end
+
+	-- nothing valid close by: the red copy hangs where you aim
+	local pos, normal = aim, n0
+	if not normal then
+		local down = workspace:Raycast(aim, Vector3.new(0, -12, 0), rp)
+		pos = down and down.Position or aim
+		normal = down and down.Normal or Vector3.yAxis
+	end
+	if cache then cache.t, cache.aim, cache.pos, cache.normal, cache.valid, cache.snapped = now, aim, pos, normal, false, false end
+	return pos, normal, false, false
 end
 
 return GM
