@@ -1,3 +1,4 @@
+-- GadgetServer v5.20 (owner Nov 14: SMART PLACEMENT - the Place handler finds the real surface next to the sent spot, needs a free line of sight from your head and runs GadgetModels.Check)
 -- GadgetServer (v5.18: FRAG COOKING - remote GadgetRemotes.Cook pulls the pin, the fuse counts from the press, held too long = it goes off in your hand, putting it away
 --   drops it; SENTRY + BUBBLE SHIELD can be placed on floors / walls / ceilings / ramps (they orient to the surface); the PROX MINE trigger works on walls + ceilings)
 -- GadgetServer v-lobby (LOBBY place, NEW in v5.17: the TRAINING ZONE - Breakline's GadgetServer with: only usable while the Player attribute InTraining is true, only players inside the zone are hit,
@@ -888,8 +889,25 @@ EquipR.OnServerEvent:Connect(function(player, slot)
 	char:SetAttribute("HeldSlot", slot)
 end)
 
------------------------------------------------------------------- placing (sentry / shield / mine) exactly where the preview was
-PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing)
+------------------------------------------------------------------ placing (sentry / shield / mine) where the preview was
+-- v5.20 SMART PLACEMENT: the client sends the spot it resolved (possibly snapped to a nearby surface) + the surface normal it means. The server never trusts
+-- the spot itself: it finds the real surface next to it, makes sure you can SEE it from your head and that it is in reach, then runs the same GM.Check.
+local function findSurface(spot, hint, rp)
+	local dirs = {}
+	if hint then dirs[1] = hint end
+	for _, v in { Vector3.yAxis, -Vector3.yAxis, Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis } do dirs[#dirs + 1] = v end
+	local best, bestD
+	for _, n in dirs do
+		local h = workspace:Raycast(spot + n * 0.8, -n * 1.8, rp) -- from the air side straight onto the surface
+		if h then
+			local d = (h.Position - spot).Magnitude
+			if d <= 1.0 and (not bestD or d < bestD - 0.05) then best, bestD = h, d end
+		end
+		if best and n == hint then break end -- the surface the client named is there: use it
+	end
+	return best
+end
+PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing, hintNormal)
 	if typeof(spot) ~= "Vector3" then return end
 	local now = os.clock()
 	if now - (lastUse[player] or 0) < 0.25 then return end
@@ -899,20 +917,22 @@ PlaceR.OnServerEvent:Connect(function(player, slot, spot, facing)
 	if not pl then return end
 	local head = char:FindFirstChild("Head")
 	local from = head and head.Position or root.Position + Vector3.new(0, 1.5, 0)
-	local to = spot - from
-	local dist = to.Magnitude
+	local dist = (spot - from).Magnitude
 	if dist < 0.5 or dist > pl.range * 1.2 + 2 then return end
-	-- the server finds the surface itself (what the client says is only where to look)
 	local ignore = charList()
 	table.insert(ignore, fxFolder)
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	rp.FilterDescendantsInstances = ignore
 	rp.RespectCanCollide = true
-	local hit = workspace:Raycast(from, to.Unit * (dist + 1.5), rp)
-	if not hit or (hit.Position - spot).Magnitude > 2.5 then return end
+	local hint = (typeof(hintNormal) == "Vector3" and hintNormal.Magnitude > 0.5) and hintNormal.Unit or nil
+	local hit = findSurface(spot, hint, rp)
+	if not hit then return end
 	local pos, normal = hit.Position, hit.Normal
 	if (pos - from).Magnitude > pl.range * 1.2 + 2 then return end
+	-- you have to be able to see the spot (nobody places a mine through a wall)
+	local see = workspace:Raycast(from, (pos + normal * 0.3) - from, rp)
+	if see then return end
 	local ok = GM.Check(id, pos, normal, ignore)
 	if not ok then return end
 	local face = Vector3.zero
