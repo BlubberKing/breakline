@@ -1,8 +1,9 @@
 -- GadgetClient (v5.19 FIX: sentry / bubble shield / prox mine can be PLACED again (a click with a placeable did nothing since v5.18); reach 20 studs)
+-- v5.20 (owner Nov 14): SMART PLACEMENT (the preview snaps to the nearest valid surface via GadgetModels.Resolve); equip confirm wait 1.5 s. Same file in both games.
 -- GadgetClient (v5.18: FRAG COOKING - pressing the click pulls the pin (FUSE readout under the crosshair), release throws with the fuse that is left, right click
 --   while cooking = underhand toss; the held-gadget arm is a square block in your costume colours that starts at the back of the hand; placeables can go
 --   on any surface up to GM.REACH studs away (v5.19: 20))
--- GadgetClient (LOBBY copy, NEW in v5.17: the TRAINING ZONE) - Breakline's GadgetClient; blockedNow() is also true everywhere outside the training zone.
+-- GadgetClient (v5.17: ONE file for BOTH games - in the Lobby blockedNow() is also true everywhere outside the training zone; in Breakline MatchState exists, so that line never fires).
 -- GadgetClient (v5.16: a POSE puts the held gadget away and blocks gadgets until it ends)
 -- GadgetClient v2.1 (v4.9: STRONGER THROWS - fast flat throw with light in-flight gravity, released from the throwing hand, RIGHT CLICK = underhand toss;
 --   new first-person hold pose + keyframed throw: cock back, whip forward (item leaves the hand at the whip), follow-through, next one rises) (was v2: LocalScript in StarterPlayer > StarterPlayerScripts) - BREAKLINE place only. NEW in v4.0, reworked in v4.1.
@@ -265,32 +266,19 @@ local function paintGhost(valid)
 end
 
 local lastFacing = Vector3.new(0, 0, -1)
+local snapCache, snapHint = {}, nil -- v5.20: smart placement (GadgetModels.Resolve) keeps its last result here between frames
 local function updateGhost(dt)
 	if not ghost or not held then return end
-	local pl = GM.Place[ghost.id]
 	local hum, char = aliveHum()
 	local head = char and char:FindFirstChild("Head")
 	if not head then ghost.model.Parent = nil return end
 	local cf = camera.CFrame
-	local hit = workspace:Raycast(cf.Position, cf.LookVector * pl.range, rayParams) -- v5.18: placeable as far as the preview reaches (GM.REACH)
-	local pos, normal, valid
-	if hit then
-		pos, normal = hit.Position, hit.Normal
-		valid = (pos - head.Position).Magnitude <= pl.range
-	else
-		-- nothing in reach: hang the copy at the end of your range, red
-		local far = cf.Position + cf.LookVector * pl.range
-		local down = workspace:Raycast(far, Vector3.new(0, -12, 0), rayParams)
-		pos = down and down.Position or far
-		normal = down and down.Normal or Vector3.yAxis
-		valid = false
-	end
+	-- v5.20 SMART PLACEMENT: your aim point first; when a gadget cannot go exactly there it snaps to the nearest valid floor / wall / ceiling / ramp
+	-- right next to it (same reach as before: GM.REACH = 20). The server runs the same GM.Check on the spot it is sent.
+	local pos, normal, valid = GM.Resolve(ghost.id, cf.Position, cf.LookVector, head.Position, rayParams.FilterDescendantsInstances, snapHint, snapCache)
+	snapHint = valid and pos or nil
 	local flatLook = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
 	if flatLook.Magnitude > 0.1 then lastFacing = flatLook.Unit end
-	if valid then
-		local ok = GM.Check(ghost.id, pos, normal, { char, camera, fxFolder, ghost.model, workspace:FindFirstChild("GadgetFX") })
-		valid = ok
-	end
 	if ghost.model.Parent ~= fxFolder then ghost.model.Parent = fxFolder end
 	local target = GM.CFOnSurface(pos, normal, lastFacing)
 	-- the copy glides to the spot instead of snapping
@@ -457,6 +445,7 @@ local function equip(slot)
 	aimingThrow, throwing = false, false
 	hideTraj()
 	destroyGhost()
+	snapCache, snapHint = {}, nil
 	if cfg.kind == "place" then buildGhost(id) end
 	EquipR:FireServer(slot)
 	sound("GadEquip_" .. id) -- v5.7: sound hook (falls back to GadEquip)
@@ -502,7 +491,7 @@ local function doPlace()
 	if workspace:GetServerTimeNow() < (player:GetAttribute("GadReady" .. slot) or 0) then return end
 	lastThrowAt = now
 	throwKick = 0.6
-	PlaceR:FireServer(slot, lastSpot, lastFacing)
+	PlaceR:FireServer(slot, lastSpot, lastFacing, lastNormal) -- v5.20: the normal tells the server which surface you mean (it still finds + checks the surface itself)
 	sound("GadPlaceTry") -- v5.7: sound hook (the click when you press place; the placed sound itself plays from the object)
 end
 
@@ -679,7 +668,7 @@ RunService.RenderStepped:Connect(function(dt)
 	if held then
 		local hum, char = aliveHum()
 		-- the server owns the truth: dead / no longer holding / out of charges = put it away
-		if not hum or blockedNow() or (char and char:GetAttribute("HeldGadget") == nil and now - held.since > 0.6) then
+		if not hum or blockedNow() or (char and char:GetAttribute("HeldGadget") == nil and now - held.since > 1.5) then -- v5.20: 0.6 -> 1.5 s to wait for the server to confirm the equip
 			unequip(not hum)
 		elseif slotCount(held.slot) <= 0 and not throwing and now - lastThrowAt > Cfg.Throw.Windup + THROW_DROP then
 			unequip()
