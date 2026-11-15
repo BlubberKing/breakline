@@ -1,5 +1,7 @@
 -- GadgetServer (v5.18: FRAG COOKING - remote GadgetRemotes.Cook pulls the pin, the fuse counts from the press, held too long = it goes off in your hand, putting it away
 --   drops it; SENTRY + BUBBLE SHIELD can be placed on floors / walls / ceilings / ramps (they orient to the surface); the PROX MINE trigger works on walls + ceilings)
+-- GadgetServer v-lobby (LOBBY place, NEW in v5.17: the TRAINING ZONE - Breakline's GadgetServer with: only usable while the Player attribute InTraining is true, only players inside the zone are hit,
+--   nobody is ever really hurt (lobby Vitals), placed shields only flash. Everything else is the same code as a match.)
 -- GadgetServer (v5.14: GLASS CANNON +15% gadget damage dealt, gadget kills start HOT BARREL - ReplicatedStorage.CardEffects)
 -- GadgetServer v2.1 (v4.9: throws are much stronger - ~115 studs/s, light gravity in flight via a VectorForce until the first bounce, 60% run-speed
 --   carry-over, released from the throwing hand AFTER the windup so it leaves the hand when the arm whips; Use(slot, dir, underhand) for the right-click toss) (was v2: Script in ServerScriptService) - BREAKLINE place only. NEW in v4.0, reworked in v4.1:
@@ -27,8 +29,8 @@ local HttpService = game:GetService("HttpService")
 local Cfg = require(RS:WaitForChild("GadgetConfig"))
 local GM = require(RS:WaitForChild("GadgetModels"))
 local Vitals = require(game:GetService("ServerScriptService"):WaitForChild("Vitals")) -- v4.4: shield + 200 health
-local MatchState = RS:WaitForChild("MatchState", 30)
-local BoxDamage = SS:WaitForChild("BoxDamage", 30)
+local MatchState = RS:FindFirstChild("MatchState") -- LOBBY: none (gadgets only work inside the TRAINING ZONE)
+local BoxDamage = SS:FindFirstChild("BoxDamage") -- (GunServer makes it in the lobby)
 
 local remotes = Instance.new("Folder")
 remotes.Name = "GadgetRemotes"
@@ -38,7 +40,7 @@ local EquipR = Instance.new("RemoteEvent"); EquipR.Name = "Equip"; EquipR.Parent
 local PlaceR = Instance.new("RemoteEvent"); PlaceR.Name = "Place"; PlaceR.Parent = remotes
 local CookR = Instance.new("RemoteEvent"); CookR.Name = "Cook"; CookR.Parent = remotes -- v5.18: frag cooking (the press pulls the pin)
 remotes.Parent = RS
-local DamageEvent = Instance.new("BindableEvent")
+local DamageEvent = SS:FindFirstChild("GadgetDamage") or Instance.new("BindableEvent") -- LOBBY: GunServer may have made it already
 DamageEvent.Name = "GadgetDamage"
 DamageEvent.Parent = SS
 local fxFolder = Instance.new("Folder")
@@ -53,6 +55,7 @@ local function nowT() return workspace:GetServerTimeNow() end
 local function teamName(p) return p and p.Team and not p.Neutral and p.Team.Name or nil end
 local function isEnemy(owner, p) -- is player p an enemy of the owner (or the owner themself = false)
 	if owner == p then return false end
+	if p:GetAttribute("InTraining") ~= true then return false end -- LOBBY: only players inside the training zone can be hit
 	local a, b = teamName(owner), teamName(p)
 	if not a or not b then return true end
 	return a ~= b
@@ -128,7 +131,7 @@ local function hurt(owner, targetPlayer, hum, dmg, hitPos)
 	if hum.Health <= 0 or dmg <= 0 then return end
 	if owner and targetPlayer ~= owner and CardFx.Has(owner, "glass_cannon") then dmg *= CardFx.GLASS_CANNON_DEAL end -- v5.14: GLASS CANNON
 	local dealt = Vitals.Damage(hum, dmg) -- shield first, then health (sentries have no shield and just take it)
-	local killed = hum.Health <= 0
+	local killed = Vitals.Killed(hum) -- LOBBY: a VIRTUAL kill (nobody is really hurt)
 	if killed and owner and targetPlayer ~= owner and (targetPlayer or hum.Parent:GetAttribute("IsBot")) and CardFx.Has(owner, "hot_barrel") then -- v5.14: HOT BARREL
 		owner:SetAttribute("HotBarrelUntil", workspace:GetServerTimeNow() + CardFx.HOT_BARREL_TIME)
 	end
@@ -166,6 +169,10 @@ end
 local function damageShield(part, dmg)
 	local rec = shields[part]
 	if not rec then return end
+	-- LOBBY (training zone): a placed shield takes no real damage, it only flashes
+	part.Transparency = 0.12
+	task.delay(0.07, function() if part.Parent then part.Transparency = 0.35 end end)
+	if true then return end
 	rec.hp -= dmg
 	part:SetAttribute("HP", math.max(rec.hp, 0))
 	if rec.hp <= 0 then breakShield(part, false) return end
@@ -758,8 +765,7 @@ local function prep(player, slot, kind)
 	local id = s.ids[slot]
 	local cfg = Cfg.Items[id]
 	if not cfg or cfg.kind ~= kind then return end
-	local ph = MatchState and MatchState:GetAttribute("Phase")
-	if MatchState and ph ~= "Playing" then return end
+	if player:GetAttribute("InTraining") ~= true then return end -- LOBBY: only inside the training zone
 	local char, _, root = aliveChar(player)
 	if not char then return end
 	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("Reviving") == true
@@ -875,8 +881,7 @@ EquipR.OnServerEvent:Connect(function(player, slot)
 	local s = state[player]
 	local id = s and s.ids[slot]
 	if not id or not Cfg.Items[id] or s.count[slot] <= 0 then return end
-	local ph = MatchState and MatchState:GetAttribute("Phase")
-	if MatchState and ph ~= "Playing" then return end
+	if player:GetAttribute("InTraining") ~= true then return end -- LOBBY: only inside the training zone
 	if player:GetAttribute("Carrying") or char:GetAttribute("Revealing") == true or char:GetAttribute("Reviving") == true
 		or char:GetAttribute("AbilityMode") == "climb" then return end
 	char:SetAttribute("HeldGadget", id)
