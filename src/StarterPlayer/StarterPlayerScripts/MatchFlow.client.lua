@@ -714,7 +714,7 @@ local function impactFx(folder, pos, scale)
 	end
 end
 
-local function runWarp(token)
+local function runMeteorWarp(token)
 	local ends = State:GetAttribute("PhaseEnds") or (serverNow() + C.WARP_TIME)
 	local startT = ends - C.WARP_TIME
 	local function T() return serverNow() - startT end
@@ -1059,6 +1059,96 @@ local function runWarp(token)
 		end
 	end
 	RunService:BindToRenderStep("BreaklineWarpCam", Enum.RenderPriority.Camera.Value + 1, camStep)
+end
+
+-- ======================================================================================
+-- v5.20 SOUL ARRIVAL (replaces the meteor drop as the default; C.WARP_STYLE = "Meteor" brings the old one back, with WARP_TIME 6.0)
+-- A short, quiet arrival: the pre-game screen cuts to black, the MAP NAME fades in as a title card (a thin accent line draws out under it),
+-- the world comes up and the normal respawn reveal builds every body from the feet up, then the camera dives into your head.
+-- Total C.WARP_TIME = 3.0 s (0.9 s title card + the 2.05 s reveal). Nothing to skip, nothing to sit through.
+-- ======================================================================================
+local function runSoulArrival(token)
+	local ends = State:GetAttribute("PhaseEnds") or (serverNow() + C.WARP_TIME)
+	local startT = ends - C.WARP_TIME
+	local function T() return serverNow() - startT end
+	local function waitUntil(t)
+		while T() < t do
+			if not alive(token) then return false end
+			task.wait()
+		end
+		return alive(token)
+	end
+	local TITLE_AT, REVEAL_AT = 0.4, math.max(0.8, C.WARP_TIME - C.REVEAL_TIME - 0.05)
+
+	renderFns.pregame = nil
+	setModal(false)
+	tween(fade, TweenInfo.new(0.35), { BackgroundTransparency = 0 })
+	if not waitUntil(TITLE_AT) then return end
+	killScreens()
+	warpCleanup()
+	local ws = { revealed = {} }
+	warpState = ws
+	warpActive = true
+	local pg = player:FindFirstChild("PlayerGui") -- the HUD stays hidden until the card roll (restoreWorld switches it back on)
+	if pg then
+		for _, g in pg:GetChildren() do
+			if g:IsA("ScreenGui") and g.Enabled and g ~= gui and g.Name ~= "RevealGui" and not g.Name:find("Loading") then
+				g.Enabled = false
+				hiddenGuis[g] = true
+			end
+		end
+	end
+
+	-- title card: MAP NAME + an accent line in YOUR team colour + a small caption
+	local mapName = string.upper(tostring(State:GetAttribute("MapName") or ""))
+	local teamCol = (player.Team and player.Team.TeamColor.Color) or rgb(120, 190, 255)
+	local cv = makeCanvas(gui, 205)
+	track(cv)
+	local title = label(cv, mapName, 120, F.H, WHITE, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 500),
+		Size = UDim2.fromOffset(1500, 150), TextTransparency = 1, ZIndex = 206 })
+	local line = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 586), Size = UDim2.fromOffset(0, 4),
+		BackgroundColor3 = teamCol, BorderSizePixel = 0, ZIndex = 206 }, cv)
+	local cap = label(cv, "DEPLOYING", 34, F.H, teamCol, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(960, 630),
+		Size = UDim2.fromOffset(600, 44), TextTransparency = 1, ZIndex = 206 })
+	tween(title, TweenInfo.new(0.35), { TextTransparency = 0 })
+	tween(line, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = UDim2.fromOffset(560, 4) })
+	tween(cap, TweenInfo.new(0.35), { TextTransparency = 0.1 })
+	sfx("SoulImpact")
+
+	if not waitUntil(REVEAL_AT) then return end
+	-- title card out, world in, bodies built (RespawnReveal owns the camera from here)
+	tween(title, TweenInfo.new(0.3), { TextTransparency = 1 })
+	tween(cap, TweenInfo.new(0.3), { TextTransparency = 1 })
+	tween(line, TweenInfo.new(0.3), { BackgroundTransparency = 1 })
+	tween(fade, TweenInfo.new(0.35), { BackgroundTransparency = 1 })
+	local now = serverNow()
+	local list = {}
+	for _, p in Players:GetPlayers() do
+		if p.Team and p.Team.Name ~= "Lobby" then table.insert(list, p) end
+	end
+	if not table.find(list, player) then table.insert(list, player) end
+	for _, p in list do
+		local ch = p.Character
+		if ch and not ws.revealed[ch] then
+			ws.revealed[ch] = true
+			ch:SetAttribute("RevealStart", now)
+			ch:SetAttribute("RevealBuild", C.REVEAL_BUILD)
+			ch:SetAttribute("RevealFrom", 0)
+			ch:SetAttribute("Revealing", true)
+		end
+	end
+	task.delay(C.REVEAL_TIME + 0.02, function()
+		if warpState ~= ws then return end
+		for ch in ws.revealed do
+			if ch.Parent and ch:GetAttribute("Revealing") == true then ch:SetAttribute("Revealing", false) end
+		end
+		game:GetService("UserInputService").MouseDeltaSensitivity = C.MOUSE_SENS or 1
+	end)
+end
+
+local function runWarp(token)
+	if C.WARP_STYLE == "Meteor" then return runMeteorWarp(token) end
+	return runSoulArrival(token)
 end
 
 -- ======================================================================================
